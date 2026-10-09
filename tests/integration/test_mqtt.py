@@ -368,7 +368,10 @@ async def test_dropped_stream_falls_back_and_catches_up(
         if stream.connected:
             break
         await _advance(hass, freezer, timedelta(seconds=0.1))
-    assert stream.connected
+    # The retry then stops the old client on a worker thread, in real time the frozen
+    # clock does not count — on a slow CI runner, longer than the steps left. So wait for
+    # the reconnect on the real clock too.
+    await wait_for(hass, lambda: stream.connected, "the stream to reconnect")
     await _advance(hass, freezer, timedelta(seconds=1))
     assert hass.states.get("switch.kitchen_water").state == "on"
     await _advance(hass, freezer, FAUCET_PUSH_GRACE)
