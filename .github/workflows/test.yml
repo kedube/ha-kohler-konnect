@@ -1,0 +1,82 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  pytest:
+    name: pytest (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Both, even when one fails: which Home Assistant broke is the useful part.
+      fail-fast: false
+      matrix:
+        include:
+          # What anyone keeping Home Assistant up to date runs. Unpinned on purpose, so a
+          # Home Assistant release that breaks the integration fails here first.
+          - name: latest Home Assistant
+            harness: pytest-homeassistant-custom-component
+          # The oldest version supported, as in hacs.json. Each harness release pins one
+          # Home Assistant; 0.13.320 is 2026.3.4.
+          - name: Home Assistant 2026.3
+            harness: pytest-homeassistant-custom-component==0.13.320
+    steps:
+      - uses: actions/checkout@v7
+
+      # Home Assistant 2026.3 and later need Python 3.14. On 3.13, pip quietly installs
+      # 2026.2 instead — older than anything this integration supports.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt "${{ matrix.harness }}"
+
+      # The point of this job. `Validate` checks the manifest and the HACS layout — it
+      # never imports a Python file, which is why a release once shipped with two entities
+      # missing and CI stayed green. This imports every platform and constructs every
+      # entity, and tests the release scripts in .github/scripts.
+      - name: Run tests
+        run: python -m pytest tests/ -q --cov=custom_components/kohler_konnect --cov-report=
+
+      # The same integration inside a real Home Assistant: setup, the platforms, the
+      # actions, the setup flow and the faucets end to end, against a fake Kohler cloud.
+      # Its own pytest.ini turns on the Home Assistant test plugin the run above turns off.
+      #
+      # Coverage is the two runs combined, reported here with the lines still missed. The
+      # floor sits a little under where it stands (98% in October 2026) so new code needs
+      # tests without every small change having to raise it; a real drop fails the build.
+      - name: Run integration tests
+        run: >-
+          python -m pytest tests/integration -q
+          --cov=custom_components/kohler_konnect --cov-append
+          --cov-report=term-missing:skip-covered --cov-fail-under=95
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      # Pinned: an unpinned Ruff adds rules and changes formatting on its own release
+      # schedule, failing CI on code nobody touched. Raise it deliberately.
+      - name: Install Ruff
+        run: pip install ruff==0.16.10
+
+      # Catches unused imports and undefined names — the class of mistake that a syntax
+      # check passes and a user finds.
+      - name: Ruff check
+        run: ruff check custom_components tests .github/scripts
+
+      - name: Ruff format check
+        run: ruff format --check custom_components tests .github/scripts

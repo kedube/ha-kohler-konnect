@@ -1,0 +1,268 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Kohler Konnect",
+        "description": "Entre com sua conta Kohler Konnect. Todas as válvulas Anthem, controladores Anthem Plus e torneiras Sensate dela são adicionados. O login acontece inteiramente no Home Assistant — não há etapa no navegador nem nada para copiar de volta.",
+        "data": {
+          "username": "E-mail",
+          "password": "Senha"
+        }
+      },
+      "valve": {
+        "title": "Selecione sua válvula",
+        "description": "Encontrado: {summary}\n\nA disposição das saídas da sua válvula não pôde ser lida automaticamente, então escolha o modelo da sua válvula digital Anthem. Isso define quantas saídas existem e a qual zona cada uma pertence. Isso é obrigatório mesmo com apenas um controlador Anthem Plus, porque o controlador informa as saídas por zona usando a mesma disposição.",
+        "data": {
+          "valve_model": "Modelo da válvula"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Entre novamente",
+        "description": "A sessão salva para {username} expirou. Digite a senha novamente para reconectar.",
+        "data": {
+          "password": "Senha"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "A Kohler rejeitou esse e-mail ou senha.",
+      "cannot_connect": "Não foi possível conectar à Kohler. Verifique sua conexão com a internet e tente novamente.",
+      "signin_blocked": "A Kohler exige uma etapa extra para o login (por exemplo, autenticação de dois fatores), que esta integração não pode concluir.",
+      "no_devices": "Essa conta não tem nenhum dispositivo compatível com esta integração: válvulas Anthem, controladores Anthem Plus e torneiras Sensate. Observe que uma tela sensível ao toque Anthem Plus (K-28214-ASC) adiciona apenas o controlador — para adicionar a própria válvula é necessária uma tela sensível ao toque Anthem de primeira geração (K-28214)."
+    },
+    "abort": {
+      "already_configured": "Esta conta Kohler já está configurada.",
+      "reauth_successful": "Reconectado com sucesso."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opções do Kohler Konnect",
+        "description": "**Agrupamento de zonas** decide como saídas, controles de zona (Temperature, Flow) e sensores de zona (Shower Active, Hex) são nomeados e agrupados. Afeta apenas válvulas com duas zonas (K-28211 e K-28212); em uma válvula de zona única as três opções ficam iguais.\n\n**Limite de segurança da água** vale para as torneiras.",
+        "data": {
+          "zone_grouping": "Estilo de agrupamento de zonas",
+          "max_run_minutes": "Limite de segurança da água"
+        },
+        "data_description": {
+          "max_run_minutes": "Fecha a água este número de minutos depois de ela ser aberta pelo Home Assistant, a menos que tenha sido fechada nesse meio-tempo. 0 desativa o limite."
+        }
+      }
+    }
+  },
+  "selector": {
+    "zone_grouping": {
+      "options": {
+        "subdevices": "Um subdispositivo por zona — dispositivos separados para a zona 1 e a zona 2, sem números de zona nas saídas ou nos controles",
+        "outlet_labels": "Nomes das saídas nos controles — um único dispositivo, ex.: Temperature (Showerhead, Body Sprays)",
+        "numbered": "Números de zona (padrão) — um único dispositivo, acrescenta 1 / 2 às saídas e aos controles"
+      }
+    },
+    "volume_unit": {
+      "options": {
+        "ml": "Mililitros (mL)",
+        "l": "Litros (L)",
+        "fl_oz": "Onças fluidas (fl oz)",
+        "cup": "Xícaras",
+        "qt": "Quartos de galão",
+        "gal": "Galões"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "leak": {
+        "name": "Vazamento"
+      },
+      "dispensing": {
+        "name": "Dosando"
+      },
+      "connected": {
+        "name": "Conectado"
+      }
+    },
+    "button": {
+      "quick_dispense": {
+        "name": "Dosar {amount}"
+      },
+      "dispense_quarter_cup": {
+        "name": "Dosar ¼ de xícara"
+      },
+      "dispense_half_cup": {
+        "name": "Dosar ½ xícara"
+      },
+      "dispense_one_cup": {
+        "name": "Dosar 1 xícara"
+      },
+      "dispense_two_cups": {
+        "name": "Dosar 2 xícaras"
+      },
+      "dispense_one_quart": {
+        "name": "Dosar 1 quarto de galão"
+      },
+      "dispense_half_gallon": {
+        "name": "Dosar ½ galão"
+      },
+      "dispense_one_gallon": {
+        "name": "Dosar 1 galão"
+      },
+      "dispense_set_amount": {
+        "name": "Dosar quantidade definida"
+      },
+      "dispense_preset": {
+        "name": "Dosar predefinição"
+      },
+      "clear_leak": {
+        "name": "Limpar alerta de vazamento"
+      }
+    },
+    "number": {
+      "dispense_amount": {
+        "name": "Quantidade a dosar"
+      }
+    },
+    "select": {
+      "preset": {
+        "name": "Predefinição"
+      }
+    },
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "off": "Desligado",
+          "on": "Ligado"
+        }
+      },
+      "progress": {
+        "name": "Download do firmware",
+        "state": {
+          "not_started": "Não iniciado",
+          "downloading": "Baixando",
+          "completed": "Concluído"
+        }
+      },
+      "handle_state": {
+        "name": "Alavanca",
+        "state": {
+          "open": "Aberta",
+          "closed": "Fechada"
+        }
+      },
+      "last_dispense": {
+        "name": "Última dosagem"
+      },
+      "water_today": {
+        "name": "Consumo de água hoje"
+      },
+      "water_this_week": {
+        "name": "Consumo de água nesta semana"
+      },
+      "water_this_month": {
+        "name": "Consumo de água neste mês"
+      },
+      "water_this_year": {
+        "name": "Consumo de água neste ano"
+      }
+    },
+    "switch": {
+      "water": {
+        "name": "Água"
+      }
+    },
+    "update": {
+      "firmware_status": {
+        "name": "Status do firmware"
+      }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "A Kohler recusou as credenciais salvas. Entre novamente pela página da integração."
+    },
+    "update_failed": {
+      "message": "Erro ao se comunicar com a nuvem da Kohler: {error}"
+    },
+    "command_failed": {
+      "message": "A nuvem da Kohler não aceitou o comando: {error}"
+    },
+    "amount_out_of_range": {
+      "message": "Escolha uma quantidade entre {min} e {max} {unit}."
+    },
+    "faucet_offline": {
+      "message": "{name} está offline: a nuvem da Kohler não consegue alcançar a torneira. Verifique a alimentação e o Wi-Fi."
+    },
+    "handle_closed": {
+      "message": "A alavanca de {name} está fechada. Abra a alavanca para dosar água remotamente."
+    },
+    "firmware_updating": {
+      "message": "{name} está instalando uma atualização de firmware. Tente novamente quando terminar."
+    },
+    "not_dispensed": {
+      "message": "A Kohler não conseguiu dosar água de {name}. Abra a torneira manualmente."
+    },
+    "command_forbidden": {
+      "message": "A Kohler recusou o comando para {name} com este login. Verifique se há uma atualização desta integração."
+    },
+    "rate_limited": {
+      "message": "A Kohler está limitando as solicitações. Tente novamente em {seconds} segundos."
+    },
+    "preset_out_of_range": {
+      "message": "A predefinição \"{title}\" está fora da faixa de dosagem de 10 mL a 11,36 L (3 galões)."
+    },
+    "preset_not_found": {
+      "message": "{name} não tem nenhuma predefinição chamada \"{preset}\". Predefinições disponíveis: {presets}."
+    },
+    "no_faucet": {
+      "message": "Nenhuma torneira Sensate está configurada e em execução."
+    },
+    "faucet_not_selected": {
+      "message": "O dispositivo selecionado não é uma torneira Sensate. Escolha uma torneira."
+    },
+    "faucet_required": {
+      "message": "Há mais de uma torneira configurada. Escolha qual torneira deve dosar."
+    }
+  },
+  "services": {
+    "dispense": {
+      "name": "Dosar água",
+      "description": "Dosa uma quantidade medida de água, ou uma predefinição do Konnect, de uma torneira Sensate.",
+      "fields": {
+        "device_id": {
+          "name": "Torneira",
+          "description": "A torneira que vai dosar. Opcional quando há apenas uma torneira configurada."
+        },
+        "amount": {
+          "name": "Quantidade",
+          "description": "Quanta água dosar, na unidade escolhida (entre 10 mL e 11,36 L, ou 3 galões)."
+        },
+        "unit": {
+          "name": "Unidade",
+          "description": "Unidade da quantidade. O padrão é mL, ou fl oz quando sua conta Konnect usa unidades americanas."
+        },
+        "preset": {
+          "name": "Predefinição",
+          "description": "Uma predefinição salva no app Konnect, pelo nome mostrado na lista Predefinição. Use no lugar de Quantidade."
+        }
+      }
+    }
+  },
+  "issues": {
+    "outlet_write_unverified": {
+      "title": "Uma configuração do chuveiro pode não ter sido aplicada",
+      "description": "O Home Assistant pediu à sua válvula para alterar **{setting}**, e a válvula aceitou o pedido — mas ao ler o valor novamente depois, a mudança não apareceu.\n\n{detail}\n\n**O que isso significa.** A API da Kohler responde \"aceito para entrega\", nunca \"aplicado\", por isso essa verificação existe para detectar a diferença. A configuração ainda pode estar com o valor antigo.\n\n**O que fazer.** Abra a entidade e defina-a novamente. Se falhar uma segunda vez, verifique se a válvula está online no aplicativo Kohler Konnect — uma válvula que caiu da nuvem aceita comandos que nunca chegam a ela.\n\nEsta mensagem desaparece quando uma alteração é verificada."
+    },
+    "faucet_not_found": {
+      "title": "{name} não está mais na sua conta Kohler",
+      "description": "A Kohler não lista mais esta torneira na sua conta, então o Home Assistant não consegue lê-la nem controlá-la. Se você a removeu ou substituiu no app Konnect, recarregue a integração Kohler Konnect para aplicar a mudança.\n\nÚltimo erro: {error}"
+    },
+    "faucet_api_changed": {
+      "title": "A Kohler continua recusando solicitações para {name}",
+      "description": "A nuvem da Kohler recusou várias solicitações seguidas, o que geralmente significa que a Kohler mudou sua API. Verifique se há uma atualização desta integração. Se não houver, abra um chamado e anexe o diagnóstico da integração.\n\nÚltimo erro: {error}"
+    },
+    "replaced_integration": {
+      "title": "Remova as integrações antigas da Kohler",
+      "description": "O Kohler Konnect substitui as integrações Kohler Anthem e Kohler Sensate, e estas entradas delas ainda estão configuradas: {entries}.\n\nElas controlam os mesmos dispositivos que o Kohler Konnect, então suas entidades são duplicadas, e cada uma mantém sua própria conexão com a Kohler. Passe suas automações para as entidades do Kohler Konnect, depois exclua as entradas antigas em **Configurações → Dispositivos e serviços** e remova as integrações antigas no HACS.\n\nEsta mensagem some assim que elas forem excluídas."
+    }
+  }
+}

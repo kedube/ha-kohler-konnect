@@ -1,0 +1,6 @@
+# Test dependencies. Home Assistant itself is required because the integration imports
+# from it at module level; `pytest-homeassistant-custom-component` pins a matching pair.
+pytest>=8.0
+# Coverage across both test runs; CI fails if it drops below the floor in test.yml.
+pytest-cov>=5.0
+pytest-homeassistant-custom-component>=0.13

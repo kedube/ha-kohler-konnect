@@ -1,0 +1,246 @@
+name: Release
+
+# Auto-releases on a green main: once BOTH the Test and Validate workflows have completed
+# successfully for the same commit, this settles the version, rotates CHANGELOG.md's
+# Unreleased section into a version heading, and publishes a GitHub release whose notes are
+# that section plus the commits since the last release — no draft, no manual step.
+# workflow_dispatch is the manual escape hatch (release the current manifest version, or
+# force a bump) for when the two-workflow handshake below needs a nudge.
+#
+# Which version: if manifest.json holds a version with no git tag yet, somebody set it by
+# hand, and it is released exactly as written. Otherwise — the manifest still says the last
+# release — the minor version after the newest tag is used. Until 2026-10-08 it always
+# bumped, so setting 0.23 by hand published 0.24.
+#
+# Tags and release names are the bare version — `1.0`, never `v1.0`. A leading `v` set in
+# the manifest by hand is removed and the manifest committed without it.
+#
+# Why two triggers instead of one: this repo runs Test (pytest + ruff) and Validate (HACS +
+# hassfest) as separate workflows, unlike a single combined CI workflow. workflow_run only
+# fires per-workflow, so this listens to both and, on each firing, checks via the API that
+# the *other* one has also succeeded for that same commit before releasing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump (none = re-release current manifest version)"
+        required: true
+        default: "none"
+        type: choice
+        options:
+          - none
+          - minor
+          - major
+  workflow_run:
+    workflows:
+      - Test
+      - Validate
+    types:
+      - completed
+
+permissions:
+  contents: write
+
+# Queued, never cancelled: a run cancelled between pushing its release commit and publishing
+# the release would leave one without the other. The run that waits finds the commit already
+# released and stops.
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Bump manifest and publish release
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Check both CI workflows succeeded for this commit
+        id: both_green
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          both_green=true
+          for wf in Test Validate; do
+            conclusion="$(gh api "repos/${{ github.repository }}/actions/workflows/${wf,,}.yml/runs?head_sha=${HEAD_SHA}&status=completed&per_page=1" \
+              --jq '.workflow_runs[0].conclusion // "missing"')"
+            if [ "$conclusion" != "success" ]; then
+              echo "$wf has not succeeded yet for $HEAD_SHA (conclusion: $conclusion)."
+              both_green=false
+            fi
+          done
+          echo "both_green=$both_green" >> "$GITHUB_OUTPUT"
+
+      - name: Skip stale or partial workflow runs
+        id: head_check
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          BUMP_INPUT: ${{ inputs.bump || 'none' }}
+          BOTH_GREEN: ${{ steps.both_green.outputs.both_green }}
+        run: |
+          current_sha="$(git rev-parse origin/main)"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$BUMP_INPUT" = "none" ]; then
+              echo "release_action=existing" >> "$GITHUB_OUTPUT"
+            else
+              echo "release_action=bump" >> "$GITHUB_OUTPUT"
+            fi
+            echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$BOTH_GREEN" != "true" ]; then
+            echo "Waiting on the other CI workflow for $EXPECTED_SHA before releasing."
+            echo "release_action=skip" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Already released — the other CI workflow's run got here first. Without this, a
+          # hand-set version released with nothing to commit would be bumped and released a
+          # second time.
+          if git tag --points-at "$current_sha" | grep -Eq '^[0-9]+(\.[0-9]+)+$'; then
+            echo "$current_sha is already released."
+            echo "release_action=skip" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$current_sha" = "$EXPECTED_SHA" ]; then
+            echo "release_action=bump" >> "$GITHUB_OUTPUT"
+            echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          previous_sha="$(git rev-parse "$current_sha^")"
+          latest_subject="$(git log -1 --format=%s "$current_sha")"
+          if [ "$previous_sha" = "$EXPECTED_SHA" ] && [[ "$latest_subject" == chore\(release\):*\ \[skip\ ci\] ]]; then
+            echo "release_action=existing" >> "$GITHUB_OUTPUT"
+            echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Skipping stale run for $EXPECTED_SHA because main is already at $current_sha."
+          echo "release_action=skip" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        if: steps.head_check.outputs.release_action != 'skip'
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Settle version and rotate changelog
+        if: steps.head_check.outputs.release_action != 'skip'
+        id: bump
+        env:
+          RELEASE_ACTION: ${{ steps.head_check.outputs.release_action }}
+          BUMP_INPUT: ${{ inputs.bump || 'none' }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          # The automatic path keeps a hand-set, not-yet-released version and bumps a
+          # released one — see the header. A manual dispatch that asks for a bump always
+          # bumps; one that asks for none, and the retry of a committed-but-unpublished
+          # release, release the manifest version as it stands.
+          if [ "$RELEASE_ACTION" = "existing" ]; then
+            bump=none
+          elif [ "$EVENT_NAME" = "workflow_run" ]; then
+            bump=auto
+          else
+            bump="$BUMP_INPUT"
+          fi
+          new_version="$(python .github/scripts/bump_manifest_version.py --bump "$bump")"
+          # A version not yet tagged is being released for the first time, so whatever is
+          # under Unreleased belongs to it.
+          if [ -z "$(git tag --list "$new_version")" ]; then
+            python .github/scripts/update_changelog.py "$new_version"
+          fi
+          echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
+
+      - name: Commit release version
+        if: steps.head_check.outputs.release_action != 'skip'
+        id: commit_release
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/kohler_konnect/manifest.json CHANGELOG.md
+          # Nothing to commit when the version is kept as written and there was no
+          # Unreleased section to rotate: release the pushed commit itself.
+          if git diff --cached --quiet; then
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "chore(release): $NEW_VERSION [skip ci]"
+            echo "committed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "release_target=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Push release commit
+        if: steps.commit_release.outputs.committed == 'true'
+        run: git push origin HEAD:main
+
+      # GitHub's auto-generated notes only list merged PRs, so direct-to-main releases came
+      # out empty. Build the body ourselves: Highlights from CHANGELOG.md (rotated from its
+      # Unreleased section during the bump) plus the commit list since the previous tag.
+      - name: Generate release notes
+        if: steps.head_check.outputs.release_action != 'skip'
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+        run: python .github/scripts/generate_release_notes.py "$NEW_VERSION" release_notes.md
+
+      - name: Create GitHub release
+        if: steps.head_check.outputs.release_action != 'skip'
+        uses: actions/github-script@v9
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+          RELEASE_TARGET: ${{ steps.commit_release.outputs.release_target || steps.head_check.outputs.release_target }}
+        with:
+          script: |
+            const fs = require('fs')
+            const tag = process.env.NEW_VERSION
+            const target = process.env.RELEASE_TARGET
+            // The version script already strips a leading `v`; this is the last line of
+            // defence, because a published tag is effectively permanent.
+            if (!/^\d+(\.\d+)+$/.test(tag)) {
+              core.setFailed(`Refusing to release ${tag}: tags are bare versions like 1.0`)
+              return
+            }
+            const body = fs.readFileSync('release_notes.md', 'utf8')
+            const { owner, repo } = context.repo
+
+            try {
+              await github.rest.repos.getReleaseByTag({
+                owner,
+                repo,
+                tag,
+              })
+              core.info(`Release ${tag} already exists; skipping creation.`)
+              return
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error
+              }
+            }
+
+            await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: tag,
+              target_commitish: target,
+              name: tag,
+              body,
+            })

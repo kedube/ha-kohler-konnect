@@ -1,0 +1,19 @@
+{
+  "domain": "kohler_konnect",
+  "name": "Kohler Konnect",
+  "codeowners": [
+    "@kedube"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/kedube/ha-kohler-konnect",
+  "integration_type": "hub",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/kedube/ha-kohler-konnect/issues",
+  "loggers": [
+    "custom_components.kohler_konnect"
+  ],
+  "requirements": [
+    "paho-mqtt>=2.0.0"
+  ],
+  "version": "1.0"
+}

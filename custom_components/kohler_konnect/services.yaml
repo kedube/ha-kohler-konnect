@@ -1,0 +1,206 @@
+# Static fallback for the action's form. `services.py` overrides this at runtime via
+# `async_set_service_schema`, which is what hides the Zone 2 field on a single-zone system —
+# something this file cannot express, since it is the same for every installation.
+# Keep the wording here in step with `_FIELD_ZONE1` / `_FIELD_ZONE2` in `services.py`.
+send_valve_hex:
+  name: Send valve hex
+  description: >-
+    Send a command code straight to the Anthem valve, for anything the normal controls
+    cannot do. Set the shower up how you want it with the outlet switches and temperature
+    controls, then copy the code from the Hex diagnostic sensor and paste it below.
+    WARNING: this can start water.
+  fields:
+    device_id:
+      name: Valve
+      required: false
+      description: Which Anthem valve, when the account has more than one.
+      selector:
+        device:
+          filter:
+            integration: kohler_konnect
+    zone1_hex:
+      name: Zone 1 Hex
+      required: true
+      description: >-
+        The 8-character code from the "Hex" sensor ("Hex 1" on a two-zone valve) on the
+        Anthem Valve device. Set the outlet switches and temperature the way you want them
+        first, then copy the code.
+      example: "0184C801"
+      selector:
+        text:
+    zone2_hex:
+      name: Zone 2 Hex
+      required: false
+      description: >-
+        The 8-character code from the "Hex 2" sensor on the Anthem Valve device. Set the
+        outlet switches and temperature the way you want them first, then copy the code.
+      example: "1184C801"
+      selector:
+        text:
+
+# Same arrangement for `custom_shower`: the runtime override in `services.py` sets the
+# temperature range and unit for the account and hides the zones and outlets the valve does
+# not have. Keep the wording in step with the `_FIELD_*` constants and
+# `_CUSTOM_SHOWER_DESCRIPTION` there.
+#
+# The booleans are `required: true` on purpose. The automation editor puts an "include this
+# field" checkbox in front of every optional field, which next to a toggle is two switches for
+# one thing; a required boolean is shown as the toggle alone, pre-filled off (frontend
+# `ha-service-control`, `showOptionalToggle`). The schema still defaults them to off, so a
+# YAML call may leave them out.
+custom_shower:
+  name: Custom shower
+  description: >-
+    Start the shower with the outlets and temperature you choose, sent to the valve as one
+    command. This is the reliable way to open an outlet and set its temperature from a single
+    automation step. Outlets you leave off are closed, and leaving every outlet off stops the
+    shower. On a valve with warm-up enabled the valve warms up first and then pauses for two
+    minutes, just as it always does; turn on "No pausing warm-up" (beta) to have it carry on
+    with your outlets and temperature the moment that pause begins. WARNING: this can
+    start water.
+  fields:
+    device_id:
+      name: Valve
+      required: false
+      description: Which Anthem valve, when the account has more than one.
+      selector:
+        device:
+          filter:
+            integration: kohler_konnect
+    zone_1:
+      name: Zone 1
+      collapsed: false
+      fields:
+        zone1_temperature:
+          name: Zone 1 temperature
+          required: true
+          description: >-
+            Target temperature for zone 1, in the unit your account uses.
+          example: 104
+          selector:
+            number:
+              min: 59
+              max: 118
+              step: 1
+              unit_of_measurement: "°F"
+              mode: slider
+        zone1_outlet_1:
+          name: Zone 1 outlet 1
+          required: true
+          selector:
+            boolean:
+        zone1_outlet_2:
+          name: Zone 1 outlet 2
+          required: true
+          selector:
+            boolean:
+        zone1_outlet_3:
+          name: Zone 1 outlet 3
+          required: true
+          selector:
+            boolean:
+    zone_2:
+      name: Zone 2
+      collapsed: false
+      fields:
+        zone2_temperature:
+          name: Zone 2 temperature
+          required: false
+          description: >-
+            Target temperature for zone 2. Leave it unset to use the zone 1 temperature.
+          example: 104
+          selector:
+            number:
+              min: 59
+              max: 118
+              step: 1
+              unit_of_measurement: "°F"
+              mode: slider
+        zone2_outlet_1:
+          name: Zone 2 outlet 1
+          required: true
+          selector:
+            boolean:
+        zone2_outlet_2:
+          name: Zone 2 outlet 2
+          required: true
+          selector:
+            boolean:
+        zone2_outlet_3:
+          name: Zone 2 outlet 3
+          required: true
+          selector:
+            boolean:
+    keep_on_after_warmup:
+      name: No pausing warm-up (beta)
+      required: true
+      description: >-
+        Keeps the shower on after the valve's warm-up is finished. Beta, tested on one valve
+        so far. Only matters when the valve's warm-up is enabled. After warming up, the
+        valve pauses for two minutes, just as it always does. With this
+        on, the shower carries on with your outlets and temperature the moment that pause
+        begins. Off, the valve's two-minute pause runs as usual.
+      selector:
+        boolean:
+    advanced_fields:
+      name: Advanced
+      collapsed: true
+      fields:
+        flow:
+          name: Flow
+          required: false
+          description: >-
+            Percentage of full flow, from 8 to 100. Leave it unset for full flow. The flow set
+            here holds only until someone presses the flow button on the touchscreen, which
+            takes over from then on.
+          example: 100
+          selector:
+            number:
+              min: 8
+              max: 100
+              step: 1
+              unit_of_measurement: "%"
+              mode: box
+
+# A faucet's measured dispense. Its text is translated, in `strings.json` under
+# `services.dispense`. The picker lists faucets only: valves and controllers carry their
+# valve model or "Anthem+ System Controller" as their model, faucets one of these two.
+dispense:
+  fields:
+    device_id:
+      required: false
+      selector:
+        device:
+          filter:
+            - integration: kohler_konnect
+              model: Sensate
+            - integration: kohler_konnect
+              model: Konnect faucet
+          multiple: true
+    amount:
+      required: false
+      example: 250
+      selector:
+        number:
+          min: 0.01
+          max: 11360
+          step: any
+          mode: box
+    unit:
+      required: false
+      example: ml
+      selector:
+        select:
+          translation_key: volume_unit
+          options:
+            - ml
+            - l
+            - fl_oz
+            - cup
+            - qt
+            - gal
+    preset:
+      required: false
+      example: A Glass of Water
+      selector:
+        text:

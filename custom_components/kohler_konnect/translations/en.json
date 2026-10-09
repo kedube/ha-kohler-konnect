@@ -1,0 +1,268 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Kohler Konnect",
+        "description": "Sign in with your Kohler Konnect account. Every Anthem valve, Anthem Plus controller and Sensate faucet on it is added. Sign-in happens entirely within Home Assistant — there is no browser step and nothing to copy back.",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "valve": {
+        "title": "Select your valve",
+        "description": "Found: {summary}\n\nYour valve's outlet layout could not be read automatically, so choose your Anthem digital valve model. This decides how many outlets exist and which zone each belongs to. It is required even with only an Anthem Plus controller, because the controller reports outlets per zone using the same layout.",
+        "data": {
+          "valve_model": "Valve model"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in again",
+        "description": "The saved session for {username} has expired. Enter the password again to reconnect.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Kohler rejected that email or password.",
+      "cannot_connect": "Could not reach Kohler. Check your internet connection and try again.",
+      "signin_blocked": "Kohler needs an extra step to sign in (for example two-factor authentication), which this integration cannot complete.",
+      "no_devices": "That account has no device this integration supports: Anthem valves, Anthem Plus controllers and Sensate faucets. Note that an Anthem Plus touchscreen (K-28214-ASC) only adds the controller — adding the valve itself requires a first-generation Anthem touchscreen (K-28214)."
+    },
+    "abort": {
+      "already_configured": "This Kohler account is already set up.",
+      "reauth_successful": "Reconnected successfully."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Kohler Konnect options",
+        "description": "**Zone grouping** decides how outlets, zone controls (Temperature, Flow) and zone sensors (Shower Active, Hex) are named and grouped. It only affects valves with two zones (K-28211 and K-28212); on a single-zone valve all three choices look the same.\n\n**Water safety limit** applies to faucets.",
+        "data": {
+          "zone_grouping": "Zone grouping style",
+          "max_run_minutes": "Water safety limit"
+        },
+        "data_description": {
+          "max_run_minutes": "Turn the water off this many minutes after it's turned on from Home Assistant, unless it's turned off in the meantime. 0 turns the limit off."
+        }
+      }
+    }
+  },
+  "selector": {
+    "zone_grouping": {
+      "options": {
+        "subdevices": "Sub-device per zone — separate Zone 1 / Zone 2 devices, no zone numbers on outlets or controls",
+        "outlet_labels": "Outlet names on controls — single device, e.g. Temperature (Showerhead, Body Sprays)",
+        "numbered": "Zone numbers (default) — single device, appends 1 / 2 to outlets and controls"
+      }
+    },
+    "volume_unit": {
+      "options": {
+        "ml": "Milliliters (mL)",
+        "l": "Liters (L)",
+        "fl_oz": "Fluid ounces (fl oz)",
+        "cup": "Cups",
+        "qt": "Quarts",
+        "gal": "Gallons"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "leak": {
+        "name": "Leak"
+      },
+      "dispensing": {
+        "name": "Dispensing"
+      },
+      "connected": {
+        "name": "Connected"
+      }
+    },
+    "button": {
+      "quick_dispense": {
+        "name": "Dispense {amount}"
+      },
+      "dispense_quarter_cup": {
+        "name": "Dispense ¼ cup"
+      },
+      "dispense_half_cup": {
+        "name": "Dispense ½ cup"
+      },
+      "dispense_one_cup": {
+        "name": "Dispense 1 cup"
+      },
+      "dispense_two_cups": {
+        "name": "Dispense 2 cups"
+      },
+      "dispense_one_quart": {
+        "name": "Dispense 1 quart"
+      },
+      "dispense_half_gallon": {
+        "name": "Dispense ½ gallon"
+      },
+      "dispense_one_gallon": {
+        "name": "Dispense 1 gallon"
+      },
+      "dispense_set_amount": {
+        "name": "Dispense set amount"
+      },
+      "dispense_preset": {
+        "name": "Dispense preset"
+      },
+      "clear_leak": {
+        "name": "Clear leak alert"
+      }
+    },
+    "number": {
+      "dispense_amount": {
+        "name": "Dispense amount"
+      }
+    },
+    "select": {
+      "preset": {
+        "name": "Preset"
+      }
+    },
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "off": "Off",
+          "on": "On"
+        }
+      },
+      "progress": {
+        "name": "Firmware download",
+        "state": {
+          "not_started": "Not started",
+          "downloading": "Downloading",
+          "completed": "Completed"
+        }
+      },
+      "handle_state": {
+        "name": "Handle",
+        "state": {
+          "open": "Open",
+          "closed": "Closed"
+        }
+      },
+      "last_dispense": {
+        "name": "Last dispensed"
+      },
+      "water_today": {
+        "name": "Water used today"
+      },
+      "water_this_week": {
+        "name": "Water used this week"
+      },
+      "water_this_month": {
+        "name": "Water used this month"
+      },
+      "water_this_year": {
+        "name": "Water used this year"
+      }
+    },
+    "switch": {
+      "water": {
+        "name": "Water"
+      }
+    },
+    "update": {
+      "firmware_status": {
+        "name": "Firmware status"
+      }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Kohler rejected the saved credentials. Sign in again from the integration page."
+    },
+    "update_failed": {
+      "message": "Error talking to the Kohler cloud: {error}"
+    },
+    "command_failed": {
+      "message": "The Kohler cloud did not accept the command: {error}"
+    },
+    "amount_out_of_range": {
+      "message": "Choose an amount between {min} and {max} {unit}."
+    },
+    "faucet_offline": {
+      "message": "{name} is offline: Kohler's cloud can't reach the faucet. Check its power and Wi-Fi."
+    },
+    "handle_closed": {
+      "message": "{name}'s handle is closed. Open the handle to dispense water remotely."
+    },
+    "firmware_updating": {
+      "message": "{name} is installing a firmware update. Try again when it has finished."
+    },
+    "not_dispensed": {
+      "message": "Kohler couldn't dispense water from {name}. Turn the faucet on by hand."
+    },
+    "command_forbidden": {
+      "message": "Kohler refused the command for {name} with this sign-in. Check for an update to this integration."
+    },
+    "rate_limited": {
+      "message": "Kohler is limiting requests. Try again in {seconds} seconds."
+    },
+    "preset_out_of_range": {
+      "message": "The preset \"{title}\" is outside the 10 mL to 11.36 L (3 gallon) dispense range."
+    },
+    "preset_not_found": {
+      "message": "{name} has no preset called \"{preset}\". Its presets: {presets}."
+    },
+    "no_faucet": {
+      "message": "No Sensate faucet is set up and running."
+    },
+    "faucet_not_selected": {
+      "message": "The selected device is not a Sensate faucet. Choose a faucet."
+    },
+    "faucet_required": {
+      "message": "More than one faucet is set up. Choose which faucet should dispense."
+    }
+  },
+  "services": {
+    "dispense": {
+      "name": "Dispense water",
+      "description": "Dispenses a measured amount of water, or a Konnect preset, from a Sensate faucet.",
+      "fields": {
+        "device_id": {
+          "name": "Faucet",
+          "description": "The faucet to dispense from. Optional when only one faucet is set up."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "How much water to dispense, in the chosen unit (between 10 mL and 11.36 L, or 3 gallons)."
+        },
+        "unit": {
+          "name": "Unit",
+          "description": "Unit of the amount. Defaults to mL, or fl oz when your Konnect account uses US units."
+        },
+        "preset": {
+          "name": "Preset",
+          "description": "A preset saved in the Konnect app, by its name in the Preset dropdown. Use instead of amount."
+        }
+      }
+    }
+  },
+  "issues": {
+    "outlet_write_unverified": {
+      "title": "A shower setting may not have been applied",
+      "description": "Home Assistant asked your valve to change **{setting}**, and the valve accepted the request — but reading the value back afterwards did not show the change.\n\n{detail}\n\n**What this means.** Kohler's API answers \"accepted for delivery\", never \"applied\", so this check exists to catch the difference. The setting may still be the old value.\n\n**What to do.** Open the entity and set it again. If it fails a second time, check the valve is online in the Kohler Konnect app — a valve that has dropped off the cloud accepts commands that never reach it.\n\nThis message clears when a change verifies."
+    },
+    "faucet_not_found": {
+      "title": "{name} is no longer on your Kohler account",
+      "description": "Kohler no longer lists this faucet on your account, so Home Assistant can't read or control it. If you removed or replaced it in the Konnect app, reload the Kohler Konnect integration to pick up the change.\n\nLast error: {error}"
+    },
+    "faucet_api_changed": {
+      "title": "Kohler keeps rejecting requests for {name}",
+      "description": "Kohler's cloud has rejected several requests in a row, which usually means Kohler changed its API. Check for an update to this integration. If there's none, open an issue and attach the integration's diagnostics.\n\nLast error: {error}"
+    },
+    "replaced_integration": {
+      "title": "Remove the old Kohler integrations",
+      "description": "Kohler Konnect replaces the Kohler Anthem and Kohler Sensate integrations, and these entries of theirs are still set up: {entries}.\n\nThey control the same devices as Kohler Konnect, so their entities are duplicates, and each keeps its own connection to Kohler. Move any automations over to the Kohler Konnect entities, then delete the old entries from **Settings → Devices & services** and remove the old integrations in HACS.\n\nThis message clears once they are deleted."
+    }
+  }
+}

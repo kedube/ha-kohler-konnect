@@ -1,0 +1,268 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Kohler Konnect",
+        "description": "Zaloguj się na swoje konto Kohler Konnect. Zostaną dodane wszystkie zawory Anthem, sterowniki Anthem Plus i krany Sensate z tego konta. Logowanie odbywa się w całości w Home Assistant — bez kroku w przeglądarce i bez kopiowania czegokolwiek z powrotem.",
+        "data": {
+          "username": "E-mail",
+          "password": "Hasło"
+        }
+      },
+      "valve": {
+        "title": "Wybierz swój zawór",
+        "description": "Znaleziono: {summary}\n\nNie udało się automatycznie odczytać układu wyjść zaworu, więc wybierz model swojego cyfrowego zaworu Anthem. Określa on, ile jest wyjść i do której strefy należy każde z nich. Jest wymagany nawet przy samym sterowniku Anthem Plus, ponieważ sterownik raportuje wyjścia każdej strefy według tego samego układu.",
+        "data": {
+          "valve_model": "Model zaworu"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Zaloguj się ponownie",
+        "description": "Zapisana sesja dla {username} wygasła. Wprowadź ponownie hasło, aby połączyć się ponownie.",
+        "data": {
+          "password": "Hasło"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Nieprawidłowy adres e-mail lub hasło.",
+      "cannot_connect": "Nie można połączyć się z chmurą Kohler. Spróbuj ponownie.",
+      "signin_blocked": "Kohler wymaga dodatkowego kroku logowania (na przykład uwierzytelniania dwuskładnikowego), którego ta integracja nie może wykonać.",
+      "no_devices": "To konto nie ma żadnego urządzenia obsługiwanego przez tę integrację: zaworów Anthem, sterowników Anthem Plus ani kranów Sensate. Pamiętaj, że ekran dotykowy Anthem Plus (K-28214-ASC) dodaje tylko sterownik — do dodania samego zaworu potrzebny jest ekran dotykowy Anthem pierwszej generacji (K-28214)."
+    },
+    "abort": {
+      "already_configured": "To konto Kohler jest już skonfigurowane.",
+      "reauth_successful": "Ponowne logowanie powiodło się."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opcje Kohler Konnect",
+        "description": "**Grupowanie stref** określa, jak nazywane i grupowane są wyjścia, sterowanie strefami (Temperature, Flow) i czujniki stref (Shower Active, Hex). Dotyczy tylko zaworów z dwiema strefami (K-28211 i K-28212); przy zaworze z jedną strefą wszystkie trzy opcje wyglądają tak samo.\n\n**Limit bezpieczeństwa wody** dotyczy kranów.",
+        "data": {
+          "zone_grouping": "Sposób grupowania stref",
+          "max_run_minutes": "Limit bezpieczeństwa wody"
+        },
+        "data_description": {
+          "max_run_minutes": "Zakręca wodę po tylu minutach od jej odkręcenia z Home Assistant, chyba że w międzyczasie została zakręcona. 0 wyłącza limit."
+        }
+      }
+    }
+  },
+  "selector": {
+    "zone_grouping": {
+      "options": {
+        "subdevices": "Osobne urządzenie dla każdej strefy — oddzielne urządzenia Strefa 1 / Strefa 2, bez numerów stref przy wyjściach i sterowaniu",
+        "outlet_labels": "Nazwy wyjść przy sterowaniu — jedno urządzenie, np. Temperature (Showerhead, Body Sprays)",
+        "numbered": "Numery stref (domyślnie) — jedno urządzenie, dodaje 1 / 2 do wyjść i sterowania"
+      }
+    },
+    "volume_unit": {
+      "options": {
+        "ml": "Mililitry (mL)",
+        "l": "Litry (L)",
+        "fl_oz": "Uncje płynu (fl oz)",
+        "cup": "Szklanki",
+        "qt": "Kwarty",
+        "gal": "Galony"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "leak": {
+        "name": "Wyciek"
+      },
+      "dispensing": {
+        "name": "Nalewanie"
+      },
+      "connected": {
+        "name": "Połączenie"
+      }
+    },
+    "button": {
+      "quick_dispense": {
+        "name": "Nalej {amount}"
+      },
+      "dispense_quarter_cup": {
+        "name": "Nalej ¼ szklanki"
+      },
+      "dispense_half_cup": {
+        "name": "Nalej ½ szklanki"
+      },
+      "dispense_one_cup": {
+        "name": "Nalej 1 szklankę"
+      },
+      "dispense_two_cups": {
+        "name": "Nalej 2 szklanki"
+      },
+      "dispense_one_quart": {
+        "name": "Nalej 1 kwartę"
+      },
+      "dispense_half_gallon": {
+        "name": "Nalej ½ galona"
+      },
+      "dispense_one_gallon": {
+        "name": "Nalej 1 galon"
+      },
+      "dispense_set_amount": {
+        "name": "Nalej ustawioną ilość"
+      },
+      "dispense_preset": {
+        "name": "Nalej według ustawienia wstępnego"
+      },
+      "clear_leak": {
+        "name": "Wyczyść alert wycieku"
+      }
+    },
+    "number": {
+      "dispense_amount": {
+        "name": "Ilość do nalania"
+      }
+    },
+    "select": {
+      "preset": {
+        "name": "Ustawienie wstępne"
+      }
+    },
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "off": "Wyłączony",
+          "on": "Włączony"
+        }
+      },
+      "progress": {
+        "name": "Pobieranie oprogramowania układowego",
+        "state": {
+          "not_started": "Nie rozpoczęto",
+          "downloading": "Pobieranie",
+          "completed": "Zakończono"
+        }
+      },
+      "handle_state": {
+        "name": "Dźwignia",
+        "state": {
+          "open": "Otwarta",
+          "closed": "Zamknięta"
+        }
+      },
+      "last_dispense": {
+        "name": "Ostatnio nalano"
+      },
+      "water_today": {
+        "name": "Zużycie wody dzisiaj"
+      },
+      "water_this_week": {
+        "name": "Zużycie wody w tym tygodniu"
+      },
+      "water_this_month": {
+        "name": "Zużycie wody w tym miesiącu"
+      },
+      "water_this_year": {
+        "name": "Zużycie wody w tym roku"
+      }
+    },
+    "switch": {
+      "water": {
+        "name": "Woda"
+      }
+    },
+    "update": {
+      "firmware_status": {
+        "name": "Stan oprogramowania układowego"
+      }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Kohler odrzucił zapisane dane logowania. Zaloguj się ponownie na stronie integracji."
+    },
+    "update_failed": {
+      "message": "Błąd komunikacji z chmurą Kohler: {error}"
+    },
+    "command_failed": {
+      "message": "Chmura Kohler nie przyjęła polecenia: {error}"
+    },
+    "amount_out_of_range": {
+      "message": "Wybierz ilość od {min} do {max} {unit}."
+    },
+    "faucet_offline": {
+      "message": "{name} jest offline: chmura Kohler nie może połączyć się z kranem. Sprawdź jego zasilanie i Wi-Fi."
+    },
+    "handle_closed": {
+      "message": "{name}: dźwignia jest zamknięta. Otwórz dźwignię, aby zdalnie nalewać wodę."
+    },
+    "firmware_updating": {
+      "message": "{name} instaluje aktualizację oprogramowania układowego. Spróbuj ponownie po jej zakończeniu."
+    },
+    "not_dispensed": {
+      "message": "{name}: Kohler nie mógł nalać wody. Odkręć kran ręcznie."
+    },
+    "command_forbidden": {
+      "message": "{name}: Kohler odrzucił polecenie przy tym logowaniu. Sprawdź, czy jest dostępna aktualizacja tej integracji."
+    },
+    "rate_limited": {
+      "message": "Kohler ogranicza liczbę żądań. Spróbuj ponownie za {seconds} s."
+    },
+    "preset_out_of_range": {
+      "message": "Ustawienie wstępne „{title}” wykracza poza zakres nalewania od 10 mL do 11,36 L (3 galony)."
+    },
+    "preset_not_found": {
+      "message": "{name} nie ma ustawienia wstępnego o nazwie „{preset}”. Dostępne ustawienia: {presets}."
+    },
+    "no_faucet": {
+      "message": "Nie skonfigurowano ani nie uruchomiono żadnego kranu Sensate."
+    },
+    "faucet_not_selected": {
+      "message": "Wybrane urządzenie nie jest kranem Sensate. Wybierz kran."
+    },
+    "faucet_required": {
+      "message": "Skonfigurowano więcej niż jeden kran. Wybierz, z którego kranu nalać wodę."
+    }
+  },
+  "services": {
+    "dispense": {
+      "name": "Nalej wodę",
+      "description": "Nalewa odmierzoną ilość wody z kranu Sensate albo ilość z ustawienia wstępnego Konnect.",
+      "fields": {
+        "device_id": {
+          "name": "Kran",
+          "description": "Kran, z którego nalać wodę. Opcjonalne, gdy skonfigurowano tylko jeden kran."
+        },
+        "amount": {
+          "name": "Ilość",
+          "description": "Ile wody nalać, w wybranej jednostce (od 10 mL do 11,36 L, czyli 3 galonów)."
+        },
+        "unit": {
+          "name": "Jednostka",
+          "description": "Jednostka ilości. Domyślnie mL, a fl oz, gdy Twoje konto Konnect używa jednostek amerykańskich."
+        },
+        "preset": {
+          "name": "Ustawienie wstępne",
+          "description": "Ustawienie wstępne zapisane w aplikacji Konnect, o nazwie z listy Ustawienie wstępne. Używaj zamiast pola Ilość."
+        }
+      }
+    }
+  },
+  "issues": {
+    "outlet_write_unverified": {
+      "title": "Ustawienie prysznica mogło nie zostać zastosowane",
+      "description": "Home Assistant poprosił zawór o zmianę **{setting}** i zawór przyjął żądanie — ale ponowny odczyt wartości nie pokazał zmiany.\n\n{detail}\n\n**Co to oznacza.** API Kohler odpowiada „przyjęto do dostarczenia”, nigdy „zastosowano”, więc ta kontrola wychwytuje różnicę. Ustawienie może nadal mieć poprzednią wartość.\n\n**Co zrobić.** Otwórz encję i ustaw ją ponownie. Jeśli to się nie uda drugi raz, sprawdź w aplikacji Kohler Konnect, czy zawór jest online — zawór, który stracił połączenie z chmurą, przyjmuje polecenia, które nigdy do niego nie docierają.\n\nTen komunikat zniknie, gdy zmiana zostanie potwierdzona."
+    },
+    "faucet_not_found": {
+      "title": "{name} nie jest już na Twoim koncie Kohler",
+      "description": "Kohler nie wyświetla już tego kranu na Twoim koncie, więc Home Assistant nie może go odczytywać ani nim sterować. Jeśli usunięto go lub wymieniono w aplikacji Konnect, przeładuj integrację Kohler Konnect, aby uwzględnić zmianę.\n\nOstatni błąd: {error}"
+    },
+    "faucet_api_changed": {
+      "title": "Kohler nadal odrzuca żądania dotyczące urządzenia {name}",
+      "description": "Chmura Kohler odrzuciła kilka żądań z rzędu, co zwykle oznacza, że Kohler zmienił swoje API. Sprawdź, czy jest dostępna aktualizacja tej integracji. Jeśli nie, zgłoś problem i dołącz diagnostykę integracji.\n\nOstatni błąd: {error}"
+    },
+    "replaced_integration": {
+      "title": "Usuń stare integracje Kohler",
+      "description": "Kohler Konnect zastępuje integracje Kohler Anthem i Kohler Sensate, a te ich wpisy są nadal skonfigurowane: {entries}.\n\nSterują tymi samymi urządzeniami co Kohler Konnect, więc ich encje są duplikatami, a każdy z nich utrzymuje własne połączenie z Kohler. Przenieś automatyzacje na encje Kohler Konnect, a następnie usuń stare wpisy w **Ustawienia → Urządzenia oraz usługi** i usuń stare integracje w HACS.\n\nTen komunikat zniknie, gdy tylko zostaną usunięte."
+    }
+  }
+}

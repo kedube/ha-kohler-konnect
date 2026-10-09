@@ -1,0 +1,268 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Kohler Konnect",
+        "description": "Melde dich mit deinem Kohler-Konnect-Konto an. Alle Anthem-Armaturen, Anthem-Plus-Controller und Sensate-Armaturen darin werden hinzugefügt. Die Anmeldung erfolgt vollständig innerhalb von Home Assistant – es gibt keinen Browser-Schritt und nichts zum Zurückkopieren.",
+        "data": {
+          "username": "E-Mail",
+          "password": "Passwort"
+        }
+      },
+      "valve": {
+        "title": "Wähle deine Armatur",
+        "description": "Gefunden: {summary}\n\nDie Auslasskonfiguration deiner Armatur konnte nicht automatisch gelesen werden. Wähle daher dein digitales Anthem-Armaturmodell aus. Dies bestimmt, wie viele Auslässe vorhanden sind und zu welcher Zone jeder gehört. Dies ist auch dann erforderlich, wenn nur ein Anthem-Plus-Controller vorhanden ist, da der Controller die Auslässe pro Zone anhand desselben Layouts meldet.",
+        "data": {
+          "valve_model": "Armaturmodell"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Erneut anmelden",
+        "description": "Die gespeicherte Sitzung für {username} ist abgelaufen. Gib das Passwort erneut ein, um die Verbindung wiederherzustellen.",
+        "data": {
+          "password": "Passwort"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Kohler hat diese E-Mail-Adresse oder dieses Passwort abgelehnt.",
+      "cannot_connect": "Kohler konnte nicht erreicht werden. Überprüfe deine Internetverbindung und versuche es erneut.",
+      "signin_blocked": "Kohler benötigt einen zusätzlichen Schritt zur Anmeldung (zum Beispiel Zwei-Faktor-Authentifizierung), den diese Integration nicht durchführen kann.",
+      "no_devices": "Dieses Konto hat kein Gerät, das diese Integration unterstützt: Anthem-Armaturen, Anthem-Plus-Controller und Sensate-Armaturen. Beachte, dass ein Anthem-Plus-Touchscreen (K-28214-ASC) nur den Controller hinzufügt – um die Armatur selbst hinzuzufügen, ist ein Anthem-Touchscreen der ersten Generation (K-28214) erforderlich."
+    },
+    "abort": {
+      "already_configured": "Dieses Kohler-Konto ist bereits eingerichtet.",
+      "reauth_successful": "Erfolgreich wieder verbunden."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Kohler-Konnect-Optionen",
+        "description": "**Zonengruppierung** legt fest, wie Auslässe, Zonensteuerungen (Temperature, Flow) und Zonensensoren (Shower Active, Hex) benannt und gruppiert werden. Das betrifft nur Armaturen mit zwei Zonen (K-28211 und K-28212); bei einer Armatur mit einer Zone sehen alle drei Optionen gleich aus.\n\n**Wasser-Sicherheitslimit** gilt für Küchenarmaturen.",
+        "data": {
+          "zone_grouping": "Gruppierung der Zonen",
+          "max_run_minutes": "Wasser-Sicherheitslimit"
+        },
+        "data_description": {
+          "max_run_minutes": "Schaltet das Wasser so viele Minuten nach dem Einschalten aus Home Assistant ab, sofern es nicht zwischendurch abgeschaltet wurde. 0 deaktiviert das Limit."
+        }
+      }
+    }
+  },
+  "selector": {
+    "zone_grouping": {
+      "options": {
+        "subdevices": "Eigenes Gerät pro Zone — getrennte Geräte für Zone 1 und Zone 2, keine Zonennummern an Auslässen oder Steuerungen",
+        "outlet_labels": "Auslassnamen an den Steuerungen — ein Gerät, z. B. Temperature (Showerhead, Body Sprays)",
+        "numbered": "Zonennummern (Standard) — ein Gerät, hängt 1 / 2 an Auslässe und Steuerungen an"
+      }
+    },
+    "volume_unit": {
+      "options": {
+        "ml": "Milliliter (mL)",
+        "l": "Liter (L)",
+        "fl_oz": "Flüssigunzen (fl oz)",
+        "cup": "Tassen",
+        "qt": "Quarts",
+        "gal": "Gallonen"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "leak": {
+        "name": "Leck"
+      },
+      "dispensing": {
+        "name": "Dosierung"
+      },
+      "connected": {
+        "name": "Verbunden"
+      }
+    },
+    "button": {
+      "quick_dispense": {
+        "name": "{amount} dosieren"
+      },
+      "dispense_quarter_cup": {
+        "name": "¼ Tasse dosieren"
+      },
+      "dispense_half_cup": {
+        "name": "½ Tasse dosieren"
+      },
+      "dispense_one_cup": {
+        "name": "1 Tasse dosieren"
+      },
+      "dispense_two_cups": {
+        "name": "2 Tassen dosieren"
+      },
+      "dispense_one_quart": {
+        "name": "1 Quart dosieren"
+      },
+      "dispense_half_gallon": {
+        "name": "½ Gallone dosieren"
+      },
+      "dispense_one_gallon": {
+        "name": "1 Gallone dosieren"
+      },
+      "dispense_set_amount": {
+        "name": "Eingestellte Menge dosieren"
+      },
+      "dispense_preset": {
+        "name": "Voreinstellung dosieren"
+      },
+      "clear_leak": {
+        "name": "Leckalarm zurücksetzen"
+      }
+    },
+    "number": {
+      "dispense_amount": {
+        "name": "Dosiermenge"
+      }
+    },
+    "select": {
+      "preset": {
+        "name": "Voreinstellung"
+      }
+    },
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "off": "Aus",
+          "on": "An"
+        }
+      },
+      "progress": {
+        "name": "Firmware-Download",
+        "state": {
+          "not_started": "Nicht gestartet",
+          "downloading": "Wird heruntergeladen",
+          "completed": "Abgeschlossen"
+        }
+      },
+      "handle_state": {
+        "name": "Hebel",
+        "state": {
+          "open": "Offen",
+          "closed": "Geschlossen"
+        }
+      },
+      "last_dispense": {
+        "name": "Zuletzt dosiert"
+      },
+      "water_today": {
+        "name": "Wasserverbrauch heute"
+      },
+      "water_this_week": {
+        "name": "Wasserverbrauch diese Woche"
+      },
+      "water_this_month": {
+        "name": "Wasserverbrauch diesen Monat"
+      },
+      "water_this_year": {
+        "name": "Wasserverbrauch dieses Jahr"
+      }
+    },
+    "switch": {
+      "water": {
+        "name": "Wasser"
+      }
+    },
+    "update": {
+      "firmware_status": {
+        "name": "Firmware-Status"
+      }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Kohler hat die gespeicherten Zugangsdaten abgelehnt. Melde dich auf der Integrationsseite erneut an."
+    },
+    "update_failed": {
+      "message": "Fehler bei der Kommunikation mit der Kohler-Cloud: {error}"
+    },
+    "command_failed": {
+      "message": "Die Kohler-Cloud hat den Befehl nicht angenommen: {error}"
+    },
+    "amount_out_of_range": {
+      "message": "Wähle eine Menge zwischen {min} und {max} {unit}."
+    },
+    "faucet_offline": {
+      "message": "{name} ist offline: Die Kohler-Cloud erreicht die Armatur nicht. Prüfe Stromversorgung und WLAN."
+    },
+    "handle_closed": {
+      "message": "Der Hebel von {name} ist geschlossen. Öffne den Hebel, um aus der Ferne Wasser zu dosieren."
+    },
+    "firmware_updating": {
+      "message": "{name} installiert gerade ein Firmware-Update. Versuche es erneut, wenn es abgeschlossen ist."
+    },
+    "not_dispensed": {
+      "message": "Kohler konnte an {name} kein Wasser dosieren. Schalte die Armatur von Hand ein."
+    },
+    "command_forbidden": {
+      "message": "Kohler hat den Befehl für {name} mit dieser Anmeldung abgelehnt. Prüfe, ob es ein Update für diese Integration gibt."
+    },
+    "rate_limited": {
+      "message": "Kohler drosselt die Anfragen. Versuche es in {seconds} Sekunden erneut."
+    },
+    "preset_out_of_range": {
+      "message": "Die Voreinstellung „{title}“ liegt außerhalb des Dosierbereichs von 10 mL bis 11,36 L (3 Gallonen)."
+    },
+    "preset_not_found": {
+      "message": "{name} hat keine Voreinstellung namens „{preset}“. Vorhandene Voreinstellungen: {presets}."
+    },
+    "no_faucet": {
+      "message": "Es ist keine Sensate-Armatur eingerichtet und aktiv."
+    },
+    "faucet_not_selected": {
+      "message": "Das ausgewählte Gerät ist keine Sensate-Armatur. Wähle eine Armatur aus."
+    },
+    "faucet_required": {
+      "message": "Es ist mehr als eine Armatur eingerichtet. Wähle aus, welche Armatur dosieren soll."
+    }
+  },
+  "services": {
+    "dispense": {
+      "name": "Wasser dosieren",
+      "description": "Gibt eine abgemessene Menge Wasser oder eine Konnect-Voreinstellung aus einer Sensate-Armatur aus.",
+      "fields": {
+        "device_id": {
+          "name": "Armatur",
+          "description": "Die Armatur, die dosieren soll. Optional, wenn nur eine Armatur eingerichtet ist."
+        },
+        "amount": {
+          "name": "Menge",
+          "description": "Wie viel Wasser dosiert werden soll, in der gewählten Einheit (zwischen 10 mL und 11,36 L bzw. 3 Gallonen)."
+        },
+        "unit": {
+          "name": "Einheit",
+          "description": "Einheit der Menge. Standard ist mL, oder fl oz, wenn dein Konnect-Konto US-Einheiten verwendet."
+        },
+        "preset": {
+          "name": "Voreinstellung",
+          "description": "Eine in der Konnect-App gespeicherte Voreinstellung, mit ihrem Namen aus der Auswahl „Voreinstellung“. Alternative zu „Menge“."
+        }
+      }
+    }
+  },
+  "issues": {
+    "outlet_write_unverified": {
+      "title": "Eine Duscheinstellung wurde möglicherweise nicht angewendet",
+      "description": "Home Assistant hat deine Armatur gebeten, **{setting}** zu ändern, und die Armatur hat die Anfrage angenommen – aber beim anschließenden erneuten Auslesen des Werts wurde die Änderung nicht angezeigt.\n\n{detail}\n\n**Was das bedeutet.** Die API von Kohler antwortet mit „zur Zustellung angenommen“, niemals mit „angewendet“, daher dient diese Prüfung dazu, den Unterschied zu erkennen. Die Einstellung hat möglicherweise noch den alten Wert.\n\n**Was zu tun ist.** Öffne die Entität und stelle sie erneut ein. Wenn es ein zweites Mal fehlschlägt, überprüfe, ob die Armatur in der Kohler-Konnect-App online ist – eine Armatur, die die Verbindung zur Cloud verloren hat, nimmt Befehle an, die sie nie erreichen.\n\nDiese Meldung verschwindet, sobald eine Änderung bestätigt wird."
+    },
+    "faucet_not_found": {
+      "title": "{name} ist nicht mehr in deinem Kohler-Konto",
+      "description": "Kohler führt diese Armatur nicht mehr in deinem Konto, daher kann Home Assistant sie weder auslesen noch steuern. Wenn du sie in der Konnect-App entfernt oder ersetzt hast, lade die Integration Kohler Konnect neu, um die Änderung zu übernehmen.\n\nLetzter Fehler: {error}"
+    },
+    "faucet_api_changed": {
+      "title": "Kohler lehnt Anfragen für {name} weiterhin ab",
+      "description": "Die Kohler-Cloud hat mehrere Anfragen nacheinander abgelehnt. Das bedeutet meist, dass Kohler seine API geändert hat. Prüfe, ob es ein Update für diese Integration gibt. Falls nicht, eröffne ein Issue und hänge die Diagnosedaten der Integration an.\n\nLetzter Fehler: {error}"
+    },
+    "replaced_integration": {
+      "title": "Entferne die alten Kohler-Integrationen",
+      "description": "Kohler Konnect ersetzt die Integrationen Kohler Anthem und Kohler Sensate, und diese Einträge davon sind noch eingerichtet: {entries}.\n\nSie steuern dieselben Geräte wie Kohler Konnect, ihre Entitäten sind also doppelt vorhanden, und jeder hält eine eigene Verbindung zu Kohler. Übertrage deine Automationen auf die Entitäten von Kohler Konnect, lösche dann die alten Einträge unter **Einstellungen → Geräte & Dienste** und entferne die alten Integrationen in HACS.\n\nDiese Meldung verschwindet, sobald sie gelöscht sind."
+    }
+  }
+}
