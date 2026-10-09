@@ -1,5 +1,8 @@
 {
   "config": {
+    "initiate_flow": {
+      "user": "Adicionar conta"
+    },
     "step": {
       "user": {
         "title": "Kohler Konnect",

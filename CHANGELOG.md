@@ -11,6 +11,10 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Changed**
+
+- **The integration page's button reads Add account**, not Add hub, in every language.
+
 ## 1.0 — 2026-10-09
 
 **Kohler Konnect 1.0** is the first release of one integration for every supported device
