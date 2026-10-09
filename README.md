@@ -17,7 +17,7 @@
 > ⚠️ This is an **unofficial** integration. It is not affiliated with or endorsed by Kohler, and the underlying API may change at any time.
 
 <p align="center">
-  <img src="docs/images/screenshot_1.png" alt="Kohler Konnect integration in Home Assistant">
+  <img src="docs/images/integration.png" alt="Kohler Konnect integration in Home Assistant">
 </p>
 
 ## One account, every device
@@ -45,7 +45,11 @@ interact when combined.
 > it is added afresh rather than updated in place.
 
 <p align="center">
-  <img src="docs/images/screenshot_2.png" alt="An Anthem valve in Home Assistant">
+  <img src="docs/images/anthem_shower.png" alt="An Anthem valve in Home Assistant">
+</p>
+
+<p align="center">
+  <img src="docs/images/sensate_faucet.png" alt="A Sensate faucet in Home Assistant">
 </p>
 
 ### Highlights
