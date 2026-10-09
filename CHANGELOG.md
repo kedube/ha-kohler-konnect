@@ -11,6 +11,8 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+## 1.01 — 2026-10-09
+
 **Changed**
 
 - **The integration page's button reads Add account**, not Add hub, in every language.
