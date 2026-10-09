@@ -11,6 +11,8 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+## 1.0 — 2026-10-09
+
 **Kohler Konnect 1.0** is the first release of one integration for every supported device
 on a Kohler account — Anthem valves, Anthem Plus controllers and Sensate faucets — under one
 sign-in and one MQTT connection, domain `kohler_konnect`. It replaces two integrations,
@@ -370,3 +372,4 @@ are Kohler Sensate's.
 - **Debug logs leave out request payloads carrying the account ID**, and never log Kohler's
   account replies (home address, coordinates, Wi-Fi name). Error messages never include
   credentials or tokens. (0.2.0)
+
