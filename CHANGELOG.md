@@ -11,6 +11,8 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+## 1.03 — 2026-10-16
+
 **Fixed — safety**
 
 - **Changing a temperature or flow no longer starts water on a paused zone.** Every command
