@@ -37,8 +37,10 @@ they describe. Two consequences, both accepted: a HACS update or reinstall **rep
 integration folder and deletes any reports still in it** (move files out before updating if
 they matter), and on the development install the directory is gitignored.
 
-Thread safety: paho calls `write()` on its network thread; `start`/`resume`/`stop` run in
-an executor. The lock covers all file state, same pattern as `raw_log.py`.
+Thread safety: paho calls `write()` on its network thread; `start`/`resume`/`stop`/
+`prepare` run in an executor. The lock covers all file state, same pattern as `raw_log.py`.
+`note()` runs on the event loop and takes no lock at all: it queues the decision for the
+next `prepare()` or `write()`, whichever thread gets there first.
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ import os
 import re
 import threading
 import time
+from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
@@ -61,6 +64,9 @@ _LOGGER = logging.getLogger(__name__)
 _SAFE_STEM = re.compile(r"report_\d{8}T\d{6}Z")
 
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
+
+#: Decisions queued for `prepare()` to write. A handful arrive per shower.
+_PENDING_MAX = 200
 
 _PART_RE = re.compile(r"_p(\d+)\.jsonl$")
 
@@ -112,8 +118,13 @@ class ReportLog:
         self._written = 0
         self._path: str | None = None
         self._stem: str | None = None
-        # Set when `note()` had a record but no open file. See `wants_open`.
+        # Set when `note()` queued a decision. See `wants_open`.
         self._wants_open = False
+        # Decisions from `note()`, oldest first, waiting for `prepare()` or `write()`.
+        # Bounded: if neither ever comes, the oldest are dropped rather than held for ever.
+        self._pending: deque[str] = deque(maxlen=_PENDING_MAX)
+        # Set by `close()`. See there: nothing but `start()` or `resume()` reopens after it.
+        self._closed = False
 
     @property
     def active(self) -> bool:
@@ -122,30 +133,37 @@ class ReportLog:
 
     @property
     def wants_open(self) -> bool:
-        """True when a decision arrived with no file open, so `prepare()` should be called.
+        """True when a decision is queued, so `prepare()` should be called.
 
-        `write()` is called from paho's network thread, where opening a file is fine.
-        `note()` is called from the **event loop**, where it is not — so `note()` never
-        opens one and raises this instead, exactly as `DebugJournal` does. The caller
-        schedules `prepare()` in an executor; the record that raised the flag is lost and
-        the next one lands.
+        `write()` is called from paho's network thread, where file I/O is fine. `note()` is
+        called from the **event loop**, where it is not — so `note()` never touches the
+        file, nor the lock, which paho's thread holds while it opens or rolls a part. It
+        queues the decision and raises this instead, exactly as `DebugJournal` does, and
+        the caller schedules `prepare()` in an executor to write it.
+
+        ⚠️ Until 2026-10-16 `note()` wrote on the loop whenever a part was open, and could
+        wait there on that lock; with none open, the decision that raised this was lost.
         """
         return self._wants_open
 
     def prepare(self) -> None:
-        """Open the episode's file. **Blocking — call from an executor.**"""
+        """Write the queued decisions, opening or rolling the episode's part as needed.
+
+        **Blocking — call from an executor.** Does nothing without an episode, or after
+        `close()`.
+        """
         with self._lock:
             self._wants_open = False
-            if self._stem is None:
-                return
-            # An open part that still has room needs nothing. A full one is why `note()`
-            # asked: it cannot roll on the event loop, so the roll happens here.
-            if self._handle is not None and self._written < self._max_bytes:
+            if self._stem is None or self._closed:
+                self._pending.clear()
                 return
             try:
-                self._open_locked()
-            except OSError as err:  # pragma: no cover - defensive
-                _LOGGER.warning("Report log could not open: %s", err)
+                self._drain_locked()
+            except OSError as err:
+                # The handle goes and the episode stays, as in `write()`; so does whatever
+                # is still queued, for when the disk comes back.
+                _LOGGER.warning("Report log write failed: %s", err)
+                self._close_locked()
 
     @property
     def path(self) -> str | None:
@@ -162,6 +180,8 @@ class ReportLog:
         stem = "report_" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
         with self._lock:
             self._close_locked()
+            self._closed = False
+            self._pending.clear()
             self._stem = stem
             try:
                 self._open_locked()
@@ -192,6 +212,7 @@ class ReportLog:
             return
         with self._lock:
             self._close_locked()
+            self._closed = False
             self._stem = stem
             try:
                 self._open_locked()
@@ -200,36 +221,74 @@ class ReportLog:
         _LOGGER.info("Report log resumed episode %s after restart", stem)
 
     def stop(self) -> None:
-        """End the episode. The next `start()` gets a fresh file."""
+        """End the episode. The next `start()` gets a fresh file.
+
+        Decisions still queued were made before the switch went off, so they are written
+        first.
+        """
         with self._lock:
+            if self._stem is not None and not self._closed:
+                try:
+                    self._drain_locked()
+                except OSError as err:
+                    _LOGGER.warning("Report log write failed: %s", err)
+            self._pending.clear()
             path = self._path
             self._close_locked()
             self._stem = None
         _LOGGER.info("Report log OFF (%s)", path)
 
     def close(self) -> None:
-        """Release the file handle without ending the episode — for unload.
+        """Release the file handle without ending the episode — for unload. **Final.**
 
         The episode's persistence is the config entry's business; after a reload the
         coordinator calls `resume()` with the persisted name and writing continues in the
-        same file.
+        same file — from the *new* coordinator's `ReportLog`.
+
+        ⚠️ **So nothing may reopen the file through this object afterwards.** Until
+        2026-10-16 it kept `_stem`, and a decision noted after unload — or the `prepare()`
+        an earlier one had scheduled — opened the episode's part again: a leaked handle,
+        and two writers on one file once the reload resumed it. Now `note()`, `write()` and
+        `prepare()` all do nothing after this; only an explicit `start()` or `resume()`
+        attaches it again.
+
+        Decisions still queued go into the part already open first, without opening or
+        rolling one. That is the only write here; `KonnectMqttStream.async_stop` calls this
+        on the event loop, and by then the `prepare()` each decision scheduled has almost
+        always written it already.
         """
         with self._lock:
+            self._closed = True
+            self._wants_open = False
+            while (
+                self._pending
+                and self._handle is not None
+                and self._written < self._max_bytes
+            ):
+                try:
+                    self._write_line_locked(self._pending.popleft())
+                except OSError as err:
+                    _LOGGER.warning("Report log write failed: %s", err)
+                    break
+            self._pending.clear()
             self._close_locked()
 
     def write(
         self, topic: str, payload: bytes, *, qos: int = 0, retain: bool = False
     ) -> None:
-        """Record one message. Cheap no-op when no episode is active."""
-        if self._stem is None:
+        """Record one message. Cheap no-op when no episode is active, or after `close()`."""
+        if self._stem is None or self._closed:
             return
         line = format_record(topic, payload, qos=qos, retain=retain)
         if line is None:  # pragma: no cover - defensive
             return
         with self._lock:
-            if self._stem is None:
+            if self._stem is None or self._closed:
                 return
             try:
+                # Decisions queued before this message arrived happened before it, and the
+                # file keeps that order — see `note()`.
+                self._drain_locked()
                 self._write_line_locked(line)
             except OSError as err:
                 # A diagnostic must never take the stream down. Drop the handle but keep
@@ -258,7 +317,7 @@ class ReportLog:
         that was seen and deliberately left alone — which is usually the question being
         asked.
         """
-        if self._stem is None:
+        if self._stem is None or self._closed:
             return
         record: dict[str, Any] = {
             "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -270,30 +329,31 @@ class ReportLog:
             line = json.dumps(record, default=str)
         except (TypeError, ValueError):  # pragma: no cover - defensive
             return
-        with self._lock:
-            if self._stem is None:
-                return
-            # ⚠️ **Never opens a file.** Unlike `write()`, which paho calls on its own network
-            # thread, this runs on the **event loop** — the warm-up watcher lives there — and `_open_locked` creates a directory and opens two
-            # files. Blocking calls on the loop are an error in Home Assistant, and this
-            # shipped doing exactly that in 0.15.0.
-            #
-            # Same answer as `DebugJournal.note`: raise a flag and let the caller schedule
-            # `prepare()` in an executor. The cost is that a decision arriving while no file
-            # is open is dropped and the next one lands — acceptable for a diagnostic, and
-            # the usual case is a file already open from `start()` or `resume()`.
-            if self._handle is None or self._written >= self._max_bytes:
-                self._wants_open = True
-                return
-            try:
-                self._write_line_locked(line)
-            except OSError as err:
-                _LOGGER.warning("Report log write failed: %s", err)
-                self._close_locked()
+        # ⚠️ **Never touches the file, and never takes the lock.** Unlike `write()`, which
+        # paho calls on its own network thread, this runs on the **event loop** — the
+        # warm-up watcher lives there. `_open_locked` creates a directory and opens two
+        # files, and this shipped doing exactly that on the loop in 0.15.0; after that it
+        # still wrote and flushed here, and waited on a lock paho's thread holds while it
+        # opens or rolls a part.
+        #
+        # Same answer as `DebugJournal.note`: queue the line and let the caller schedule
+        # `prepare()` in an executor. `write()` takes the queue first too, so a message
+        # arriving meanwhile still lands after the decisions made before it.
+        self._pending.append(line)
+        self._wants_open = True
 
     # ------------------------------------------------------------------ #
     # Locked internals
     # ------------------------------------------------------------------ #
+    def _drain_locked(self) -> None:
+        """Write the queued decisions in order, opening or rolling parts as needed.
+
+        Raises `OSError` from the write; the line being written is lost with the handle,
+        and the rest stay queued.
+        """
+        while self._pending:
+            self._write_line_locked(self._pending.popleft())
+
     def _write_line_locked(self, line: str) -> None:
         if self._handle is None or self._written >= self._max_bytes:
             self._open_locked()

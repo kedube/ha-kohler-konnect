@@ -243,7 +243,7 @@ async def test_a_reused_identity_never_warms_up(
 # --------------------------------------------------------------------------- #
 
 
-async def test_reconnects_back_off_up_to_the_ceiling_and_reset_once_connected(
+async def test_reconnects_back_off_up_to_the_ceiling_and_reset_once_stable(
     hass: HomeAssistant, make_stream
 ) -> None:
     """The conftest shrinks the bounds to 0.01 s and 0.05 s; the shape is what counts."""
@@ -257,7 +257,14 @@ async def test_reconnects_back_off_up_to_the_ceiling_and_reset_once_connected(
 
     # Doubling, then held at the ceiling; the first entry is the initial connect.
     assert registrar.backoffs == [0.01, 0.02, 0.04, 0.05, 0.05, 0.05]
-    assert stream._backoff == 0.01
+    # Connecting alone does not reset it; a connection that lasted does, when it drops.
+    assert stream._backoff == 0.05
+    with patch(
+        "custom_components.kohler_konnect.konnect.mqtt.STABLE_CONNECTION_SECONDS", 0
+    ):
+        FakeMqttClient.instances[-1].drop()
+    await settle(hass, lambda: stream.connected, "the second reconnection")
+    assert registrar.backoffs[-1] == 0.02
     # The same identity every time — a fresh one per attempt leaves dead registrations.
     assert set(registrar.identities) == {MOBILE_ID}
 

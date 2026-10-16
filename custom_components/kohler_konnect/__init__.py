@@ -31,8 +31,8 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigEntryChange,
 )
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
@@ -138,14 +138,21 @@ def _async_cleanup_zone_subdevices(
     every disabled per-zone entity — the Hex sensors by default, and anything the owner
     had turned off, which then came back enabled and lost its name. So each zone device's
     remaining entities are moved onto the valve's own device first.
+
+    ⚠️ **Only for a valve whose own settings stated its layout this boot** (2026-10-16).
+    When that read fails the valve runs on a fallback layout — the entry's — and a
+    two-zone valve on a single-zone entry looked as if its zones had gone: both zone
+    devices were deleted, and with them the area and name the owner had given each. A
+    valve still waiting on its read keeps its zone devices until a boot that has it.
     """
+    confirmed = [valve for valve in coordinator.valves if valve.topology_confirmed]
     active: set[str] = set()
     if coordinator.zone_grouping == ZONE_GROUPING_SUBDEVICES:
-        for valve in coordinator.valves:
+        for valve in confirmed:
             if len(valve.model.zones) > 1:
                 active.update(zone_device_id(valve, zone) for zone in valve.model.zones)
 
-    owners = {f"{valve.device_id}_zone_": valve for valve in coordinator.valves}
+    owners = {f"{valve.device_id}_zone_": valve for valve in confirmed}
     if not owners:
         return
 
@@ -184,31 +191,39 @@ def _async_cleanup_zone_subdevices(
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Kohler Konnect from a config entry."""
     coordinator = KohlerKonnectCoordinator(hass, entry)
-    # **Everything `async_setup` starts must be unwound on failure** — including a failure
-    # inside it, once the stream is up. By then the MQTT stream is connecting, any capture
-    # file switched on is open, and every valve has armed its cloud-watch timers — but the
-    # coordinator is not yet in `hass.data`, so a raise here means Home Assistant discards
-    # it without ever calling `async_unload_entry`. Left alone that strands a paho network
-    # thread with its own reconnect loop, the open files, and timers that fire into a dead
-    # coordinator; and because `ConfigEntryNotReady` is retried, each attempt stacks
-    # another set. `async_shutdown_stream` copes with whatever was never started.
-    try:
-        await coordinator.async_setup()
-        await coordinator.async_config_entry_first_refresh()
-    except Exception:
-        await coordinator.async_shutdown_stream()
-        raise
+    # **Everything `async_setup` starts must be unwound however setup ends** — including a
+    # failure inside it, once the stream is up, and one after it, in the platforms. By
+    # then the MQTT stream is connecting, any capture file switched on is open, and every
+    # valve has armed its cloud-watch timers, and Home Assistant never calls
+    # `async_unload_entry` for an entry that failed to load. Left alone that strands a paho
+    # network thread with its own reconnect loop, the open files, and timers that fire into
+    # a dead coordinator; and because `ConfigEntryNotReady` is retried, each attempt stacks
+    # another set. Home Assistant does run an entry's unload callbacks when its setup fails,
+    # so registering the shutdown here, before anything has started, covers every failure
+    # from this line on — until 2026-10-16 only the first two calls below were covered.
+    # `async_shutdown_stream` copes with whatever was never started, and with being called
+    # again by `async_unload_entry`.
+    entry.async_on_unload(coordinator.async_shutdown_stream)
 
-    # Each faucet's first read, before the platforms build their entities from it. Not a
-    # first refresh that fails the entry: a faucet Kohler cannot answer for right now
-    # should not take the showers down with it. Its entities show unavailable, and it
-    # retries on its own clock.
-    if coordinator.faucets:
-        await asyncio.gather(
-            *(faucet.async_refresh() for faucet in coordinator.faucets)
-        )
+    async def _async_stop(_event: Event) -> None:
+        # Home Assistant does not unload entries when it stops, so without this the stream
+        # kept dispatching into entities through the whole shutdown.
+        await coordinator.async_shutdown_stream()
+
+    entry.async_on_unload(hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, _async_stop))
+
+    # The faucets' first reads run inside `async_setup` now, alongside the showers' seed;
+    # it returns once they have, so the platforms below still build from them.
+    await coordinator.async_setup()
+    await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    # Dropped again by `async_unload_entry`; this covers a setup that fails from here on,
+    # which would otherwise leave the dead coordinator for services to find.
+    entry.async_on_unload(lambda: _async_forget_coordinator(hass, entry, coordinator))
+    # From here on entities exist, built from each valve's layout as it stands — a layout
+    # read later that differs reloads the entry; see `_async_note_valve_topology`.
+    coordinator.entities_built = True
     _async_ensure_parent_valve_devices(hass, entry, coordinator)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _async_cleanup_zone_subdevices(hass, entry, coordinator)
@@ -262,14 +277,59 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        coordinator: KohlerKonnectCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator: KohlerKonnectCoordinator = hass.data[DOMAIN][entry.entry_id]
+        _async_forget_coordinator(hass, entry, coordinator)
         await coordinator.async_shutdown_stream()
-        if not hass.data[DOMAIN]:
-            hass.data.pop(DOMAIN)
-            # Only once the last entry is gone: the services are shared, so removing them
-            # while another entry is still loaded would break it.
-            async_unregister_services(hass)
     return unload_ok
+
+
+@callback
+def _async_forget_coordinator(
+    hass: HomeAssistant, entry: ConfigEntry, coordinator: KohlerKonnectCoordinator
+) -> None:
+    """Drop the entry's coordinator from `hass.data`, if it is still the one there."""
+    entries: dict[str, KohlerKonnectCoordinator] | None = hass.data.get(DOMAIN)
+    if entries is None or entries.get(entry.entry_id) is not coordinator:
+        return
+    entries.pop(entry.entry_id)
+    if not entries:
+        hass.data.pop(DOMAIN)
+        # Only once the last entry is gone: the services are shared, so removing them
+        # while another entry is still loaded would break it.
+        async_unregister_services(hass)
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: ConfigEntry, device: dr.DeviceEntry
+) -> bool:
+    """Offer Delete on a device page only for a device that has left the Kohler account.
+
+    Without this, a valve, controller or faucet removed in the Konnect app stayed in Home
+    Assistant with no way to delete it short of removing the whole entry. A device the
+    account still lists is refused — it would only be recreated at the next start — and
+    so is a zone sub-device of a valve still on it, which setup manages on its own (see
+    `_async_cleanup_zone_subdevices`). With the entry not loaded nothing can be checked,
+    so nothing is deleted.
+    """
+    coordinator: KohlerKonnectCoordinator | None = hass.data.get(DOMAIN, {}).get(
+        entry.entry_id
+    )
+    if coordinator is None:
+        return False
+    # Lowercase throughout: faucet messages are matched without regard to case, so their
+    # ids are compared the same way here.
+    present = {
+        kohler_id.lower()
+        for kohler_id in (
+            *(valve.device_id for valve in coordinator.valves),
+            *(controller.device_id for controller in coordinator.controllers),
+            *(faucet.device_id for faucet in coordinator.faucets),
+        )
+    }
+    return not any(
+        domain == DOMAIN and identifier.split("_zone_")[0].lower() in present
+        for domain, identifier in device.identifiers
+    )
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

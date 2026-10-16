@@ -113,7 +113,7 @@ All are under `/platform/api/v1/commands/gcs/`. Every body starts `{deviceId, sk
 | Open outlets | `solowritesystem` with the full words: outlet bits, temperature and flow for both zones | live |
 | Stop | **The app writes byte 3 = `0x40`**: the pause bit, no outlets, bit 7 clear. It sets the per-valve pause bit and zeroes the outlets (`db0/c.java`; the older screens do the same) | app |
 | Stop, `0x00` | Mask `0x00` with a valid prefix also stops. The Anthem Plus controller stops this way, and so does this integration: a `0x00` stop can never be mistaken for the valve's own run-time cutoff, which pauses with `0x40` (§4.1) | live |
-| Broken stop | An all-zero `primaryValve1` (prefix `0x00`) addresses no valve and is **ignored** — the "can turn on but never off" bug in other libraries | live |
+| Broken stop | An all-zero `primaryValve1` is **ignored** — the "can turn on but never off" bug in other libraries. It is the whole word that is inert, not its `0x00` first byte: every valve-1 word below 25.6 °C starts `0x00` too (full cold is `0000C8xx`) | live |
 | Full cold | Temperature `0` °C: the valve stops mixing in hot water. The app's slider has a `COLD` stop one below the minimum that sends this | app + live |
 
 ### 3.2 Word details the app adds to valve_hex.md

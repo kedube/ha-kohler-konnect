@@ -33,7 +33,7 @@ from custom_components.kohler_konnect.konnect.const import (
     WARMUP_DISABLED,
     WARMUP_SELECTED_OUTLETS_NOW,
 )
-from custom_components.kohler_konnect.konnect.valve_hex import encode_word
+from custom_components.kohler_konnect.konnect.valve_hex import AT_TEMP_BIT, encode_word
 
 from .conftest import (
     TENANT_ID,
@@ -51,9 +51,11 @@ SELECTED = WARMUP_SELECTED_OUTLETS_NOW
 OFF = WARMUP_DISABLED
 WARMUP_SELECT = "select.anthem_valve_warmup"
 
-# The reference install's zone 1 warm-up set, then the two ways a warm-up ends.
+# The reference install's zone 1 warm-up set, then the two ways a warm-up ends. Its own
+# pause comes at temperature — byte 0's 0x04, the evidence that tells it from a Stop.
 WARMING_WORD = encode_word(0x01, 40.0, 100.0, 0x07)
-PAUSED_WORD = encode_word(0x01, 40.0, 100.0, 0x00, paused=True)
+_PAUSE = encode_word(0x01, 40.0, 100.0, 0x00, paused=True)
+PAUSED_WORD = f"{int(_PAUSE[:2], 16) | AT_TEMP_BIT:02X}{_PAUSE[2:]}"
 STOPPED_WORD = encode_word(0x01, 40.0, 100.0, 0x00)
 RUNNING_WORD = encode_word(0x01, 40.0, 100.0, 0x01)
 
@@ -422,9 +424,11 @@ async def test_no_pausing_warmup_leaves_outlets_picked_at_the_wall_alone(
     """Outlets other than the warm-up's own, unpaused: a person took over."""
     valve = await _set_up(hass, config_entry)
     await _custom_shower(hass, keep_on=True)
-    _report(WARMING_WORD, "warmUpInProgress")
+    # A selected-outlets warm-up on outlets 1-2, so outlet 3 is outside it: one of its own
+    # would read as the warm-up winding down until the settle window passed.
+    _report(encode_word(0x01, 40.0, 100.0, 0x03), "warmUpInProgress")
     await _quiet(0.05)
-    _report(encode_word(0x01, 40.0, 100.0, 0x02))
+    _report(encode_word(0x01, 40.0, 100.0, 0x04))
     await _until(lambda: valve._custom_shower_task is None, "the watcher to finish")
     _report(PAUSED_WORD)
     await _quiet()

@@ -317,16 +317,28 @@ class DailyWaterUsage(WaterUsage):
     series reported for it.
     """
 
-    # `TOTAL`, not `TOTAL_INCREASING`: both of these fall — one at midnight, one as the
-    # window rolls — and calling that a meter reset would inject phantom water into
-    # long-term statistics. `Water Used Today` also sets `last_reset` to local midnight, so
-    # statistics record each day as a new period; a rolling week has no start to give.
-    _attr_state_class = SensorStateClass.TOTAL
-
     #: Trailing days to sum, counting today.
     _days: int = 1
     _cache_key: tuple[int, date, date] | None = None
     _cached: tuple[float | None, dict[str, Any]] = (None, {})
+    #: `Water Used Today` only: the bucket it last read under the UTC fallback in
+    #: `_rendered`, and the litres it reported from it. See there.
+    _borrowed: tuple[date, float] | None = None
+
+    @property
+    def state_class(self) -> SensorStateClass | None:
+        """`TOTAL` for `Water Used Today`; none at all for a rolling window.
+
+        `TOTAL`, not `TOTAL_INCREASING`, for today: it falls at midnight, and calling that a
+        meter reset would inject phantom water into long-term statistics. It sets
+        `last_reset` to local midnight, so statistics record each day as a new period.
+
+        **A rolling week has no state class**, since 2026-10-16. It falls whenever a day
+        leaves the window and has no start to give as `last_reset`, so as `TOTAL` the
+        recorder added every such drop to the statistics sum as negative water — and the
+        Energy dashboard offered it as a water source. It is a figure to read, not a meter.
+        """
+        return SensorStateClass.TOTAL if self._days == 1 else None
 
     def _rendered(self) -> tuple[float | None, dict[str, Any]]:
         """Sum the trailing `_days` buckets, cached on the payload's identity.
@@ -369,20 +381,50 @@ class DailyWaterUsage(WaterUsage):
             ):
                 starts[bucket] = starts.get(bucket, 0) + int(count)
 
+        # Some accounts appear to expose the daily chart on UTC bucket labels. In US
+        # evenings that can put local "today" under tomorrow's ISO date, which used to
+        # render as zero/unknown even after water was used — so when today's own bucket is
+        # empty, today reads that one instead.
+        #
+        # ⚠️ **What today borrowed must not be counted again tomorrow.** After local
+        # midnight the borrowed bucket *is* today, under a new `last_reset`, and Home
+        # Assistant counts the first value of a new period in full — so the evening's water
+        # went into long-term statistics twice. `_borrowed` remembers how much of that
+        # bucket today already reported, and tomorrow reads only the rest. Held in memory:
+        # a restart between the borrow and the next day's first reading forgets it.
+        borrowed = self._borrowed if self._days == 1 else None
+        if borrowed is not None and borrowed[0] < local_today:
+            # Its day has come and gone; there is nothing left to subtract from.
+            self._borrowed = borrowed = None
+        counted_already = 0.0
+
         turned_on: int | None = None
         for day in wanted:
             bucket = day
-            # Some accounts appear to expose the daily chart on UTC bucket labels. In US
-            # evenings that can put local "today" under tomorrow's ISO date, which used to
-            # render as zero/unknown even after water was used.
+            volume = volumes.get(day)
+            if (
+                day == local_today
+                and borrowed is not None
+                and borrowed[0] == day
+                and volume is not None
+            ):
+                counted_already = min(borrowed[1], volume)
+                volume -= counted_already
             if (
                 day == local_today
                 and utc_today > local_today
-                and volumes.get(day, 0.0) == 0
+                and not volume
                 and volumes.get(utc_today, 0.0) > 0
             ):
                 bucket = utc_today
-            volume = volumes.get(bucket)
+                volume = volumes[utc_today]
+                counted_already = 0.0
+                if self._days == 1:
+                    self._borrowed = (utc_today, volume)
+            elif day == local_today and borrowed is not None and borrowed[0] > day:
+                # Today stopped borrowing — its own bucket filled in — so the figure it
+                # reports no longer includes tomorrow's water, and tomorrow owes nothing.
+                self._borrowed = None
             if volume is None:
                 continue
             if bucket in starts:
@@ -405,6 +447,14 @@ class DailyWaterUsage(WaterUsage):
                 bucket_date = next(iter(days))
                 if bucket_date != local_today.isoformat():
                     attributes["bucket_date"] = bucket_date
+                if counted_already:
+                    # Left out of today because yesterday already reported it; see above.
+                    attributes["counted_yesterday"] = round(
+                        counted_already
+                        if self._metric
+                        else usage_volume_gallons(counted_already),
+                        1,
+                    )
             if self._days > 1:
                 # The per-day breakdown is the point of a rolling window: it says which day
                 # the water went, which a single figure cannot.
@@ -429,7 +479,8 @@ class DailyWaterUsage(WaterUsage):
 
     @property
     def last_reset(self) -> datetime | None:
-        """Local midnight for `Water Used Today`; None for the rolling week."""
+        """Local midnight for `Water Used Today`; None for the rolling week, which has no
+        state class for statistics to read it with."""
         return dt_util.start_of_local_day() if self._days == 1 else None
 
     @property

@@ -31,8 +31,15 @@ from dataclasses import dataclass, field
 
 from .models import ValveModel
 
-# Sent for a valve the model does not populate. The firmware ignores it: prefix 0x00
-# addresses no valve. It must still be present in the payload.
+# Sent for a valve the model does not populate. It must still be present in the payload.
+#
+# The firmware ignores this **whole word** (live: an all-zero `primaryValve1` is the "could
+# turn on but never off" bug). It is not that a 0x00 first byte "addresses no valve", as
+# this once said: valve 1's index nibble is 0, so every valve-1 word below 25.6 °C starts
+# 0x00 too — 4.0 °C is `0028C8xx`, full cold `0000C8xx` — and those are ordinary words.
+# Why the all-zero one is inert is unestablished — one candidate is its flow byte, 0x00,
+# below the 0x10 floor every capture respects. The code treats only this exact word as the
+# sentinel.
 UNUSED_VALVE_WORD = "00000000"
 
 # Byte 0 layout (resolved from the app decompile, `p315jj/h.java`, and verified against 363
@@ -82,7 +89,8 @@ TEMPERATURE_TENTHS_PER_DEGREE = 10
 # one-bit reading agreed with every sample while still being the narrower model.
 TEMPERATURE_HIGH_BITS = 0x03
 # The Konnect app never sends above 48.8 °C (488 tenths), so writes clamp there rather than
-# at the 51.1 °C the encoding could carry.
+# at the 102.3 °C the 10-bit encoding could carry. Whether the firmware enforces that cap or
+# only the app does is untested, so the app's limit is the one honoured.
 TEMPERATURE_MAX_TENTHS = 488
 # Kept as documentation of the encoding, not because anything here reads them: the wire
 # format is `base + tenths * step`, and these name the two halves of that so the tenths
@@ -197,10 +205,6 @@ FAHRENHEIT_TO_TENTHS_C = {
     121: 494,
     122: 500,
 }
-# The byte accepts up to 0xFF, but the Konnect app never sends above 0xE8 (48.8 °C /
-# 119.8 °F). Whether the firmware enforces that cap or only the app does is untested, so
-# writes clamp to the app's limit rather than the byte's.
-TEMPERATURE_BYTE_MAX = 0xE8
 
 # Byte 2 — flow. The SAME byte is expressed on three different scales depending on where
 # you read it, which is a standing source of 2x and 4x errors:
@@ -694,7 +698,9 @@ def stop_pair(
 
     Mask ``0x00`` is STOP. The temperature and flow bytes are ignored by the firmware for a
     stop but still have to be well-formed — which is why the library's ``turn_off()``,
-    sending an all-zero ``primaryValve1``, is ignored: prefix ``0x00`` addresses no valve.
+    sending the all-zero :data:`UNUSED_VALVE_WORD` as ``primaryValve1``, is ignored. The
+    whole word is the sentinel, not its ``0x00`` first byte, which any valve-1 word below
+    25.6 °C shares.
 
     ⚠️ **Deliberately not what the Konnect app sends.** The app's Stop writes byte 3 =
     ``0x40`` — the pause bit with no outlets, exactly :func:`pause_pair` with no mask

@@ -13,12 +13,13 @@ One entry per Kohler account, covering every supported device on it. Two steps:
 
 Only the rotating refresh token is stored, never the password. When the token finally
 expires (B2C allows up to ~90 days) Home Assistant raises a reauth prompt that asks for the
-password again.
+password again — for the entry's own account only, and replacing nothing but the credential.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable
 from typing import Any
 
 import voluptuous as vol
@@ -166,7 +167,6 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._kohler_data: dict[str, Any] = {}
         self._kohler_summary: str = ""
-        self._kohler_reauth: bool = False
         self._kohler_topology: tuple[int, int] | None = None
         # Whether the account has a valve or a controller, which need a valve model. An
         # account with only faucets has nothing to ask about.
@@ -180,32 +180,39 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            try:
-                await self._async_sign_in(
+            errors = await self._async_sign_in_errors(
+                self._async_sign_in(
                     user_input[CONF_USERNAME], user_input[CONF_PASSWORD]
                 )
-            except InvalidCredentials:
-                errors["base"] = "invalid_auth"
-            except SignInBlocked as err:
-                _LOGGER.error("Kohler sign-in blocked: %s", err)
-                errors["base"] = "signin_blocked"
-            except (AuthError, KohlerError) as err:
-                _LOGGER.error("Kohler sign-in failed: %s", err)
-                errors["base"] = "cannot_connect"
-            else:
+            )
+            if not errors:
                 if not self._kohler_data.get("has_device"):
                     errors["base"] = "no_devices"
                 else:
                     await self.async_set_unique_id(
                         user_input[CONF_USERNAME].strip().lower()
                     )
-                    if not self._kohler_reauth:
-                        self._abort_if_unique_id_configured()
+                    self._abort_if_unique_id_configured()
                     return await self.async_step_valve()
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors
         )
+
+    @staticmethod
+    async def _async_sign_in_errors(sign_in: Awaitable[Any]) -> dict[str, str]:
+        """Await a sign-in; return the form errors its failure means, `{}` on success."""
+        try:
+            await sign_in
+        except InvalidCredentials:
+            return {"base": "invalid_auth"}
+        except SignInBlocked as err:
+            _LOGGER.error("Kohler sign-in blocked: %s", err)
+            return {"base": "signin_blocked"}
+        except (AuthError, KohlerError) as err:
+            _LOGGER.error("Kohler sign-in failed: %s", err)
+            return {"base": "cannot_connect"}
+        return {}
 
     async def _async_sign_in(self, username: str, password: str) -> None:
         """Sign in, then read the account to see what hardware is on it."""
@@ -302,26 +309,6 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
                     chosen.outlets_valve2,
                 ]
 
-            if self._kohler_reauth:
-                entry_id = self.context.get("entry_id")
-                entry = (
-                    self.hass.config_entries.async_get_entry(entry_id)
-                    if entry_id
-                    else None
-                )
-                if entry is not None:
-                    self.hass.config_entries.async_update_entry(
-                        entry, data={**entry.data, **data}
-                    )
-                    # The explicit reload is required, not belt-and-braces. Reauth usually
-                    # changes nothing but the refresh token, and `_async_update_listener`
-                    # deliberately ignores that key — so leaving the reload to the listener
-                    # would leave `KohlerAuth` holding the dead token that caused the reauth
-                    # in the first place. Where other fields changed too, the listener may
-                    # also fire and reload a second time; harmless, and reauth is rare.
-                    await self.hass.config_entries.async_reload(entry.entry_id)
-                return self.async_abort(reason="reauth_successful")
-
             return self.async_create_entry(
                 title=f"Kohler Konnect ({data[CONF_USERNAME]})", data=data
             )
@@ -349,21 +336,59 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
     # ------------------------------------------------------------------ #
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         """The stored refresh token expired or was revoked; ask for the password again."""
-        self._kohler_reauth = True
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        entry_id = self.context.get("entry_id")
-        entry = self.hass.config_entries.async_get_entry(entry_id) if entry_id else None
-        username = (entry.data.get(CONF_USERNAME) if entry else "") or ""
+        """Sign in again as the entry's own account, and replace only its credential.
+
+        Self-contained since 2026-10-16. It used to hand over to `async_step_user`, which on
+        any error — a mistyped password — showed the *user* form with an empty email field.
+        Whatever account was typed there next was signed in, the unique-id check was skipped
+        for reauth, and that account's username, token and tenant were merged into this
+        entry. It also re-ran valve detection, so a detection that failed this time showed
+        the model picker and could overwrite a valve layout the expired token had nothing to
+        do with.
+        """
+        entry = self._get_reauth_entry()
+        username = entry.data.get(CONF_USERNAME) or ""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            merged = {CONF_USERNAME: username, **user_input}
-            return await self.async_step_user(merged)
+            auth = KohlerAuth(async_get_clientsession(self.hass))
+            errors = await self._async_sign_in_errors(
+                auth.async_sign_in(username, user_input[CONF_PASSWORD])
+            )
+            if not errors:
+                await self.async_set_unique_id(username.strip().lower())
+                self._abort_if_unique_id_mismatch()
+                credential: dict[str, Any] = {CONF_REFRESH_TOKEN: auth.refresh_token}
+                if auth.tenant_id:
+                    credential[CONF_TENANT_ID] = auth.tenant_id
+                self.hass.config_entries.async_update_entry(
+                    entry, data={**entry.data, **credential}
+                )
+                # The explicit reload is required, not belt-and-braces. Reauth changes
+                # nothing but the credential, and `_async_update_listener` deliberately
+                # ignores the refresh token — so leaving the reload to the listener would
+                # leave `KohlerAuth` holding the dead token that caused the reauth in the
+                # first place.
+                #
+                # Scheduled, not awaited: the flow finishes first, and the reload — with any
+                # new reauth prompt a still-dead credential raises — follows on its own.
+                # Awaited here, the dialog sat through the whole reload, every seed read and
+                # the stream's connect included, and since reloading an entry aborts its
+                # reauth flows, it aborted this one in the middle of its own step; only a
+                # special case in Home Assistant's flow manager kept that from being an
+                # error. `async_update_reload_and_abort` does exactly these three things, but
+                # from Home Assistant 2026.10 it reports any entry with an update listener,
+                # which this one has, and it stops working for them in 2026.12.
+                self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                return self.async_abort(reason="reauth_successful")
         return self.async_show_form(
             step_id="reauth_confirm",
             data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
+            errors=errors,
             description_placeholders={"username": username},
         )
 

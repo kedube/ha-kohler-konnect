@@ -37,7 +37,9 @@ The one real outage                                            12 h 22 m
 The outage is **20 minutes longer than a known-good idle period**. Any threshold low enough
 to catch it fires constantly on healthy quiet, and any threshold high enough to be quiet
 misses it. So neither trigger below decides anything from silence. **Silence only decides
-when to ask.** The answer always comes from `connectionState`, which is ground truth.
+when to ask.** The answer always comes from `connectionState`, which is ground truth — with
+one exception that runs the other way: a valve message is proof of reachability, so a valve
+reported offline that speaks again is marked reachable without asking (since 2026-10-16).
 
 ## The two triggers
 
@@ -149,6 +151,10 @@ class CloudConnectionWatch:
         self._last_error: str | None = None
         # The last unfamiliar `connectionState` logged, so each new one is said once.
         self._unfamiliar: str | None = None
+        # Why `_connected` reads True when Kohler's last answer said otherwise: set when a
+        # valve message overrules a `Disconnected`, cleared by the next answer that carries
+        # `connectionState`. See `note_gcs_message`.
+        self._overruled_because: str | None = None
         # Present only if Kohler returns it for the valve. `hub-state` carries it; whether
         # `gcs-state` does is an open question, so this surfaces the answer the first time a
         # real read happens rather than waiting for someone to probe it by hand.
@@ -174,6 +180,10 @@ class CloudConnectionWatch:
         A failed read does **not** move this. "We could not reach Kohler" is a different
         fault from "Kohler cannot reach the valve", and collapsing them would report the
         valve offline every time the WAN hiccups.
+
+        The one thing that moves it without a read is the valve itself speaking after it was
+        reported offline: that message came through Kohler's cloud, so it is reachable. See
+        `note_gcs_message`; `reachable_because` in :attr:`attributes` says when that is why.
         """
         return self._connected
 
@@ -193,6 +203,9 @@ class CloudConnectionWatch:
             "cloud_last_connected": self._last_connected_epoch,
             "seconds_since_valve_message": quiet_for,
             "contradiction_watch": bool(self._coordinator.controllers),
+            # None while the verdict is Kohler's own. Set when a valve message overruled a
+            # `Disconnected` above — which `connection_state` still shows verbatim.
+            "reachable_because": self._overruled_because,
         }
 
     # ------------------------------------------------------------------ #
@@ -239,10 +252,27 @@ class CloudConnectionWatch:
             self._arm_quiet_timer()
         # A valve last reported **off** is speaking again — the power cycle that brings it
         # back. Without this the sensor stayed off until some unrelated read happened by,
-        # which on a quiet account is hours. Ask rather than assume: the answer still comes
-        # from `connectionState`, and the cooldown still applies.
-        if self._connected is False:
-            self._request_check("valve spoke again after being reported offline")
+        # which on a quiet account is hours.
+        #
+        # ⚠️ **Marked reachable here, not asked about.** Until 2026-10-16 this requested a
+        # check, and that went through the 30-minute cooldown: a valve power-cycled within
+        # half an hour of the read that found it Disconnected had every boot message's
+        # re-check skipped, then went quiet, and the next ask was trigger B three hours
+        # later. Nothing needs asking — this message was published by the valve through
+        # Kohler's cloud, which is the definition of reachable. It also cannot be our own
+        # outage misread: a message arrived, so our stream is up, and the guards against
+        # that in `_request_check` and `_async_check` are untouched.
+        if self._connected is False and not self._stopped:
+            self._connected = True
+            self._overruled_because = (
+                f"the valve sent a message at {_utc_iso(time.time())} after Kohler's "
+                "cloud reported it offline"
+            )
+            _LOGGER.info(
+                "The Anthem valve is talking again after Kohler's cloud reported it "
+                "offline; marking it reachable"
+            )
+            self._coordinator.async_refresh_entities()
 
     def note_hub_envelope(self, envelope: Envelope) -> None:
         """Trigger A. Only ``SHOWER_VALVE_STS`` with a zone ``ON`` is evidence."""
@@ -432,10 +462,15 @@ class CloudConnectionWatch:
 
         ``notify`` is False for the setup seed, which pushes its own snapshot immediately
         afterwards and must not notify listeners before the platforms exist.
+
+        A body that is not a JSON object is read as one with no ``connectionState``: the
+        seed that calls this catches only `KohlerError`, so the `AttributeError` a list or a
+        string used to raise here failed the whole seed with a traceback.
         """
-        reported = (payload or {}).get("connectionState")
+        body = payload if isinstance(payload, dict) else {}
+        reported = body.get("connectionState")
         self._reported = None if reported is None else str(reported)
-        self._last_connected_epoch = (payload or {}).get("lastConnected")
+        self._last_connected_epoch = body.get("lastConnected")
         self._checked_at = time.time()
         self._trigger = trigger
         self._checks += 1
@@ -444,7 +479,11 @@ class CloudConnectionWatch:
         if reported is None:
             # The field is documented and observed, so its absence is worth saying out loud
             # rather than silently reading as "not connected".
-            self._last_error = "gcs-state carried no connectionState field"
+            self._last_error = (
+                "gcs-state carried no connectionState field"
+                if payload is None or isinstance(payload, dict)
+                else f"gcs-state was not a JSON object ({type(payload).__name__})"
+            )
             _LOGGER.warning(
                 "Kohler gcs-state returned no connectionState; cannot judge reachability"
             )
@@ -452,6 +491,8 @@ class CloudConnectionWatch:
                 self._coordinator.async_refresh_entities()
             return
 
+        # A fresh answer from Kohler, so any overruling by a valve message is history.
+        self._overruled_because = None
         was = self._connected
         value = str(reported).strip().lower()
         if value not in (CONNECTED, DISCONNECTED) and value != self._unfamiliar:

@@ -35,7 +35,8 @@
     },
     "abort": {
       "already_configured": "This Kohler account is already set up.",
-      "reauth_successful": "Reconnected successfully."
+      "reauth_successful": "Reconnected successfully.",
+      "unique_id_mismatch": "That is a different Kohler account from the one this entry belongs to."
     }
   },
   "options": {

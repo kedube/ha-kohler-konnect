@@ -769,9 +769,9 @@ def test_light_groups_and_experiences_skip_entries_that_are_not_objects():
         ([{"id": 2, "name": " Steam "}], ("2", "Steam")),
         # The accessory messages' spelling, accepted as a fallback.
         ([{"favoriteid": "3", "status": "ON"}], ("3", None)),
-        ([{"id": "1", "name": "Hair Wash", "status": "OFF"}], (None, None)),
+        ([{"id": "9", "name": "Hair Wash", "status": "OFF"}], (None, None)),
         # A trailing attribute cannot resurrect the favorite just turned off.
-        ([{"id": "1", "status": "OFF"}, {"id": "2", "status": "ON"}], (None, None)),
+        ([{"id": "9", "status": "OFF"}, {"id": "2", "status": "ON"}], (None, None)),
         # "0" is nothing driving the system.
         ([{"id": "0", "name": "None", "status": "ON"}], (None, None)),
         (["x", {"name": "no id"}], (None, None)),

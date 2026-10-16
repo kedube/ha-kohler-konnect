@@ -307,8 +307,10 @@ class FaucetDevice:
         """The faucet's Konnect presets, and which list they came from.
 
         The faucet's own list (``faucet-experience``) is what the app's faucet screen
-        reads. The account-wide ``customer-experience`` list stands in if that fails or is
-        empty.
+        reads. The account-wide ``customer-experience`` list stands in only if that fails
+        or is not shaped as expected. An empty list is an answer — no presets — and is
+        kept: the stand-in cost an account-wide read on every refresh, and its legacy
+        ``sensateExperiences`` field could bring back presets deleted in the app.
         """
         try:
             presets = parse_faucet_experiences(
@@ -318,7 +320,7 @@ class FaucetDevice:
         except KohlerError as err:
             _LOGGER.debug("Faucet preset list unavailable: %s", err)
             presets = None
-        if presets:
+        if presets is not None:
             return presets, "faucet-experience"
         payload = await self._client.async_get_customer_experience()
         return parse_presets(payload, self.device_id), "customer-experience"

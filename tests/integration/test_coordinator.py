@@ -1339,7 +1339,8 @@ async def test_a_custom_shower_resumes_once_after_the_warmup_pauses_it(
     # condition rather than on `async_block_till_done`, which would wait on it too.
     stream().deliver(solo_message(LEFT, "0184C801", warmUpStatus="warmUpInProgress"))
     await asyncio.sleep(0.05)  # it wakes on the update and sees the warm-up
-    stream().deliver(solo_message(LEFT, "0184C841", warmUpStatus="warmUpNotInProgress"))
+    # Paused at temperature (byte 0's 0x04): the warm-up's own end, not a Stop.
+    stream().deliver(solo_message(LEFT, "0584C841", warmUpStatus="warmUpNotInProgress"))
     await eventually(lambda: valve._custom_shower_task is None, "the watcher to decide")
     assert [words(b) for b in kohler.posted("/solowritesystem")] == [
         ("0184C801", "00000000")

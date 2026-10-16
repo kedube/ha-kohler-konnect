@@ -171,7 +171,7 @@ class ValveAtTemperatureSensor(KohlerValveEntity, BinarySensorEntity):
 
 
 class ValveProblemSensor(KohlerValveEntity, BinarySensorEntity):
-    """Whether the valve is reporting a fault, from the status word's ``errorFlag``.
+    """Whether the valve is reporting a fault — in its fault log or in its status word.
 
     **Enabled, and deliberately not a diagnostic.** A fault the owner cannot see is the
     one failure mode where a hidden entity is worse than no entity: every other reading
@@ -179,23 +179,31 @@ class ValveProblemSensor(KohlerValveEntity, BinarySensorEntity):
     unhappy. It is on the valve device, in the ordinary entity list, so it appears on the
     card without anyone having gone looking for it.
 
-    > ⚠️ **Never observed set — 0 of 992 captured valve words.** An earlier revision of
-    > this integration removed the entity for exactly that reason: publishing it claimed a
-    > fault detector nobody had been able to test, and a sensor stuck at "OK" is
-    > indistinguishable from one that is broken. That reasoning was sound and is *not*
-    > overturned here; what changed is the weighing. The decode is straightforward and its
-    > cost when wrong is a false "OK" — which is what a user without the entity already
-    > has — while its value when right is the only warning the integration can give. So it
-    > ships, and says plainly in `fault_detection_verified` that it has never fired.
-    >
-    > If you ever see this turn on, please open an issue with diagnostics attached: it
-    > would be the first captured fault, and it is what this entity is waiting for.
+    Three sources, mirroring `ControllerProblemSensor`:
 
-    Reads the flag from **either** zone: `GcsState.has_fault` is any-of across both words,
-    so a single-zone valve is covered by valve1 alone and a two-zone valve reports a fault
-    in either. `error_code` is deliberately *not* the trigger — byte 7 reads a constant
-    ``1`` on the tested unit, so a nonzero code is not a fault. The flag is the only fault
-    signal; the codes ride along as attributes.
+    * **Active faults** — the valve's own ``gcs-diagnostics`` log, read on each seed
+      (setup, reconnect, a manual ``update_entity``), keeping entries that are
+      ``isActive`` with a real ``errorCode``: what the Konnect app lists. Published as
+      ``active_faults``. The only one of the three ever seen to report a fault: added
+      2026-10-16, after the owner's diagnostics showed Shower Left logging an active
+      ``Algorithm`` error ``37`` on ``Valve 1`` since April while this sensor read off. A
+      read that fails keeps the faults already known rather than clearing them.
+    * **The word's error flag** — `GcsState.has_fault`, any-of across both zones' words, so
+      a single-zone valve is covered by valve1 alone and a two-zone valve reports a fault
+      in either. `error_code` is deliberately *not* the trigger — byte 7 reads a constant
+      ``1`` on the tested unit, so a nonzero code is not a fault; the codes ride along as
+      attributes.
+    * **`currentSystemState`** reading ``error``, which Konnect 3.0.6 treats as a fault
+      (folded into `has_fault`).
+
+    > ⚠️ **The word's flag has never been observed set — 0 of 992 captured valve words.**
+    > An earlier revision of this integration removed the entity for exactly that reason:
+    > publishing it claimed a fault detector nobody had been able to test. What changed is
+    > the weighing — the decode is straightforward and its cost when wrong is a false "OK",
+    > which is what a user without the entity already has — and `fault_detection_verified`
+    > still says plainly that this signal has never fired. If you see the sensor turn on
+    > with `active_faults` empty, please open an issue with diagnostics attached: it would
+    > be the first captured word fault.
     """
 
     _attr_name = "Problem"
@@ -207,6 +215,8 @@ class ValveProblemSensor(KohlerValveEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
+        if self._valve.active_faults:
+            return True
         state = self._state
         # None — "not known yet" — before the first word arrives, rather than a confident
         # "no problem" the integration has no basis for.
@@ -217,6 +227,9 @@ class ValveProblemSensor(KohlerValveEntity, BinarySensorEntity):
         state = self._state
         codes = {} if state is None else state.error_codes
         return {
+            # The fault log's active entries — code, area, valve and timestamp, nothing
+            # that identifies the device. The one source here known to fire.
+            "active_faults": [dict(fault) for fault in self._valve.active_faults],
             # Per-zone byte 7. Constant `1` on the tested unit and **not** a fault
             # indicator on its own — published so a real fault can be characterised from a
             # bug report rather than guessed at.
@@ -225,8 +238,9 @@ class ValveProblemSensor(KohlerValveEntity, BinarySensorEntity):
             # `currentSystemState`, which Konnect 3.0.6 treats as a fault when it reads
             # `error`. Published so it is clear which signal fired.
             "system_state": None if state is None else state.system_state,
-            # Honest about the caveat in the class docstring: this detector has never been
-            # seen to fire, so a False here is weaker evidence than it looks.
+            # Honest about the caveat in the class docstring: the word's error flag has
+            # never been seen to fire, so its False is weaker evidence than it looks. The
+            # fault log above is not covered by this caveat.
             "fault_detection_verified": False,
         }
 
@@ -253,6 +267,11 @@ class MqttConnectionMixin:
 
     _attr_name = "MQTT Connection"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    @property
+    def _update_device_ids(self) -> frozenset[str] | None:
+        """Every message, whichever device sent it: `last_message_at` is the stream's."""
+        return None
 
     @property
     def is_on(self) -> bool | None:
@@ -343,7 +362,11 @@ class ValveCloudConnectionSensor(KohlerValveEntity, BinarySensorEntity):
 
     States:
 
-    * **on** — the last successful read said ``Connected``.
+    * **on** — the last successful read said ``Connected``, or the valve has published a
+      message since a read said otherwise. A valve message reaches us through Kohler's
+      cloud, so it proves reachability by itself; ``reachable_because`` says when that is
+      why, until the next read decides again (since 2026-10-16 — before, a valve back from
+      a power cycle stayed off for up to three hours behind the check cooldown).
     * **off** — the last successful read said otherwise. Only ``Connected`` has ever been
       observed on this account, so the exact negative string is surfaced in
       ``connection_state`` rather than assumed.

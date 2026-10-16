@@ -239,7 +239,7 @@ def test_resume_is_decided_when_the_warmup_ends_in_its_pause():
     assert _warming(watch, 2.0).decision is Decision.WAIT
     assert watch.warmup_seen
     assert _warming(watch, 40.0).decision is Decision.WAIT
-    outcome = watch.observe(T0 + 45.0, False, [True, True], [0, 0])
+    outcome = watch.observe(T0 + 45.0, False, [True, True], [0, 0], at_temperature=True)
     assert outcome.decision is Decision.RESUME
     assert outcome.terminal
     assert "43 s after it began" in outcome.reason
@@ -250,7 +250,9 @@ def test_a_pause_on_one_zone_is_enough():
     watch = _watch()
     _warming(watch, 2.0)
     assert (
-        watch.observe(T0 + 30.0, False, [False, True], [0x07, 0]).decision
+        watch.observe(
+            T0 + 30.0, False, [False, True], [0x07, 0], at_temperature=True
+        ).decision
         is Decision.RESUME
     )
 
@@ -259,7 +261,7 @@ def test_a_decision_once_made_does_not_change():
     """Terminal decisions are sticky, so the resend can only be decided once."""
     watch = _watch()
     _warming(watch, 2.0)
-    first = watch.observe(T0 + 30.0, False, [True, True], [0, 0])
+    first = watch.observe(T0 + 30.0, False, [True, True], [0, 0], at_temperature=True)
     assert first.decision is Decision.RESUME
     # A later warm-up, a stop, a person at the wall: none of it re-opens the question.
     assert _warming(watch, 60.0) is first
@@ -316,7 +318,7 @@ def test_outlets_picked_at_the_wall_after_the_warmup_are_left_alone():
     """Outlets other than the warm-up's own, unpaused, are a person driving the shower."""
     watch = _watch()
     _warming(watch, 2.0)
-    outcome = watch.observe(T0 + 20.0, False, UNPAUSED, [0x02, 0])
+    outcome = watch.observe(T0 + 20.0, False, UNPAUSED, [0, 0x04])
     assert outcome.decision is Decision.ABANDON
     assert "picked them at the wall" in outcome.reason
 
@@ -338,7 +340,9 @@ def test_a_transitional_report_before_the_pause_is_waited_through():
     assert transitional.decision is Decision.WAIT
     assert not transitional.terminal
     assert (
-        watch.observe(T0 + 30.2, False, [True, True], [0, 0]).decision
+        watch.observe(
+            T0 + 30.2, False, [True, True], [0, 0], at_temperature=True
+        ).decision
         is Decision.RESUME
     )
 
@@ -381,7 +385,9 @@ def test_a_warmup_that_starts_again_restarts_the_settle_clock():
         watch.observe(T0 + 20.0, False, UNPAUSED, WARM_MASKS).decision is Decision.WAIT
     )
     assert (
-        watch.observe(T0 + 20.1, False, [True, True], [0, 0]).decision
+        watch.observe(
+            T0 + 20.1, False, [True, True], [0, 0], at_temperature=True
+        ).decision
         is Decision.RESUME
     )
 
@@ -413,7 +419,8 @@ def test_a_single_zone_valve_is_judged_on_its_one_zone():
     """`paused` and `masks` carry one entry per zone the model has."""
     watch = _watch()
     watch.observe(T0 + 2.0, True, [False], [0x07])
-    assert watch.observe(T0 + 30.0, False, [True], [0]).decision is Decision.RESUME
+    outcome = watch.observe(T0 + 30.0, False, [True], [0], at_temperature=True)
+    assert outcome.decision is Decision.RESUME
 
 
 # =========================================================================== #
@@ -559,6 +566,8 @@ class FakeValve:
 
         self.device_id = device_id
         self.tag = tag
+        # Bumped by `Valve.handle_envelope` for each push; read around a REST read-back.
+        self._push_serial = 0
         self.gcs_device = SimpleNamespace(device_id=device_id)
         self.gcs_state = GcsState(get_valve_model("K-28210"))
         self.gcs_state.warmup_mode = cloud.mode
@@ -580,12 +589,14 @@ class FakeValve:
         self.tasks: set[asyncio.Task] = set()
         self.auth_errors: list[Exception] = []
         self.refreshes = 0
+        self.listeners: list[Any] = []
         coordinator = SimpleNamespace(
             valves=[self],
             _recent_messages=[],
             report_log=None,
             async_refresh_entities=self._refresh,
             _handle_auth_error=self.auth_errors.append,
+            async_add_listener=self._add_listener,
         )
         # The real error translation, so a failed write reads as the user would see it.
         coordinator.command_errors = lambda offline: (
@@ -596,6 +607,10 @@ class FakeValve:
 
     def _refresh(self) -> None:
         self.refreshes += 1
+
+    def _add_listener(self, update: Any) -> Any:
+        self.listeners.append(update)
+        return lambda: self.listeners.remove(update)
 
     def option(self, key: str, default: Any = None) -> Any:
         return self.options.get(key, default)
@@ -637,6 +652,9 @@ class FakeValve:
             outlet_mask=0x01 if running else 0,
             paused=False,
         )
+        # A changed word notifies the coordinator's listeners, as `_handle_envelope` does.
+        for update in list(self.listeners):
+            update()
 
     @property
     def cloud(self) -> FakeCloud:
@@ -654,7 +672,11 @@ def clock(monkeypatch) -> Clock:
     monkeypatch.setattr(
         warmup_manager, "time", SimpleNamespace(monotonic=clock.monotonic)
     )
-    monkeypatch.setattr(warmup_manager, "asyncio", SimpleNamespace(sleep=clock.sleep))
+    monkeypatch.setattr(
+        warmup_manager,
+        "asyncio",
+        SimpleNamespace(sleep=clock.sleep, Event=asyncio.Event),
+    )
     return clock
 
 
@@ -835,6 +857,27 @@ async def test_reading_the_mode_applies_it_and_returns_it(make):
 
 
 @pytest.mark.asyncio
+async def test_a_read_overtaken_by_a_push_is_not_applied(make):
+    """The push is newer than the reply; applying the reply would put the old mode back.
+
+    The cloud still says Selected while the valve has already pushed All Outlets. The
+    read-back answers nothing rather than overwrite the push, and the caller reads again.
+    """
+    valve = make(SELECTED)
+    valve.gcs_state.warmup_mode = ALL
+    read = valve.cloud.async_get_gcs_state
+
+    async def overtaken(device_id: str) -> dict[str, Any]:
+        valve._push_serial += 1
+        return await read(device_id)
+
+    valve.cloud.async_get_gcs_state = overtaken
+    assert await valve.warmup.async_read_warmup_mode() is None
+    assert valve.gcs_state.warmup_mode == ALL
+    assert valve.refreshes == 0
+
+
+@pytest.mark.asyncio
 async def test_a_failed_read_returns_none_rather_than_a_guess(make):
     valve = make(ALL)
     valve.cloud.read_error = KohlerError("boom")
@@ -989,23 +1032,24 @@ async def test_our_own_switch_to_another_mode_does_not_excuse_a_disable(make, cl
 
 
 @pytest.mark.asyncio
-async def test_nothing_is_written_while_the_water_is_running(make, clock, caplog):
-    """A shower is exactly when nobody wants this fighting the valve."""
+async def test_nothing_is_written_while_the_water_is_running(make, clock):
+    """A shower is exactly when nobody wants this fighting the valve — so it waits.
+
+    Until 2026-10-16 the refusal ended the restore, on the promise that the next disable
+    would schedule another. None comes: the mode is already off.
+    """
     valve = make(ALL)
     valve.announce(OFF)
     await clock.advance(DELAY / 2)
     valve.run_water()
-    with caplog.at_level(logging.WARNING, logger=warmup_manager.__name__):
-        await clock.advance(DELAY / 2)
-    assert valve.cloud.writes == []
-    failed = valve.warmup_log.last("restore_failed")
-    assert failed["target"] == ALL
-    assert "shower is running" in failed["error"]
-    assert "could not write" in caplog.text
-    # Not retried on its own: the next disable will schedule another.
-    valve.run_water(False)
     await clock.advance(DELAY * 3)
     assert valve.cloud.writes == []
+    assert valve.warmup_log.last("restore_deferred")["target"] == ALL
+    assert "restore_failed" not in valve.warmup_log.events()
+    # Put back once the water has stopped and stayed stopped for the usual delay.
+    valve.run_water(False)
+    await clock.advance(DELAY)
+    assert valve.cloud.writes == [ALL]
 
 
 @pytest.mark.asyncio

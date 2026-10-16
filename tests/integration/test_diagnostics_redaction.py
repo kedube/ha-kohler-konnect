@@ -679,8 +679,14 @@ async def test_each_device_page_names_itself_and_still_reports_everything(
 
     assert report["requested_for"] == requested_for
     assert report["devices"]["valve_count"] == 2
-    assert {"valve", "valves", "controller", "controllers", "faucets"} <= set(report)
-    assert report["valve"]["fault_log"] == report["valves"][0]["fault_log"]
+    assert {"valves", "controllers", "faucets"} <= set(report)
+    if requested_for.startswith("faucet"):
+        # A faucet's button describes that faucet, not valve 0.
+        assert report["faucet"] == report["faucets"][0]
+        assert not {"valve", "controller"} & set(report)
+    else:
+        assert {"valve", "controller"} <= set(report)
+        assert report["valve"]["fault_log"] == report["valves"][0]["fault_log"]
 
 
 async def test_the_second_faucets_page_is_named_by_its_position(
@@ -729,7 +735,10 @@ async def test_a_single_valve_account_keeps_the_plain_labels(
     config_entry: MockConfigEntry,
     kohler: AccountKohler,
 ) -> None:
-    """Reports from single-device accounts read as they always have: `valve`, `faucet`."""
+    """Reports from single-device accounts read as they always have: `valve`.
+
+    A faucet's is indexed even alone, since 2026-10-16: a bare `faucet` named no device.
+    """
     kohler.devices.append(dict(VALVE))
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
@@ -742,7 +751,7 @@ async def test_a_single_valve_account_keeps_the_plain_labels(
     )
 
     assert valve["data"]["requested_for"] == "valve"
-    assert faucet["data"]["requested_for"] == "faucet"
+    assert faucet["data"]["requested_for"] == "faucet_0"
     assert "controller" not in valve["data"]
     assert_clean(valve)
     await unload(hass, config_entry)

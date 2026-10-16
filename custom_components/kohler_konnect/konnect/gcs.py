@@ -32,6 +32,9 @@ from .const import (
 from .models import DEFAULT_VALVE_MODEL, ValveModel, get_valve_model
 from .state import OutletLimits
 from .valve_hex import (
+    FLOW_BYTE_MAX,
+    FLOW_BYTE_MIN,
+    TEMPERATURE_MAX_TENTHS,
     UNUSED_VALVE_WORD,
     VALVE1_PREFIX,
     VALVE2_PREFIX,
@@ -69,6 +72,10 @@ class PresetTimerPlan:
         The slot exists but holds no name and no valve words — an unconfigured slot.
         **Deliberately left alone**: writing a timer into a blank slot would half-create a
         preset the owner never asked for.
+    ``unnamed``
+        The slot holds valve words but no name under any key this reads. **Also left
+        alone**: the rewrite would send ``name: ""``, which is exactly how ``writepreset``
+        deletes a slot — and the coordinator runs this on preset 1 at every setup.
     ``already``
         The stored timer already matches the target. Nothing to write.
     ``rewrite``
@@ -88,8 +95,15 @@ class PresetTimerPlan:
 
 
 def _preset_record(payload: Any, preset_id: int) -> dict[str, Any] | None:
-    """Find one slot in a ``gcs-preset`` read."""
-    details = (payload or {}).get("gcsPresetExperienceDetails")
+    """Find one slot in a ``gcs-preset`` read.
+
+    The client hands this payload over as the cloud sent it, so anything but an object —
+    a list, a string — is no read at all rather than an `AttributeError` the setup-time
+    caller, which catches only `KohlerError`, would let fail setup.
+    """
+    if not isinstance(payload, dict):
+        return None
+    details = payload.get("gcsPresetExperienceDetails")
     if not isinstance(details, list):
         return None
     for entry in details:
@@ -121,7 +135,8 @@ def plan_preset_timer(
         return PresetTimerPlan("absent")
 
     valves: dict[int, str] = {}
-    for detail in record.get("valveDetails") or []:
+    details = record.get("valveDetails")
+    for detail in details if isinstance(details, list) else ():
         if not isinstance(detail, dict):
             continue
         index = str(detail.get("valveIndex") or "")
@@ -150,9 +165,16 @@ def plan_preset_timer(
         except ValueError:
             continue
 
-    name = str(record.get("title") or record.get("name") or "").strip()
+    # The keys the read path names a preset by (`GcsState.apply_preset_list`), with `name`
+    # last as before. This read only `title` or `name` until 2026-10-16, so a record naming
+    # itself by `logicalName` alone planned a rewrite with an empty name.
+    name = str(
+        record.get("title") or record.get("logicalName") or record.get("name") or ""
+    ).strip()
     if not name and not valves:
         return PresetTimerPlan("empty")
+    if not name:
+        return PresetTimerPlan("unnamed", valves=valves)
 
     try:
         previous: int | None = int(str(record.get("time")))
@@ -236,9 +258,11 @@ class GcsDevice:
     async def async_turn_off(self, temperature: float | None = None) -> Any:
         """Stop every outlet on both valves.
 
-        Uses mask ``0x00`` with a valid prefix. The upstream library's ``turn_off()``
-        sends an all-zero ``primaryValve1``, whose ``0x00`` prefix addresses no valve at
-        all, so the firmware ignores it — that is the "could turn on but never off" bug.
+        Uses mask ``0x00`` in an otherwise well-formed word. The upstream library's
+        ``turn_off()`` sends the all-zero word as ``primaryValve1`` — the
+        :data:`~.valve_hex.UNUSED_VALVE_WORD` sentinel — and the firmware ignores it: that is
+        the "could turn on but never off" bug. It is the whole word that is inert, not its
+        ``0x00`` first byte; see the sentinel's note.
         """
         celsius = (
             unit_to_celsius(temperature, self.temperature_unit)
@@ -283,11 +307,25 @@ class GcsDevice:
         temperature: float,
         flow_percent: float = 100,
     ) -> Any:
-        """Write explicit per-valve outlet masks, for callers that already have them."""
+        """Write explicit per-valve outlet masks, for callers that already have them.
+
+        A single-zone model sends :data:`~.valve_hex.UNUSED_VALVE_WORD` for valve 2, as
+        every other write path does (``docs/protocol/gcs_valve.md`` §3) — this one alone
+        used to encode a real valve-2 word for a valve that does not exist. A mask for that
+        valve is refused rather than dropped, like a zone 2 flag in
+        :func:`~.valve_hex.encode_shower`: the caller asked for an outlet it cannot have.
+        """
+        if valve2_mask and not self.model.uses_valve2:
+            raise ValveHexError(
+                f"{self.model.sku} has one zone; valve 2 mask 0x{valve2_mask:02X} "
+                "addresses outlets it does not have"
+            )
         celsius = unit_to_celsius(temperature, self.temperature_unit)
+        valve1 = encode_word(VALVE1_PREFIX, celsius, flow_percent, valve1_mask)
+        if not self.model.uses_valve2:
+            return await self.async_write_valves(valve1, UNUSED_VALVE_WORD)
         return await self.async_write_valves(
-            encode_word(VALVE1_PREFIX, celsius, flow_percent, valve1_mask),
-            encode_word(VALVE2_PREFIX, celsius, flow_percent, valve2_mask),
+            valve1, encode_word(VALVE2_PREFIX, celsius, flow_percent, valve2_mask)
         )
 
     # ------------------------------------------------------------------ #
@@ -435,6 +473,26 @@ class GcsDevice:
                 "has not been read from the valve, and this endpoint replaces the whole "
                 "record. Reload the integration to re-read the outlet configuration."
             )
+        # **Absolute ranges, before the relative check below.** Most of these values are
+        # echoed from a read rather than chosen, which is the trust boundary
+        # `check_preset_word` closes for preset words: a corrupt read or a caller's slip
+        # must not become the valve's scald limit or flow envelope. The temperature ceiling
+        # is the app's own for this write — it clamps at 488 tenths (gcs_valve.md §2.1) —
+        # and flow is the valve's byte range. Only `default > maximum` was checked until
+        # 2026-10-16, so a 102.3 °C scald limit passed as long as the default sat below it.
+        for key, low, high, unit in (
+            ("minimumOutletTemperature", 0, TEMPERATURE_MAX_TENTHS, "tenths of °C"),
+            ("defaultOutletTemperature", 0, TEMPERATURE_MAX_TENTHS, "tenths of °C"),
+            ("maximumOutletTemperature", 0, TEMPERATURE_MAX_TENTHS, "tenths of °C"),
+            ("minimumFlowrate", FLOW_BYTE_MIN, FLOW_BYTE_MAX, "flow bytes"),
+            ("defaultFlowrate", FLOW_BYTE_MIN, FLOW_BYTE_MAX, "flow bytes"),
+            ("maximumFlowrate", FLOW_BYTE_MIN, FLOW_BYTE_MAX, "flow bytes"),
+        ):
+            if not low <= record[key] <= high:
+                raise KohlerError(
+                    f"Refusing to write outlet {limits.outlet_id}: {key} {record[key]} is "
+                    f"outside {low}-{high} {unit}, the range this write accepts."
+                )
         if default > maximum:
             raise KohlerError(
                 f"Default temperature {default / 10:.1f} °C is above the scald limit "

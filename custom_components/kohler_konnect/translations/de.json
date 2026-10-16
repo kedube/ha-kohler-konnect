@@ -35,7 +35,8 @@
     },
     "abort": {
       "already_configured": "Dieses Kohler-Konto ist bereits eingerichtet.",
-      "reauth_successful": "Erfolgreich wieder verbunden."
+      "reauth_successful": "Erfolgreich wieder verbunden.",
+      "unique_id_mismatch": "Das ist ein anderes Kohler-Konto als das, zu dem dieser Eintrag gehört."
     }
   },
   "options": {

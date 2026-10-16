@@ -359,7 +359,11 @@ class KohlerClient:
                 headers=headers,
                 timeout=REQUEST_TIMEOUT,
             ) as resp:
-                text = await resp.text()
+                # `errors="replace"`: a body that is not valid UTF-8 — a gateway's error page
+                # in some other charset — raised `UnicodeDecodeError` here, past every
+                # caller's `except KohlerError`. Kohler's own replies are JSON in UTF-8, so
+                # this only ever touches text that was unreadable anyway.
+                text = await resp.text(errors="replace")
                 status = resp.status
                 retry_after = _retry_after(status, resp.headers.get("Retry-After"))
         except (aiohttp.ClientError, TimeoutError) as err:
@@ -387,8 +391,9 @@ class KohlerClient:
             # refresh lock. B2C rotates the refresh token on every use, and two concurrent
             # 401s calling `async_refresh` directly would redeem the same token twice —
             # exactly the double-redemption the lock exists to prevent. Invalidating first
-            # makes the locked path treat the token as expired and mint a new one.
-            self._auth.invalidate_access_token()
+            # makes the locked path treat the token as expired and mint a new one — unless
+            # a parallel 401 already has, which is why it names the token that was refused.
+            self._auth.invalidate_access_token(token)
             await self._auth.async_get_access_token()
             return await self.async_request(
                 method, path, json_body=json_body, allow_retry=False
@@ -547,9 +552,21 @@ class KohlerClient:
             "tags": ["FirmwareUpdate"],
         }
         data = await self.async_request("POST", MOBILE_SETTINGS, json_body=payload)
-        settings = (data or {}).get("ioTHubSettings") or {}
-        if not settings.get("ioTHub"):
-            raise KohlerError("Kohler returned no IoT Hub settings", data)
+        settings = data.get("ioTHubSettings") if isinstance(data, dict) else None
+        if not isinstance(settings, dict) or not settings.get("ioTHub"):
+            raise UnexpectedResponse("Kohler returned no IoT Hub settings", data)
+        # Every field the stream connects with, checked here rather than read blind there:
+        # a missing one raised `KeyError`, which no caller catches, so setup failed for good
+        # instead of retrying. Named, never quoted — the password is a live credential.
+        missing = [
+            key
+            for key in ("deviceId", "username", "password")
+            if not isinstance(settings.get(key), str) or not settings[key]
+        ]
+        if missing:
+            raise UnexpectedResponse(
+                f"Kohler's IoT Hub settings had no {', '.join(missing)}"
+            )
         return settings
 
     async def async_unregister_mobile_device(self, mobile_device_id: str) -> None:
@@ -764,12 +781,17 @@ class KohlerClient:
         return payload if isinstance(payload, dict) else {}
 
     async def async_get_gcs_diagnostics(self, device_id: str) -> dict[str, Any]:
-        """The valve's fault log. ``{}`` on failure; read for diagnostics only."""
+        """The valve's fault log. ``{}`` on failure; read for diagnostics only.
+
+        An auth failure is a failure too: this is read while someone builds a diagnostics
+        report, which should not fail over it — least of all when the sign-in is what is
+        being diagnosed. Nothing relies on it to prompt a reauth; other paths do that.
+        """
         try:
             payload = await self.async_request(
                 "GET", GCS_DIAGNOSTICS.format(device_id=device_id)
             )
-        except KohlerError as err:
+        except (AuthError, KohlerError) as err:
             _LOGGER.debug("Could not read gcs-diagnostics: %s", err)
             return {}
         return payload if isinstance(payload, dict) else {}

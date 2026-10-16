@@ -35,7 +35,8 @@
     },
     "abort": {
       "already_configured": "To konto Kohler jest już skonfigurowane.",
-      "reauth_successful": "Ponowne logowanie powiodło się."
+      "reauth_successful": "Ponowne logowanie powiodło się.",
+      "unique_id_mismatch": "To inne konto Kohler niż to, do którego należy ten wpis."
     }
   },
   "options": {

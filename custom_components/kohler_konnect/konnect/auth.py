@@ -33,6 +33,7 @@ import binascii
 import hashlib
 import json
 import logging
+import math
 import re
 import secrets
 import time
@@ -73,6 +74,10 @@ _UNREACHABLE = (aiohttp.ClientError, TimeoutError)
 
 #: OAuth error codes meaning "try later" (RFC 6749 §4.1.2.1), not "this grant is dead".
 _OUTAGE_ERRORS = frozenset({"temporarily_unavailable", "server_error"})
+
+#: Assumed when a token reply carries no usable ``expires_in``: B2C's default access-token
+#: lifetime, and what this module has always assumed when the field was missing.
+DEFAULT_TOKEN_LIFETIME_SECONDS = 3600.0
 
 
 class AuthError(Exception):
@@ -117,11 +122,15 @@ class TokenSet:
     access_token: str
     refresh_token: str
     expires_at: float
+    #: How long before `expires_at` to renew. `TOKEN_EXPIRY_MARGIN_SECONDS`, except for a
+    #: token issued with less life than that: it would count as expired from the moment it
+    #: arrived, so every single call would refresh — and rotate the refresh token.
+    refresh_margin: float = TOKEN_EXPIRY_MARGIN_SECONDS
 
     @property
     def expired(self) -> bool:
         """True when the access token is at or near expiry."""
-        return time.time() >= self.expires_at - TOKEN_EXPIRY_MARGIN_SECONDS
+        return time.time() >= self.expires_at - self.refresh_margin
 
     @property
     def tenant_id(self) -> str | None:
@@ -143,6 +152,32 @@ def decode_tenant_id(access_token: str | None) -> str | None:
     except (IndexError, ValueError, binascii.Error, json.JSONDecodeError):
         return None
     return claims.get("oid") or claims.get("sub")
+
+
+def _token_lifetime(expires_in: Any) -> float:
+    """Seconds a new access token lives, read from the token reply's ``expires_in``.
+
+    B2C sends a number, sometimes as a string. Anything else — null, missing, unreadable,
+    not positive — counts as `DEFAULT_TOKEN_LIFETIME_SECONDS` rather than failing the
+    request. It used to be `float(...)` on the raw value, and a null raised a bare
+    `TypeError` *after* B2C had rotated the refresh token: the new one was never stored,
+    and the one still held was already dead.
+    """
+    if isinstance(expires_in, bool):
+        return DEFAULT_TOKEN_LIFETIME_SECONDS
+    try:
+        seconds = float(expires_in)
+    except (TypeError, ValueError):
+        return DEFAULT_TOKEN_LIFETIME_SECONDS
+    if not math.isfinite(seconds) or seconds <= 0:
+        return DEFAULT_TOKEN_LIFETIME_SECONDS
+    return seconds
+
+
+def _retrieve_result(task: asyncio.Task[Any]) -> None:
+    """Mark a refresh's outcome as seen, so an abandoned failure is not logged as lost."""
+    if not task.cancelled():
+        task.exception()
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -190,6 +225,8 @@ class KohlerAuth:
         # so two concurrent refreshes race to redeem the same one and the loser's failure
         # is indistinguishable from a dead credential. See `async_get_access_token`.
         self._refresh_lock = asyncio.Lock()
+        # The refresh POST in flight, run as its own task — see `async_get_access_token`.
+        self._refresh_task: asyncio.Task[TokenSet] | None = None
         #: Called with the new refresh token whenever B2C rotates one, so persistence is a
         #: property of rotation rather than something a caller has to remember. See
         #: `_async_token_request`.
@@ -435,8 +472,10 @@ class KohlerAuth:
             error = str(payload.get("error") or "")
             detail = payload.get("error_description") or error or f"HTTP {status}"
             # An outage is not a verdict on the credential, and a reauth prompt would be
-            # wrong: it fixes itself. Only a refusal B2C actually issued is one.
-            if status >= 500 or status == 429 or error in _OUTAGE_ERRORS:
+            # wrong: it fixes itself. Only a refusal B2C actually issued is one. 408 (the
+            # request timed out) and 429 (throttled) are outages too, as they are to
+            # `KohlerError.rejected`.
+            if status >= 500 or status in (408, 429) or error in _OUTAGE_ERRORS:
                 raise AuthUnavailable(f"Kohler token request failed: {detail}")
             _raise_for_b2c_error(str(detail))
             raise AuthError(f"Kohler token request failed: {detail}")
@@ -447,10 +486,13 @@ class KohlerAuth:
             raise AuthError("Kohler did not return a usable token pair.")
 
         rotated = refresh_token != self._refresh_token
+        lifetime = _token_lifetime(payload.get("expires_in"))
         self._tokens = TokenSet(
             access_token=access_token,
             refresh_token=refresh_token,
-            expires_at=time.time() + float(payload.get("expires_in", 3600)),
+            expires_at=time.time() + lifetime,
+            # A short-lived token is still used for half its life before renewal.
+            refresh_margin=min(TOKEN_EXPIRY_MARGIN_SECONDS, lifetime / 2),
         )
         self._refresh_token = refresh_token
 
@@ -473,7 +515,7 @@ class KohlerAuth:
                 _LOGGER.exception("Could not persist the rotated Kohler refresh token")
         return self._tokens
 
-    def invalidate_access_token(self) -> None:
+    def invalidate_access_token(self, rejected: str | None = None) -> None:
         """Mark the current access token as unusable, without touching the refresh token.
 
         For the 401 path: the server has rejected the access token we hold, so the next
@@ -481,7 +523,18 @@ class KohlerAuth:
         from cache. Going through that method rather than calling `async_refresh` directly
         keeps the refresh serialised — two concurrent 401s would otherwise redeem the same
         rotating refresh token twice.
+
+        ``rejected`` is the token the server refused; given one, the cached token is dropped
+        only while it is still that token. Requests running in parallel all carry the same
+        token, so they all get the 401, and the first to get here mints a new one. Clearing
+        unconditionally threw that fresh token away again for each later 401: N parallel
+        401s during the dozen-odd seed reads became N serial refreshes, every one rotating
+        the refresh token and rewriting the config entry.
         """
+        if rejected is not None and (
+            self._tokens is None or self._tokens.access_token != rejected
+        ):
+            return
         self._tokens = None
 
     async def async_get_access_token(self) -> str:
@@ -501,12 +554,34 @@ class KohlerAuth:
 
         Double-checked: the second caller re-tests `expired` after taking the lock and, in
         the ordinary case, finds the winner's fresh token and makes no request at all.
+
+        **The refresh runs as its own task, awaited through a shield.** It used to run inline
+        in whichever task first found the token expired — and that task can be cancelled at
+        any moment: an unload or reload, a superseded check, a cancelled usage read.
+        Cancelled after B2C had redeemed the refresh token but before the reply was read,
+        the rotated token went with it, and the one still held was already dead: the
+        account was stranded until the owner signed in again. Shielded, the refresh
+        finishes regardless and stores (and persists) what B2C issued. A caller that finds
+        such an abandoned refresh still in flight waits for it rather than redeeming the
+        same token a second time.
         """
         if self._tokens is not None and not self._tokens.expired:
             return self._tokens.access_token
         async with self._refresh_lock:
             if self._tokens is None or self._tokens.expired:
-                await self.async_refresh()
+                task = self._refresh_task
+                if task is None or task.done():
+                    # Started eagerly, so it runs exactly as far as the inline call did
+                    # before its first wait; a separate task is only ever an extra step for
+                    # a refresh that has to wait for the network anyway.
+                    task = asyncio.Task(
+                        self.async_refresh(),
+                        loop=asyncio.get_running_loop(),
+                        eager_start=True,
+                    )
+                    task.add_done_callback(_retrieve_result)
+                    self._refresh_task = task
+                await asyncio.shield(task)
             if self._tokens is None:
                 # `async_refresh` returns tokens or raises; this cannot happen. Raised
                 # rather than asserted so `python -O` cannot turn it into an

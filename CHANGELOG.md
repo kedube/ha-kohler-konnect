@@ -11,6 +11,75 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Fixed — safety**
+
+- **Changing a temperature or flow no longer starts water on a paused zone.** Every command
+  re-sends both zones, and the pause the valve holds after a warm-up (or an app or panel
+  pause) was dropped, re-opening the paused outlet. An outlet switched on in a paused zone
+  now opens only that outlet.
+- **A second outlet setting no longer undoes the first.** Setting Max Temperature and then
+  Max Shower Duration within about 30 s put the old Max Temperature back, because each
+  write echoed values the cloud had not caught up with. Writes are queued, each builds on the
+  last, and a Max/Default Temperature pair the valve would refuse is caught before anything
+  is sent.
+- **"No pausing warm-up" no longer restarts a shower someone stopped.** The Konnect app and
+  the first-generation touchscreen stop a shower with the same pause a warm-up ends in. The
+  shower is now re-sent only when the valve reports at temperature as the warm-up ends;
+  otherwise it stays paused and the log says why.
+- **The faucet's water safety limit no longer turns off someone else's use.** It is dropped
+  when the stream sees the water run and stop, or when the water was turned off while Home
+  Assistant was down; no off command goes to a faucet already known to be off; failed
+  attempts stop after ten; nothing is sent after unload.
+
+**Fixed**
+
+- **Valve commands sent close together all take effect.** Several outlet switches in one
+  action, or an outlet followed quickly by a temperature change, used to leave only the last
+  one standing ([issue #1](https://github.com/kedube/ha-kohler-konnect/issues/1)). With the
+  valve's warm-up on, `custom_shower` is still the way to send a whole shower.
+- **Temperature changes and outlet switches keep the Flow you set** instead of resetting it
+  to 100 %. `Flow 2` reads zone 2's own outlets, and an idle Flow shows the value chosen.
+- **Fahrenheit temperatures match the Konnect app** (38.6 °C is 101 °F, not 102), and a
+  Celsius slider no longer reaches past a fractional Max Temperature.
+- **Valve faults the Konnect app shows now reach `Problem`.** Active entries in the valve's
+  fault log turn it on, listed in `active_faults`.
+- **`Water Used This Week` no longer records negative use.** It has no state class now — a
+  rolling window falls as old days leave it. Home Assistant raises a repair for its old
+  statistics; point an Energy water source at `Water Used Today` instead.
+- **`Water Used Today` no longer counts an evening's water twice** on accounts whose daily
+  totals Kohler files by UTC date.
+- **`Cloud Connection` turns on as soon as a power-cycled valve speaks**, rather than up to
+  three hours later.
+- **Warmup Auto-Restore waits out a running shower** and restores afterwards, instead of
+  giving up; an Off chosen during its one-minute wait is kept.
+- **Re-authentication stays on its own form.** A mistyped password no longer drops to the
+  full sign-in, which could attach a different Kohler account to the entry or change the
+  valve model; the dialog closes at once and the reload follows.
+- **The MQTT stream survives a malformed message** and no longer runs two reconnect loops at
+  once, which tore down a healthy reconnection and reseeded twice. A connection that keeps
+  dropping straight after connecting backs off.
+- **Sign-in is sturdier:** several requests rejected together cause one token refresh, a
+  refresh interrupted by a reload no longer loses the new token, and a timed-out token
+  request no longer asks you to sign in again.
+- **Faucets:** state no longer flickers back from a slow poll; water reports no longer
+  trigger configuration and preset reads; status values seen only on the stream no longer
+  break the sensors; a dispense ends on time even if an app preset ran meanwhile; the chosen
+  preset survives a rename across restarts; a restored amount stays inside the unit's range.
+- **Faucet diagnostics never include IoT Hub connection details.**
+- **A valve whose layout is learned after setup reloads once** so its entities match, and
+  entities for a zone or outlet that disappeared go unavailable instead of failing.
+- **Startup is faster**: independent reads for each valve, controller and faucet now overlap.
+- **Monthly usage and part details recover** on the next read after a failure at startup.
+- **Less work per message:** an MQTT message updates only its own device's entities.
+- **A malformed reply from Kohler** no longer fails setup or the setup flow, and a lowercase
+  `connected` no longer hides controller accessories.
+
+**Added**
+
+- **Devices no longer on your Kohler account can be deleted** from their device page.
+- **Diagnostics** carry each valve's cloud-connection details and active faults, and a
+  faucet's page is labelled as that faucet.
+
 ## 1.01 — 2026-10-09
 
 **Changed**

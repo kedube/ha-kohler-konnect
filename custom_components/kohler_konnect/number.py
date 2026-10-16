@@ -5,9 +5,17 @@ zone maps to a valve: zone 1 is the primary, zone 2 the secondary. Zone 2 entiti
 exist on models that have a second valve.
 
 Setting the value re-sends the complete valve command — the valve accepts no partial write —
-preserving whichever outlets are currently open and the current flow. That mirrors the
-Konnect app, which POSTs a fresh command on every adjustment, and it means changing the
-temperature mid-shower takes effect immediately rather than at the next start.
+preserving whichever outlets are currently open, a pause the zone is holding, and the flow
+the zone's Flow number holds (Home Assistant's own, never the valve's idle byte). That
+mirrors the Konnect app, which POSTs a fresh command on every adjustment, and it means
+changing the temperature mid-shower takes effect immediately rather than at the next start.
+
+**Whole degrees are the Konnect app's**: rounded half-up from the exact Celsius value, as
+the app's ``round(c * 1.8 + 32)`` does. Rounding twice — to 0.1 °F in
+`valve_hex.celsius_to_unit`, then to whole degrees with Python's half-to-even — showed
+38.6 °C as 102 °F where the app shows 101. And a **ceiling** is never rounded up: the
+highest whole value offered is one whose write does not exceed the limit, so a 47.7 °C scald
+limit offers 47 °C, not a 48 that would write 48.0.
 
 **Flow is a per-zone control here, restored 2026-09-10.** It was removed on 2026-08-13
 because a first-gen Anthem touchscreen was observed rewriting both zones' flow the instant
@@ -55,11 +63,34 @@ from .konnect.valve_hex import (
     FLOW_BYTE_MAX,
     FLOW_BYTE_MIN,
     FLOW_PER_PERCENT,
-    celsius_to_unit,
     flow_byte_to_percent,
-    flow_percent_to_byte,
     unit_to_celsius,
 )
+
+
+def _whole_degrees(tenths: int, fahrenheit: bool) -> int:
+    """Tenths of °C as the whole degree the Konnect app shows, rounded half-up.
+
+    Integer arithmetic on the exact value — °F is ``(18 * tenths + 3200) / 100`` — so there
+    is one rounding, the app's, and no float can land a hair either side of a half.
+    """
+    if fahrenheit:
+        return (18 * tenths + 3200 + 50) // 100
+    return (tenths + 5) // 10
+
+
+def _whole_ceiling(tenths: int, temperature_unit: str) -> int:
+    """The highest whole degree whose write does not exceed ``tenths`` of °C.
+
+    What a slider bounded by a limit may offer. Rounding the limit can land above it — a
+    47.7 °C scald limit rounds to 48 °C, which writes 48.0 — so this steps down until the
+    value, converted the way a write converts it, fits. In °F that is Kohler's own table,
+    which already sits at or below the arithmetic, so 47.7 °C still offers 118 °F.
+    """
+    whole = _whole_degrees(tenths, temperature_unit.lower().startswith("f"))
+    while round(unit_to_celsius(whole, temperature_unit) * 10) > tenths:
+        whole -= 1
+    return whole
 
 
 async def async_setup_entry(
@@ -96,6 +127,16 @@ class ZoneNumberBase(ZoneWordEntity, NumberEntity):
     # SLIDER rather than BOX, as the app's own control is a slider. The zone range is
     # 58-118 °F at most (Cold, then 59 up to the valve's maximum), narrow enough to drag.
     _attr_mode = NumberMode.SLIDER
+
+    @property
+    def available(self) -> bool:
+        """Unavailable once the valve's reported layout no longer has this zone.
+
+        `Valve._apply_topology` can shrink the model after setup; until the entry reloads,
+        an entity for a zone that is gone must say so rather than raise — one listener that
+        raises stops every listener after it.
+        """
+        return super().available and self._zone in self._valve.model.zones
 
 
 class ZoneTemperatureNumber(ZoneNumberBase):
@@ -144,12 +185,17 @@ class ZoneTemperatureNumber(ZoneNumberBase):
         )
 
     def _display(self, celsius: float) -> float:
-        """A Celsius value in the account's unit, as a whole number."""
-        return float(round(celsius_to_unit(celsius, self.coordinator.temperature_unit)))
+        """A Celsius value in the account's unit, as the whole number the app shows."""
+        return float(_whole_degrees(round(celsius * 10), self._fahrenheit))
 
     def _zone_limits(self):
         state = self._valve.gcs_state
-        return state.outlet_limits.get(self._valve.model.outlet_id(self._zone, 1))
+        try:
+            outlet_id = self._valve.model.outlet_id(self._zone, 1)
+        except ValueError:
+            # The zone has no outlets any more — see `available`.
+            return None
+        return state.outlet_limits.get(outlet_id)
 
     @property
     def _floor(self) -> float:
@@ -157,7 +203,7 @@ class ZoneTemperatureNumber(ZoneNumberBase):
         limits = self._zone_limits()
         tenths = None if limits is None else limits.minimum_temperature_tenths
         if tenths:
-            return self._display(tenths / 10)
+            return float(_whole_degrees(tenths, self._fahrenheit))
         if self._fahrenheit:
             return float(ZONE_TEMPERATURE_MIN_F)
         return float(round(unit_to_celsius(ZONE_TEMPERATURE_MIN_F, "Fahrenheit")))
@@ -169,11 +215,16 @@ class ZoneTemperatureNumber(ZoneNumberBase):
 
     @property
     def native_max_value(self) -> float:
-        """The valve's current scald limit, else the top of the app's Max Temperature range."""
+        """The valve's current scald limit, else the top of the app's Max Temperature range.
+
+        The limit's whole-degree **ceiling that does not exceed it** (`_whole_ceiling`),
+        never the nearest whole degree: a 47.7 °C limit offered 48 °C until 2026-10-16.
+        """
         limits = self._zone_limits()
         tenths = None if limits is None else limits.maximum_temperature_tenths
         if tenths:
-            return max(self._display(tenths / 10), self._floor)
+            ceiling = _whole_ceiling(tenths, self.coordinator.temperature_unit)
+            return max(float(ceiling), self._floor)
         if self._fahrenheit:
             return float(UI_TEMPERATURE_MAX_F)
         return float(round(unit_to_celsius(UI_TEMPERATURE_MAX_F, "Fahrenheit")))
@@ -244,12 +295,19 @@ class ZoneFlowNumber(ZoneNumberBase):
     number that does not move is more convincing than one that flickers, not less, so
     neither is shown as a setpoint.
 
-    A control has to display something, so the entity remembers what it last wrote and
-    falls back to `DEFAULT_FLOW_PERCENT` — which is also what `async_apply_valve` sends when
-    no flow is specified, so the displayed value and the commanded value agree. Once water
-    is running the valve's own byte is authoritative and is shown directly.
+    A control has to display something, so the entity remembers what was last written and
+    falls back to `DEFAULT_FLOW_PERCENT` — and every write that names no flow for this zone
+    (a temperature change, an outlet toggle) sends exactly that remembered value, so the
+    displayed value and the commanded value agree. It is kept as the percent chosen, on
+    this zone's own scale, and converted only when a word is built (`Valve._wire_flow`):
+    until 2026-10-16 it was stored already converted to the 200-byte scale, so on a zone
+    whose ceiling is another byte the idle entity showed a different number than chosen
+    (50 % read back as 25 %). Once water is running the valve's own byte is authoritative
+    and is shown directly.
 
-    `flow_is_live` says which of the two you are looking at.
+    `flow_is_live` says which of the two you are looking at — **for this zone**, from this
+    zone's own word. `GcsState.flow_is_live` reads zone 1 only, so zone 2's entity used to
+    show its remembered value while zone 2 ran and its idle byte while only zone 1 did.
     """
 
     _attr_icon = "mdi:water-percent"
@@ -276,11 +334,49 @@ class ZoneFlowNumber(ZoneNumberBase):
         super().__init__(coordinator, valve, zone)
         self._attr_name = zone_label(valve, zone, "Flow")
         self._attr_unique_id = f"{self._device_id}_flow_zone_{zone}"
-        # The chosen flow lives on the valve rather than on this entity, because the outlet
-        # switches need it too: toggling an outlet rewrites the whole word, and without a
-        # shared value it would reset the flow this entity had set. Seeded with
-        # `DEFAULT_FLOW_PERCENT`, which is what an unspecified write sends anyway.
+        # The chosen flow lives on the valve rather than on this entity, because every
+        # write needs it: the valve takes no partial write, so an outlet toggle or a
+        # temperature change rewrites this zone's flow too, and without a shared value it
+        # would reset the flow this entity had set. Seeded with `DEFAULT_FLOW_PERCENT`.
         self._valve.zone_flow.setdefault(zone, DEFAULT_FLOW_PERCENT)
+
+    def _flow_limits(self) -> tuple[int, int] | None:
+        """This zone's flow bounds in bytes, or None with no state or no such zone.
+
+        The zone is checked here rather than left to `zone_flow_limits`, which answers the
+        default 16/200 bounds for a zone the layout has lost (it raised until 2026-10-16).
+        Bounds for a zone that is gone are not this entity's to publish — see
+        `ZoneNumberBase.available`.
+        """
+        state = self._state
+        if state is None or self._zone not in self._valve.model.zones:
+            return None
+        try:
+            return state.zone_flow_limits(self._zone)
+        except ValueError:
+            return None
+
+    @property
+    def _flow_is_live(self) -> bool:
+        """Whether this zone's own word has outlets open and no pause."""
+        word = self._word
+        return bool(word is not None and word.outlet_mask and not word.paused)
+
+    def _reported_percent(self, high: int) -> float | None:
+        """This zone's flow byte as a percent of its own ceiling, unrounded."""
+        word = self._word
+        if word is None:
+            return None
+        # Re-derived from the raw byte against **this zone's own ceiling** rather than read
+        # off `word.flow_percent`, which `decode_word` computes with the 200 default.
+        # Identical wherever the ceiling is 200; correct where it is not. See
+        # `flow_byte_to_percent`. `word.flow_percent` was decoded against the 200 default,
+        # so multiplying it back recovers the raw byte exactly — `decode_word` does
+        # `byte * 100 / 200`, and this undoes precisely that. Cheaper and less invasive
+        # than threading per-valve limits through the decoder, which has 28 call sites and
+        # no per-valve context.
+        byte = round(word.flow_percent * FLOW_PER_PERCENT)
+        return flow_byte_to_percent(byte, high)
 
     @property
     def native_min_value(self) -> float:
@@ -289,10 +385,10 @@ class ZoneFlowNumber(ZoneNumberBase):
         Per-outlet limits arrive gradually over MQTT, so a bound captured in ``__init__``
         would be the fallback for as long as the valve stayed quiet.
         """
-        state = self._state
-        if state is None:
+        limits = self._flow_limits()
+        if limits is None:
             return FLOW_BYTE_MIN / FLOW_PER_PERCENT
-        low, high = state.zone_flow_limits(self._zone)
+        low, high = limits
         # Rounded UP, and away from the forbidden side: an odd limit byte would otherwise put
         # the bound on a half and, with a whole-number step, every position on the slider
         # would carry that .5 — defeating the point. Ceiling rather than round, so the bound
@@ -301,10 +397,10 @@ class ZoneFlowNumber(ZoneNumberBase):
 
     @property
     def native_max_value(self) -> float:
-        state = self._state
-        if state is None:
+        limits = self._flow_limits()
+        if limits is None:
             return FLOW_BYTE_MAX / FLOW_PER_PERCENT
-        _, high = state.zone_flow_limits(self._zone)
+        _, high = limits
         # The ceiling **is** 100 % by definition — percent is a ratio against it, so the
         # maximum can only be 100. Kept as arithmetic rather than a literal so the two bounds
         # visibly come from the same place.
@@ -312,29 +408,18 @@ class ZoneFlowNumber(ZoneNumberBase):
 
     @property
     def native_value(self) -> float | None:
-        """The valve's byte while water runs; otherwise what we last wrote, or 100 %.
+        """The zone's byte while its water runs; otherwise what was last written, or 100 %.
 
         See the class docstring for why the idle byte is not echoed.
         """
-        state = self._state
-        if state is not None and state.flow_is_live:
-            word = self._word
-            if word is not None:
-                # Re-derived from the raw byte against **this zone's own ceiling** rather
-                # than read off `word.flow_percent`, which `decode_word` computes with the
-                # 200 default. Identical wherever the ceiling is 200; correct where it is
-                # not. See `flow_byte_to_percent`.
-                _, high = state.zone_flow_limits(self._zone)
-                # Rounded to the step. The valve resolves finer than this control does, so an
-                # unrounded value would sit between two positions the slider can occupy —
+        limits = self._flow_limits()
+        if limits is not None and self._flow_is_live:
+            reported = self._reported_percent(limits[1])
+            if reported is not None:
+                # Rounded to the step. The valve resolves finer than this control does, so
+                # an unrounded value would sit between two positions the slider can occupy —
                 # Home Assistant would render a number the user cannot return to.
-                # `word.flow_percent` was decoded against the 200 default, so multiplying
-                # it back recovers the raw byte exactly — `decode_word` does `byte * 100 /
-                # 200`, and this undoes precisely that. Cheaper and less invasive than
-                # threading per-valve limits through the decoder, which has 28 call sites
-                # and no per-valve context.
-                byte = round(word.flow_percent * FLOW_PER_PERCENT)
-                return round(flow_byte_to_percent(byte, high))
+                return round(reported)
         return self._valve.zone_flow.get(self._zone, DEFAULT_FLOW_PERCENT)
 
     @property
@@ -348,21 +433,22 @@ class ZoneFlowNumber(ZoneNumberBase):
         The bounds are published too, because a valve with flow control disabled reports a
         narrow range and a slider that will not move needs to say why.
         """
-        state = self._state
-        if state is None:
+        limits = self._flow_limits()
+        if limits is None:
             return {}
-        low, high = state.zone_flow_limits(self._zone)
+        low, high = limits
         return {
             # The outlet's own ceiling, in raw byte units. Published because percent is a
             # ratio against it: two valves showing "50 %" are at the same fraction of their
             # own maximum, not necessarily the same flow.
             "maximum_flow_byte": high,
             # False means the value above is what Home Assistant last wrote, not a reading
-            # from the valve — see the class docstring.
-            "flow_is_live": state.flow_is_live,
-            # The byte the valve is actually holding, whatever it means. Published so the
-            # idle-byte behaviour stays observable rather than merely asserted.
-            "reported_flow_percent": state.flow_percent,
+            # from the valve — see the class docstring. This zone's own word decides.
+            "flow_is_live": self._flow_is_live,
+            # The byte this zone's valve is actually holding, whatever it means, as a
+            # percent of this zone's ceiling. Published so the idle-byte behaviour stays
+            # observable rather than merely asserted.
+            "reported_flow_percent": self._reported_percent(high),
             "minimum_percent": flow_byte_to_percent(low, high),
             "maximum_percent": flow_byte_to_percent(high, high),
             # True where the valve reports a single-point range — flow control is off at
@@ -372,21 +458,10 @@ class ZoneFlowNumber(ZoneNumberBase):
 
     async def async_set_native_value(self, value: float) -> None:
         key = "zone1_flow" if self._zone == 1 else "zone2_flow"
-        # `async_apply_valve` takes a percent and encodes it against the 200 default, so a
-        # zone with a different ceiling needs the percent restated in those terms: the byte
-        # this percent means on **this** zone, expressed as the percent that produces the
-        # same byte at 200. Identity wherever the ceiling is 200, which is every device in
-        # the corpus.
-        state = self._state
-        if state is not None:
-            _, high = state.zone_flow_limits(self._zone)
-            byte = flow_percent_to_byte(float(value), high)
-            value = flow_byte_to_percent(byte, FLOW_BYTE_MAX)
+        # The percent as chosen, on this zone's own scale. The valve restates it for the
+        # wire and, once the write is accepted, remembers it in `zone_flow`, so an idle
+        # entity shows what was asked for and the next write of any kind preserves it.
         await self._valve.async_apply_valve(**{key: float(value)})
-        # Remembered on the valve so an idle entity shows what was asked for rather than
-        # the byte it happens to be holding, and so an outlet toggle preserves it. Recorded
-        # only after the write is accepted.
-        self._valve.zone_flow[self._zone] = float(value)
         self.async_write_ha_state()
 
 
@@ -420,10 +495,16 @@ class _OutletTemperatureNumber(KohlerValveEntity, NumberEntity):
         )
 
     def _display(self, tenths: int | None) -> float | None:
-        """Tenths of °C from the valve, in the account's unit."""
+        """Tenths of °C from the valve, in the account's unit, as the app shows them."""
         if tenths is None:
             return None
-        return round(celsius_to_unit(tenths / 10, self.coordinator.temperature_unit))
+        return _whole_degrees(tenths, self._fahrenheit)
+
+    def _ceiling(self, tenths: int | None) -> float | None:
+        """A limit as the highest whole value that stays within it — see `_whole_ceiling`."""
+        if tenths is None:
+            return None
+        return _whole_ceiling(tenths, self.coordinator.temperature_unit)
 
     def _tenths(self, value: float) -> int:
         """The account's unit back to the tenths of °C the wire wants."""
@@ -452,6 +533,10 @@ class OutletMaxTemperatureNumber(_OutletTemperatureNumber):
     delivery* and carries no echo of the value; the app performs no read-back at all. This
     entity reports failure rather than optimism — including the partial-write case, where
     some outlets took the new limit and others did not.
+
+    A limit below the current Default Temperature is refused before anything is sent, in
+    this entity's own units — the valve refuses the combination, and the coordinator checks
+    it across every outlet too (`Valve.async_write_outlet_setting`).
     """
 
     _attr_name = "Max Temperature"
@@ -476,9 +561,18 @@ class OutletMaxTemperatureNumber(_OutletTemperatureNumber):
         )
 
     async def async_set_native_value(self, value: float) -> None:
-        await self._valve.async_write_outlet_setting(
-            maximum_temperature_tenths=self._tenths(value)
-        )
+        tenths = self._tenths(value)
+        limits = self._limits
+        default = None if limits is None else limits.default_temperature_tenths
+        if default is not None and tenths < default:
+            unit = self.native_unit_of_measurement
+            raise HomeAssistantError(
+                f"{value:.0f} {unit} is below this valve's Default Temperature of "
+                f"{self._display(default):.0f} {unit}, so nothing was written. A shower "
+                "cannot start hotter than the scald limit — lower Default Temperature "
+                "first, or pick a higher maximum."
+            )
+        await self._valve.async_write_outlet_setting(maximum_temperature_tenths=tenths)
         self.async_write_ha_state()
 
 
@@ -527,30 +621,33 @@ class OutletDefaultTemperatureNumber(_OutletTemperatureNumber):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """The ceiling this entity will actually accept, which the slider cannot show."""
+        """The ceiling this entity will actually accept, which the slider cannot show.
+
+        The highest whole value within the limit, not the nearest: a 47.7 °C limit accepts
+        47 °C, and showing 48 would name a value that is refused.
+        """
         limits = self._limits
         return {
             "scald_limit": None
             if limits is None
-            else self._display(limits.maximum_temperature_tenths)
+            else self._ceiling(limits.maximum_temperature_tenths)
         }
 
     async def async_set_native_value(self, value: float) -> None:
         # Checked here as well as in the client so the message names this entity's own
         # units and the setting the user would have to change — `Max Temperature`, not
-        # `maximumOutletTemperature`.
+        # `maximumOutletTemperature`. **Compared in tenths**, as written: comparing whole
+        # display degrees let 48 °C through under a 47.7 °C limit, because 47.7 displays
+        # as 48.
+        tenths = self._tenths(value)
         limits = self._limits
-        ceiling = (
-            None if limits is None else self._display(limits.maximum_temperature_tenths)
-        )
-        if ceiling is not None and value > ceiling:
+        maximum = None if limits is None else limits.maximum_temperature_tenths
+        if maximum is not None and tenths > maximum:
             unit = self.native_unit_of_measurement
             raise HomeAssistantError(
                 f"{value:.0f} {unit} is above this valve's Max Temperature of "
-                f"{ceiling:.0f} {unit}. A shower cannot start hotter than the scald "
-                "limit — raise Max Temperature first, or pick a lower default."
+                f"{self._ceiling(maximum):.0f} {unit}. A shower cannot start hotter than "
+                "the scald limit — raise Max Temperature first, or pick a lower default."
             )
-        await self._valve.async_write_outlet_setting(
-            default_temperature_tenths=self._tenths(value)
-        )
+        await self._valve.async_write_outlet_setting(default_temperature_tenths=tenths)
         self.async_write_ha_state()

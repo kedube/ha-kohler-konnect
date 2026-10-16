@@ -35,7 +35,8 @@
     },
     "abort": {
       "already_configured": "Questo account Kohler è già configurato.",
-      "reauth_successful": "Nuovo accesso effettuato correttamente."
+      "reauth_successful": "Nuovo accesso effettuato correttamente.",
+      "unique_id_mismatch": "Questo account Kohler è diverso da quello a cui appartiene questa voce."
     }
   },
   "options": {

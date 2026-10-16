@@ -594,6 +594,7 @@ async def test_the_api_probe_log_redacts_credentials_hidden_under_innocent_keys(
                 "ioTHubSettings": {
                     "ioTHub": "hub.example.net",
                     "deviceId": "mobile-x",
+                    "username": "hub.example.net/mobile-x",
                     "password": "SharedAccessSignature sr=hub&sig=pw-secret",
                     "connectionString": "HostName=hub;SharedAccessKey=cs-secret",
                 }

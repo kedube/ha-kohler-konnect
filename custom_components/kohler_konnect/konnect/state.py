@@ -94,6 +94,16 @@ def _preset_id_or_none(value: object) -> int | None:
     return number or None
 
 
+def _zone_status(value: object) -> str | None:
+    """A HUB zone's ``status``, upper-cased like every other HUB on/off field.
+
+    Only ``"ON"``/``"OFF"`` have been captured, but the music, steam, light and experience
+    handlers all upper-case theirs, and ``HubState.is_running`` compares against ``"ON"``
+    — so a lowercase ``"on"`` stored as sent read as a stopped shower.
+    """
+    return None if value is None else str(value).strip().upper()
+
+
 def _text(item: dict[str, Any], key: str) -> str | None:
     """A field echoed back verbatim on a write: its string form, or None when absent."""
     value = item.get(key)
@@ -540,10 +550,11 @@ class GcsState:
     # The measurement block: decoded, but not surfaced
     # ---------------------------------------------------------------- #
     # `ValveWord.measured_temperature_celsius` and `.measured_flow_percent` are decoded from
-    # bytes 5-6 and published as attributes on the Hex sensor and in diagnostics. Four
-    # `GcsState` properties used to wrap them — `_measuring_word`, `reports_measurements`,
-    # `measured_temperature`, `measured_flow_percent` — for a binary sensor that was removed
-    # in 0.6.x; nothing has called them since, so they went with 0.8.1.
+    # the status word's bytes 4-5 (temperature) and byte 6 (flow), and published as
+    # attributes on the Hex sensor and in diagnostics. Four `GcsState` properties used to
+    # wrap them — `_measuring_word`, `reports_measurements`, `measured_temperature`,
+    # `measured_flow_percent` — for a binary sensor that was removed in 0.6.x; nothing has
+    # called them since, so they went with 0.8.1.
     #
     # **The knowledge in them is worth keeping.** A valve that does not populate the block
     # reports the whole thing as zero, temperature AND flow together, and any future reader
@@ -752,8 +763,17 @@ class GcsState:
 
         Taken from that zone's **first** outlet, matching what the app does — it bounds the
         slider with `outletConfigurations[0]` of each valve rather than combining outlets.
+
+        A zone the model does not have gets the constants too, rather than the
+        `ValueError` `outlet_id` raises for it: the model can shrink at runtime when the
+        valve's own settings report fewer zones than the entry assumed, and a zone 2 Flow
+        entity built before that still asks for its bounds until the next reload.
         """
-        limits = self.outlet_limits.get(self.model.outlet_id(zone, 1))
+        try:
+            outlet_id = self.model.outlet_id(zone, 1)
+        except ValueError:
+            return FLOW_BYTE_MIN, FLOW_BYTE_MAX
+        limits = self.outlet_limits.get(outlet_id)
         if limits is None:
             return FLOW_BYTE_MIN, FLOW_BYTE_MAX
         return limits.minimum_flow_byte, limits.maximum_flow_byte
@@ -796,11 +816,17 @@ class GcsState:
         )
         if attribute is None:
             return False
+        # **Each word is guarded on its own, and neither guards the rest of the message.**
+        # An absent or garbled word keeps that zone as it was — blanking it would close a
+        # zone that may still be running — but the session fields below are the valve's own
+        # report whatever its words say. Until 2026-10-16 a bad `primaryValve1` returned
+        # here, dropping them too: `{currentSystemState: "error"}` with no word left
+        # `has_fault` False, so a fault the valve announced never reached the Problem sensor.
         try:
             valve1 = decode_word(str(attribute.get("primaryValve1") or ""))
         except ValveHexError:
             _LOGGER.debug("Undecodable primaryValve1 in %s", envelope.code)
-            return False
+            valve1 = self.valve1
         valve2 = None
         if self.model.uses_valve2:
             try:
@@ -1180,7 +1206,7 @@ class HubState:
             # elsewhere in the same API. The REST sibling had this guard; this one did not.
             outlets = attribute.get("outlets")
             zone = HubZone(
-                status=attribute.get("status"),
+                status=_zone_status(attribute.get("status")),
                 outlets=outlet_flags(
                     outlets if isinstance(outlets, list) else None, count
                 ),
@@ -1339,6 +1365,12 @@ class HubState:
         A missing `status` is treated as ON, the same direction of error as `_name_of` and
         the `isExperience` filter in `select.py`: prefer showing a favorite over hiding one.
 
+        **An `OFF` clears only the favorite it names**, or whatever is showing when it names
+        ``"0"``, which is nothing running. Switching favorites starts one and stops the
+        other, and the two messages are not ordered: a late ``{"id": "1", "status": "OFF"}``
+        used to reset the dropdown while favorite 2 ran. `_apply_experience` has the same
+        guard.
+
         The name travels with the message, which is why it is kept — it lets the dropdown
         show a running favorite before the favorites list has been seeded.
         """
@@ -1355,7 +1387,13 @@ class HubState:
             if str(attribute.get("status") or "").strip().upper() == "OFF":
                 # An explicit stop. Break rather than continue, so a trailing attribute
                 # cannot resurrect the favorite the controller just turned off.
-                favorite_id = name = None
+                stopped = str(identifier)
+                if self.active_favorite_id in (None, stopped) or stopped in {"0", ""}:
+                    favorite_id = name = None
+                else:
+                    # A late stop for a favorite that is no longer the one running.
+                    favorite_id = self.active_favorite_id
+                    name = self.active_favorite_name
                 break
             favorite_id = str(identifier)
             name = str(attribute.get("name") or "").strip() or None
@@ -1410,7 +1448,7 @@ class HubState:
             )
             outlets = entry.get("outlets")
             self.zones[number] = HubZone(
-                status=entry.get("status"),
+                status=_zone_status(entry.get("status")),
                 # `outlet_flags` indexes this positionally, so a string would decompose
                 # into truthy characters and read as every outlet running.
                 outlets=outlet_flags(

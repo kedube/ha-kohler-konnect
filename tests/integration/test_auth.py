@@ -132,7 +132,8 @@ async def test_a_valid_access_token_is_reused_until_it_enters_the_expiry_margin(
         time.time() + TOKEN_EXPIRY_MARGIN_SECONDS + 60, abs=5
     )
 
-    # A token that lands already inside the margin is renewed on the very next use.
+    # A token issued with less life than the margin is still used, for half of that life,
+    # rather than renewed on every use (and rotating the refresh token each time).
     auth.invalidate_access_token()
     kohler.token_queue.append(
         _tokens("refresh-2", str(TOKEN_EXPIRY_MARGIN_SECONDS - 1))
@@ -142,7 +143,6 @@ async def test_a_valid_access_token_is_reused_until_it_enters_the_expiry_margin(
     assert [r["refresh_token"] for r in kohler.token_requests] == [
         "refresh-0",
         "refresh-1",
-        "refresh-2",
     ]
 
 

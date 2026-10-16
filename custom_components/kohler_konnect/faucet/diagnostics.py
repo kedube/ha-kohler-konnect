@@ -26,7 +26,37 @@ TO_REDACT = {
     "longitude",
     "homeLatitude",
     "homeLongitude",
+    "connectionString",
+    "sharedAccessKey",
+    "password",
 }
+
+# Blocks that address the faucet in Kohler's cloud rather than describe it, dropped whole
+# wherever they appear (compared without case). `faucet-configuration` is a
+# `DeviceConfigurationResponse`, whose top-level `iot` carries a valve's IoT Hub connection
+# string, SharedAccessKey included; the valves' report never copies it, and nothing stops a
+# faucet's reply from carrying one too.
+_CLOUD_BLOCKS = frozenset({"iot", "iothub", "iothubsettings"})
+# Secrets by their shape, whatever the field is called: a connection string or its key, a
+# shared access signature, a signed URL. The whole value goes, host and device id included.
+_SECRET_VALUE = re.compile(
+    r"sharedaccess|hostname=|\bsig=|azure-devices\.net", re.IGNORECASE
+)
+
+
+def _without_cloud_secrets(data: Any) -> Any:
+    """``data`` without cloud-addressing blocks, and with secret-shaped values redacted."""
+    if isinstance(data, dict):
+        return {
+            key: _without_cloud_secrets(value)
+            for key, value in data.items()
+            if str(key).lower() not in _CLOUD_BLOCKS
+        }
+    if isinstance(data, list):
+        return [_without_cloud_secrets(item) for item in data]
+    if isinstance(data, str) and _SECRET_VALUE.search(data):
+        return REDACTED
+    return data
 
 
 def _redact_values(data: Any, pattern: re.Pattern[str]) -> Any:
@@ -56,8 +86,12 @@ def faucet_report(faucet: FaucetCoordinator) -> dict[str, Any]:
         "last_update_success": faucet.last_update_success,
         "update_interval": str(faucet.update_interval),
         "connection_state": faucet.connection_state,
-        "state": async_redact_data(faucet.data or {}, TO_REDACT),
-        "configuration": async_redact_data(faucet.config, TO_REDACT),
+        "state": async_redact_data(
+            _without_cloud_secrets(faucet.data or {}), TO_REDACT
+        ),
+        "configuration": async_redact_data(
+            _without_cloud_secrets(faucet.config), TO_REDACT
+        ),
         "uncleared_leak_events": len(faucet.active_leaks),
         "leak_alert": faucet.leak_alert,
         "firmware_check": None

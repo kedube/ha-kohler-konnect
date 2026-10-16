@@ -12,12 +12,13 @@ tells it when the connection comes and goes (`async_push_activity`).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import math
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from datetime import date, datetime, timedelta
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -30,6 +31,7 @@ from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
+from homeassistant.util.async_ import create_eager_task
 
 from ..const import (
     CONF_MAX_RUN_MINUTES,
@@ -93,7 +95,10 @@ _LEAK_TIME = "leakDetectionTime"
 
 # Fields whose values are recorded for diagnostics.
 TRACKED_FIELDS = ("status", "progress", "handleState")
+# A safety auto-off that fails is tried again a minute later, this many times. A faucet that
+# stays offline used to be retried every minute for ever, with a warning each time.
 AUTO_OFF_RETRY = 60
+AUTO_OFF_RETRIES = 10
 # The dispense timer fires this long after the limit, so float rounding of the deadline
 # cannot leave a dispense counted as running when it fires.
 _DISPENSE_TIMER_SLACK = 1.0
@@ -163,6 +168,34 @@ def preset_labels(presets: Iterable[FaucetPreset]) -> dict[str, FaucetPreset]:
 def _push_signature(state: dict[str, Any]) -> bool | None:
     """The change the stream must announce: water on or off."""
     return water_running(state)
+
+
+def _may_change_config(event: FaucetEvent | None) -> bool:
+    """Whether a faucet message can change what the configuration read holds.
+
+    Only a water or handle report is known not to. A leak alert, an install result, a preset
+    run (perhaps of a preset added since) or a message not understood may. Re-reading for
+    every message cost about four REST calls per water on or off, on the account's shared
+    rate limit.
+    """
+    return event is None or not (event.status or event.handle)
+
+
+async def _side_by_side(*reads: Coroutine[Any, Any, Any]) -> list[Any]:
+    """Run independent reads at once; the first to raise is raised once all have finished.
+
+    Each read catches its own failures, so what escapes is a dead credential (or a bug).
+    Raising it straight away would leave the others updating what they hold after the
+    refresh had failed. Started eagerly, so reads with nothing to do (most of them, most
+    polls) finish without a trip round the event loop.
+    """
+    results = await asyncio.gather(
+        *(create_eager_task(read) for read in reads), return_exceptions=True
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+    return results
 
 
 class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -238,8 +271,17 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._preset_limit = DISPENSE_MAX.total_seconds()
         self._app_preset: str | None = None
         self._water_was_running: bool | None = None
-        # Ends a dispense whose end never arrives, at its dispense_limit().
-        self._dispense_timer: CALLBACK_TYPE | None = None
+        # Ends a dispense whose end never arrives, at its dispense_limit(): one timer for
+        # Home Assistant's dispense ("dispense") and one for the app's preset ("preset").
+        # They overlap; one shared timer let a preset cancel the dispense's, which then
+        # showed as dispensing until the next poll.
+        self._dispense_timers: dict[str, CALLBACK_TYPE] = {}
+        # The stream's latest water status and handle position, with when each arrived
+        # (monotonic), so a poll that read the faucet before then cannot put the older
+        # state back. See `_stream_values_since`.
+        self._stream_values: dict[str, tuple[float, str]] = {}
+        # When the state in `data` was learned (monotonic): the poll's read, or the stream.
+        self._state_at: float | None = None
         # Water usage, as the raw monthly and daily series — the same shape the valves
         # keep, so the water sensors are shared. See `konnect/usage.py`.
         self.usage: dict[str, Any] = {}
@@ -266,7 +308,19 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Safety auto-off: wall-clock deadline (persisted) and its timer.
         self._auto_off_at: float | None = None
         self._auto_off_timer: CALLBACK_TYPE | None = None
+        # Whether the water has been seen running since the deadline was set, by a poll or
+        # the stream — persisted with it, so water turned off during a restart still drops
+        # the limit. Until then "off" may only be the cloud lagging the command.
         self._seen_running = False
+        # The stream saw it running: a poll can lag the stream, so then only the stream
+        # can say it stopped (while it is trusted). Not persisted: after a restart the
+        # stream's "off" may have been missed, and polls must be able to say so.
+        self._feed_saw_running = False
+        # When the deadline was set or restored (monotonic); see `_known_off`.
+        self._auto_off_armed_at = 0.0
+        self._auto_off_failures = 0
+        # Set by `async_shutdown`: an auto-off still in flight must not re-arm or save.
+        self._shut_down = False
 
     def __repr__(self) -> str:
         return f"<FaucetCoordinator {self.device_id} {self.device_name!r}>"
@@ -282,9 +336,12 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             if isinstance(value := stored.get(key), (int, float)):
                 setattr(self, attr, float(value))
-        # A reload or restart must not lose the safety limit.
+        # A reload or restart must not lose the safety limit, nor whether the water it
+        # covers was seen running.
         if isinstance(deadline := stored.get("auto_off_at"), (int, float)):
             self._auto_off_at = float(deadline)
+            self._seen_running = stored.get("auto_off_seen_running") is True
+            self._auto_off_armed_at = time.monotonic()
             self._schedule_auto_off(max(0.0, deadline - time.time()))
 
     def stored(self) -> dict[str, Any]:
@@ -293,18 +350,33 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "leaks_cleared_through": self._leaks_cleared_through,
             "leak_alert_at": self._leak_alert_at,
             "auto_off_at": self._auto_off_at,
+            "auto_off_seen_running": self._seen_running,
         }
 
     async def async_save(self) -> None:
         """Persist this faucet's state through the account's store."""
         await self.account.async_save_faucet(self)
 
+    @callback
+    def _async_save_soon(self, what: str) -> None:
+        """Persist from a callback. Not after unload: the next setup's copy is the live one."""
+        if not self._shut_down:
+            self.config_entry.async_create_task(
+                self.hass, self.async_save(), f"{DOMAIN} {what}"
+            )
+
     async def async_shutdown(self) -> None:
         # The persisted deadline is picked up again by the next setup.
-        for cancel in (self._auto_off_timer, self._push_check, self._dispense_timer):
+        self._shut_down = True
+        for cancel in (
+            self._auto_off_timer,
+            self._push_check,
+            *self._dispense_timers.values(),
+        ):
             if cancel is not None:
                 cancel()
-        self._auto_off_timer = self._push_check = self._dispense_timer = None
+        self._auto_off_timer = self._push_check = None
+        self._dispense_timers.clear()
         await super().async_shutdown()
 
     # --- polling ----------------------------------------------------------------
@@ -347,6 +419,14 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         # Errors fall back to slow polling; no point hammering a failing cloud.
         self.update_interval = self._idle_interval
+        # The reads beside the state come first, side by side, so that none sits between
+        # reading the state and applying it. They used to come after, one by one: a stream
+        # message in that gap was overwritten by the older state, and the re-read it asked
+        # for was dropped while this refresh held the lock — the water flickered on, off
+        # and on, or stuck until the next poll (2026-10-16). After a failed poll they wait
+        # for the state to answer again, for the same reason as the slow polling.
+        if self.last_update_success:
+            await self._async_refresh_extras()
         polled_at = time.monotonic()
         try:
             snapshot = FaucetSnapshot.from_payload(
@@ -371,25 +451,27 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._clear_issues()
         state = snapshot.state
+        if newer := self._stream_values_since(polled_at):
+            # The stream reported while the read was on its way: its water and handle are
+            # the newer. Read again to be sure, as the re-read the stream asked for waited
+            # on this one and may have been dropped.
+            state = {**state, **newer}
+            self.config_entry.async_create_task(
+                self.hass, self.async_request_refresh(), f"{DOMAIN} faucet re-read"
+            )
         self._check_push_announced(state)
         self._polled_at = polled_at
+        self._state_at = max(polled_at, self._state_at or polled_at)
         self.connection_state = snapshot.connection_state
         self.last_connected = snapshot.last_connected
         self._record_values(state)
-        self._note_water(water_running(state), from_feed=False)
-        await self._async_refresh_config()
-        await self._async_refresh_usage()
+        running = water_running(state)
+        self._note_water(running, from_feed=False)
 
         quantity = state.get("quantity")
         if isinstance(quantity, (int, float)) and quantity > 0:
             self.last_dispense_liters = float(quantity)
 
-        running = water_running(state)
-        if running:
-            self._seen_running = True
-        elif running is False and self._seen_running and self._auto_off_at:
-            # Seen running, now off: no need for the safety limit any more.
-            await self._async_cancel_auto_off()
         if running or time.monotonic() < self._fast_poll_until:
             # A trusted stream reports the change the moment it happens.
             self.update_interval = (
@@ -399,13 +481,32 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         return state
 
+    def _stream_values_since(self, since: float) -> dict[str, str]:
+        """The stream's water status and handle position that arrived after ``since``."""
+        return {
+            field: value
+            for field, (at, value) in self._stream_values.items()
+            if at > since
+        }
+
     def _record_values(self, state: dict[str, Any]) -> None:
         values = {field: state.get(field) for field in TRACKED_FIELDS}
         values["connectionState"] = self.connection_state
         for field, value in values.items():
-            if isinstance(value, str) and value not in self.seen_values[field]:
-                self.seen_values[field].add(value)
-                _LOGGER.debug("New faucet %s value: %s", field, value)
+            self._record_value(field, value)
+
+    def _record_value(self, field: str, value: Any) -> None:
+        if isinstance(value, str) and value not in self.seen_values[field]:
+            self.seen_values[field].add(value)
+            _LOGGER.debug("New faucet %s value: %s", field, value)
+
+    async def _async_refresh_extras(self) -> None:
+        """Refresh the configuration, presets, firmware check and water usage.
+
+        None depends on another, so they run at once. One after another they added up to
+        six round trips to every setup, part of the 14 s the owner's diagnostics showed.
+        """
+        await _side_by_side(self._async_refresh_config(), self._async_refresh_usage())
 
     async def _async_refresh_config(self) -> None:
         """Refresh firmware, leak history and presets; failures keep the old copy."""
@@ -417,6 +518,19 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             < FAUCET_CONFIG_REFRESH_INTERVAL.total_seconds()
         ):
             return
+        # Cleared first, so a message that arrives during the reads asks again.
+        self._config_due = False
+        read, _, _ = await _side_by_side(
+            self._async_read_config(),
+            self._async_read_presets(),
+            self._async_check_firmware(now),
+        )
+        # Try again next poll only if it has never succeeded.
+        if read or self._config_fetched_at is not None:
+            self._config_fetched_at = now
+
+    async def _async_read_config(self) -> bool:
+        """Read the configuration (firmware, leak history); False if that failed."""
         try:
             self.config = await self.client.async_get_faucet_configuration(
                 self.device_id
@@ -424,9 +538,10 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (AuthError, KohlerError) as err:
             self._raise_if_dead(err)
             _LOGGER.debug("Could not refresh faucet configuration: %s", err)
-            # Try again next poll only if it has never succeeded.
-            if self._config_fetched_at is None:
-                return
+            return False
+        return True
+
+    async def _async_read_presets(self) -> None:
         try:
             presets, self.preset_source = await self.device.async_get_presets()
         except (AuthError, KohlerError) as err:
@@ -434,9 +549,6 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Could not refresh Konnect presets: %s", err)
         else:
             self.presets = {p.preset_id: p for p in presets}
-        await self._async_check_firmware(now)
-        self._config_fetched_at = now
-        self._config_due = False
 
     async def _async_check_firmware(self, now: float) -> None:
         """Ask Kohler about newer firmware now and then; failures keep the old answer."""
@@ -481,32 +593,36 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._usage_due_at = None
         self._usage_day = today
         month = today.strftime("%Y-%m")
-        try:
-            if month != self._usage_month:
-                monthly = await self.client.async_get_usage(
-                    self.device_id,
-                    from_date=(today - timedelta(days=_USAGE_MONTHS_BACK)).isoformat(),
-                    to_date=today.isoformat(),
-                    interval="MONTH",
-                    faucet=True,
-                )
-                # Kept, and read again next time, after a failed read (`{}`).
-                if monthly:
-                    self.usage = monthly
-                    self._usage_month = month
-            daily = await self.client.async_get_usage(
+
+        def read(interval: str, days_back: int) -> Coroutine[Any, Any, dict[str, Any]]:
+            return self.client.async_get_usage(
                 self.device_id,
-                from_date=(today - timedelta(days=_USAGE_DAYS_BACK)).isoformat(),
+                from_date=(today - timedelta(days=days_back)).isoformat(),
                 to_date=today.isoformat(),
-                interval="DAY",
+                interval=interval,
                 faucet=True,
+            )
+
+        try:
+            # Both at once; the monthly series only when it is due.
+            *monthly, daily = await _side_by_side(
+                *(
+                    [read("MONTH", _USAGE_MONTHS_BACK)]
+                    if month != self._usage_month
+                    else []
+                ),
+                read("DAY", _USAGE_DAYS_BACK),
             )
         except AuthError as err:
             # A failed usage read answers `{}` rather than raising; only sign-in raises here.
             self._raise_if_dead(err)
             _LOGGER.debug("Could not refresh water usage: %s", err)
             return
-        # `async_get_usage` answers `{}` for a failed read; keep what was held.
+        # `async_get_usage` answers `{}` for a failed read; keep what was held, and read a
+        # failed monthly series again next time.
+        if monthly and monthly[0]:
+            self.usage = monthly[0]
+            self._usage_month = month
         if daily:
             self.usage_daily = daily
 
@@ -542,47 +658,61 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._dispense_started = None
                 self._dispense_preset = None
         self._water_was_running = running
+        self._note_water_for_auto_off(running, from_feed=from_feed)
 
-    def _start_dispense_timer(self, seconds: float) -> None:
-        if self._dispense_timer is not None:
-            self._dispense_timer()
-        self._dispense_timer = async_call_later(
-            self.hass, seconds + _DISPENSE_TIMER_SLACK, self._async_dispense_timeout
+    def _start_dispense_timer(self, kind: str, seconds: float) -> None:
+        """Re-render "Dispensing" once a dispense of ``kind`` reaches its limit."""
+        if (cancel := self._dispense_timers.pop(kind, None)) is not None:
+            cancel()
+        self._dispense_timers[kind] = async_call_later(
+            self.hass,
+            seconds + _DISPENSE_TIMER_SLACK,
+            partial(self._async_dispense_timeout, kind),
         )
 
     @callback
-    def _async_dispense_timeout(self, _now: datetime) -> None:
-        self._dispense_timer = None
+    def _async_dispense_timeout(self, kind: str, _now: datetime) -> None:
+        self._dispense_timers.pop(kind, None)
         self.async_update_listeners()
 
     @callback
     def _note_event(self, event: FaucetEvent) -> None:
+        now = time.monotonic()
         if event.preset_on is not None:
-            self._preset_since = time.monotonic() if event.preset_on else None
+            self._preset_since = now if event.preset_on else None
             self._app_preset = event.preset if event.preset_on else None
             if event.preset_on:
                 preset = self.presets.get(event.preset_id or "") or (
                     self.find_preset(event.preset) if event.preset else None
                 )
                 self._preset_limit = dispense_limit(preset.liters if preset else None)
-                self._start_dispense_timer(self._preset_limit)
+                self._start_dispense_timer("preset", self._preset_limit)
         if event.status is not None:
             status = event.status.lower()
             if status in STATUS_ON or status in STATUS_OFF:
                 self._note_water(status in STATUS_ON, from_feed=True)
         # Like the app, take the stream's water and handle state at once; the re-read that
-        # follows confirms it.
-        if self.data is not None and (event.status or event.handle):
-            self.data = {
-                **self.data,
-                **({"status": event.status} if event.status else {}),
-                **({"handleState": event.handle} if event.handle else {}),
-            }
+        # follows confirms it. Each is timed, so a poll that read the faucet before it
+        # arrived does not put the older state back, and recorded, so the state sensors
+        # accept a value only the stream has reported (an enum sensor rejects a state
+        # missing from its options).
+        reported = {
+            field: value
+            for field, value in (
+                ("status", event.status),
+                ("handleState", event.handle),
+            )
+            if value
+        }
+        for field, value in reported.items():
+            self._stream_values[field] = (now, value)
+            self._record_value(field, value)
+        if self.data is not None and reported:
+            self.data = {**self.data, **reported}
+            self._state_at = now
         if event.leak:
             self._leak_alert_at = time.time()
-            self.config_entry.async_create_task(
-                self.hass, self.async_save(), f"{DOMAIN} leak alert"
-            )
+            self._async_save_soon("leak alert")
         if event.firmware is not None:
             # An install ended: read the new version and check again.
             self._firmware_due = self._config_due = True
@@ -642,7 +772,7 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._dispense_limit = dispense_limit(liters)
         self._dispense_seen_on = self._dispense_feed_on = False
         self._dispense_preset = preset
-        self._start_dispense_timer(self._dispense_limit)
+        self._start_dispense_timer("dispense", self._dispense_limit)
         self.async_update_listeners()
         await self.async_request_refresh()
 
@@ -652,7 +782,9 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             lambda: self.device.async_set_water(on), starts_water=on
         )
         if on and self.max_run_minutes > 0:
-            self._seen_running = False
+            self._seen_running = self._feed_saw_running = False
+            self._auto_off_failures = 0
+            self._auto_off_armed_at = time.monotonic()
             self._auto_off_at = time.time() + self.max_run_minutes * 60
             self._schedule_auto_off(self.max_run_minutes * 60)
             await self.async_save()
@@ -720,32 +852,108 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._auto_off_timer()
         self._auto_off_timer = async_call_later(self.hass, delay, self._async_auto_off)
 
-    async def _async_cancel_auto_off(self) -> None:
+    @callback
+    def _clear_auto_off(self) -> bool:
+        """Drop the safety limit; True if there was one, and so something to save."""
         if self._auto_off_timer is not None:
             self._auto_off_timer()
             self._auto_off_timer = None
-        if self._auto_off_at is not None:
-            self._auto_off_at = None
+        self._auto_off_failures = 0
+        if self._auto_off_at is None:
+            return False
+        self._auto_off_at = None
+        return True
+
+    async def _async_cancel_auto_off(self) -> None:
+        if self._clear_auto_off():
             await self.async_save()
+
+    @callback
+    def _note_water_for_auto_off(self, running: bool, *, from_feed: bool) -> None:
+        """Follow the water for the safety limit, from polls and the stream alike.
+
+        The limit is for water Home Assistant turned on and nobody turned off, so it is
+        dropped once that water has run and stopped. Only polls used to count: water that
+        ran and stopped between them kept the limit, which then cut off whoever used the
+        faucet next.
+        """
+        if running:
+            save = self._auto_off_at is not None and not self._seen_running
+            self._seen_running = True
+            self._feed_saw_running |= from_feed
+            if save:
+                self._async_save_soon("safety limit")
+        elif (
+            self._auto_off_at is not None
+            and self._seen_running
+            # A poll can lag the stream: after the stream saw the water running, only it
+            # can say it stopped, unless polling is back in charge (`push_trusted`).
+            and (from_feed or not self._feed_saw_running or not self.push_trusted)
+        ):
+            # Seen running, now off: no need for the safety limit any more.
+            self._clear_auto_off()
+            self._async_save_soon("safety limit")
+
+    def _known_off(self) -> bool:
+        """The water is off by what was learned since the safety limit was set.
+
+        Learned once the cloud had time to catch up with the command, that is: a read right
+        after it can still say "off". A restored limit counts from setup the same way.
+        Nothing learned since (failed polls, a silent stream) is not "off".
+        """
+        return (
+            self.water_running is False
+            and self._state_at is not None
+            and self._state_at - self._auto_off_armed_at
+            >= FAUCET_COMMAND_FOLLOW_UP.total_seconds()
+        )
 
     async def _async_auto_off(self, _now: datetime) -> None:
         """Turn off water Home Assistant turned on and nobody turned off."""
         self._auto_off_timer = None
-        _LOGGER.warning(
-            "Turning off the water on %s: it was turned on from Home Assistant "
-            "%s minutes ago, the limit set in the integration options",
-            self.device_name,
-            self.max_run_minutes,
-        )
+        if self._shut_down:
+            return
+        if self._known_off():
+            # Never seen running, or not since a restart, and off now: there is nothing to
+            # turn off, and an OFF could only cut off whoever turns the water on next.
+            _LOGGER.debug(
+                "Water on %s is already off; the safety limit is not needed",
+                self.device_name,
+            )
+            await self._async_cancel_auto_off()
+            return
+        if not self._auto_off_failures:
+            _LOGGER.warning(
+                "Turning off the water on %s: it was turned on from Home Assistant "
+                "%s minutes ago, the limit set in the integration options",
+                self.device_name,
+                self.max_run_minutes,
+            )
         try:
             await self.device.async_set_water(False)
         except (AuthError, KohlerError) as err:
-            _LOGGER.warning(
+            if self._shut_down:
+                return  # the next setup picks the persisted deadline up again
+            self._auto_off_failures += 1
+            if self._auto_off_failures > AUTO_OFF_RETRIES:
+                _LOGGER.warning(
+                    "Could not turn off the water on %s after %d attempts: %s. Giving "
+                    "up; it may still be running",
+                    self.device_name,
+                    self._auto_off_failures,
+                    err,
+                )
+                await self._async_cancel_auto_off()
+                return
+            # Warned once; a faucet that stays offline would otherwise warn every minute.
+            (_LOGGER.warning if self._auto_off_failures == 1 else _LOGGER.debug)(
                 "Could not turn off the water on %s: %s. Trying again in a minute",
                 self.device_name,
                 err,
             )
             self._schedule_auto_off(AUTO_OFF_RETRY)
+            return
+        if self._shut_down:
             return
         await self._async_cancel_auto_off()
         self._fast_poll_until = (
@@ -785,7 +993,8 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Proof the stream delivers for this faucet; polling can relax.
             self.push_verified = True
             self.push_messages += 1
-            self._config_due = True  # it may be a leak alert
+            if _may_change_config(event):
+                self._config_due = True  # a leak, an install, a new preset...
         if event is not None:
             self._note_event(event)
         self.config_entry.async_create_task(

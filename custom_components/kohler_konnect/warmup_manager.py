@@ -259,6 +259,7 @@ class WarmupManager:
         "Off" and "we could not tell" are different answers and only one of them is safe to
         show on a control.
         """
+        pushes = self._valve._push_serial
         try:
             payload = await self._valve.client.async_get_gcs_state(
                 self._valve.gcs_device.device_id
@@ -273,6 +274,12 @@ class WarmupManager:
             # up to three times; each one carries `connectionState` and would otherwise
             # discard it.
             self._valve.cloud_watch.note_rest_payload(payload, "warmup read-back")
+        if self._valve._push_serial != pushes:
+            # The valve pushed its state while this read was in flight, so the reply is the
+            # older of the two — the same rule as the seed in `coordinator.py` (2026-10-16).
+            # Applying it would put back the zone words and the mode the push replaced, so
+            # this read has no opinion; the caller's next read, or the push itself, answers.
+            return None
         self._valve.gcs_state.apply_rest_state(payload)
         # Same notification path as an MQTT update, so the dropdown lands on the confirmed
         # value and drops its optimistic guess exactly as it would on a device push.
@@ -328,12 +335,15 @@ class WarmupManager:
         **independently of the standalone journal** — that one has its own enabled flag, and
         a decision must reach an active report whether or not the dedicated warm-up journal
         is switched on. One switch, one attachment; see `report_log.ReportLog.note`.
+
+        Both `note`s only queue the record — this runs on the loop — and `prepare` writes
+        it in an executor, opening the file first if need be.
         """
         tagged = self._valve._tagged(fields)
         report_log = self._valve.coordinator.report_log
         if report_log is not None:
             report_log.note("warmup", event, dict(tagged))
-            # `note` never opens a file — it runs on the loop. Same deferred open the
+            # `note` never touches the file — it runs on the loop. Same deferred write the
             # warm-up journal below uses.
             if report_log.wants_open:
                 self._valve.hass.async_add_executor_job(report_log.prepare)
@@ -527,9 +537,10 @@ class WarmupManager:
         """Wait out the delay, re-check, and put the mode back.
 
         Re-checks rather than cancels: during the wait the mode may have been re-enabled by
-        hand, the switch turned off, or the shower started. Every one of those means do
-        nothing, and asking at the end is simpler than keeping a cancellation path correct
-        for each.
+        hand, the switch turned off, or `Off` chosen here on purpose. Every one of those
+        means do nothing, and asking at the end is simpler than keeping a cancellation path
+        correct for each. A shower started meanwhile means *not yet*: the restore waits for
+        the water to stop, then waits the delay again and asks all of it again.
 
         ``taken_away`` is the mode the disable moved *away* from, and it is the restore
         target. ``should_restore_warmup`` refuses unless ``before`` is a known enabled mode,
@@ -593,6 +604,7 @@ class WarmupManager:
             )
             return
 
+        scheduled_at = time.monotonic()
         self._warmup_journal(
             "restore_scheduled",
             target=target,
@@ -600,28 +612,73 @@ class WarmupManager:
         )
         await asyncio.sleep(WARMUP_AUTO_RESTORE_DELAY_SECONDS)
 
-        if not self.auto_restore:
-            self._warmup_journal(
-                "restore_skipped", reason="switched off during the wait"
-            )
-            return
-        state = self._valve.gcs_state
-        if state.warmup_mode != WARMUP_DISABLED:
-            # Someone got there first. Nothing to do, and saying so beats a silent return
-            # when the owner is watching the log to see whether this feature works.
-            _LOGGER.info(
-                "Warmup was re-enabled before auto-restore ran; leaving it alone"
-            )
-            self._warmup_journal(
-                "restore_skipped",
-                reason="re-enabled during the wait",
-                mode_now=state.warmup_mode,
-            )
-            return
+        deferred = False
+        while True:
+            if not self.auto_restore:
+                self._warmup_journal(
+                    "restore_skipped", reason="switched off during the wait"
+                )
+                return
+            state = self._valve.gcs_state
+            if state.warmup_mode != WARMUP_DISABLED:
+                # Someone got there first. Nothing to do, and saying so beats a silent
+                # return when the owner is watching the log to see whether this works.
+                _LOGGER.info(
+                    "Warmup was re-enabled before auto-restore ran; leaving it alone"
+                )
+                self._warmup_journal(
+                    "restore_skipped",
+                    reason="re-enabled during the wait",
+                    mode_now=state.warmup_mode,
+                )
+                return
+            # ⚠️ **`Off` chosen here during the wait is deliberate, and final.** The mode
+            # still reads disabled, so the check above passes — and until 2026-10-16 the
+            # restore then wrote the old mode straight over the owner's choice. Our own
+            # `Off` written after this restore was scheduled outranks the disable that
+            # scheduled it.
+            if (
+                self._warmup_self_write_mode == WARMUP_DISABLED
+                and self._warmup_self_write_at is not None
+                and self._warmup_self_write_at >= scheduled_at
+            ):
+                _LOGGER.info(
+                    "Warmup was set to Off from Home Assistant before auto-restore ran; "
+                    "leaving it off"
+                )
+                self._warmup_journal(
+                    "restore_skipped", reason="Off chosen here during the wait"
+                )
+                return
+            if not state.is_running:
+                break
+            # ⚠️ **Water running defers the restore; it does not end it.** `async_set_warmup`
+            # refuses during a shower, and until 2026-10-16 that refusal was logged as
+            # `restore_failed` with a note that "the next disable will schedule another" —
+            # which never comes: the mode is already off, and a reseed sees disabled ->
+            # disabled. The refusal also counted toward the give-up limit. Now nothing is
+            # attempted or counted until the water has stopped and stayed stopped for the
+            # usual delay (the running flag flickers as a shower winds down), and then
+            # every check above is made again. Still this one tracked task, so an unload
+            # cancels it and a disable meanwhile folds into it.
+            if not deferred:
+                deferred = True
+                _LOGGER.info(
+                    "Warmup auto-restore is waiting for the water to stop before it "
+                    "writes"
+                )
+                self._warmup_journal(
+                    "restore_deferred", target=target, reason="water is running"
+                )
+            await self._async_until_water_stops()
+            await asyncio.sleep(WARMUP_AUTO_RESTORE_DELAY_SECONDS)
 
         # Chosen again now rather than before the wait: a disable folded into this one may
         # have taken away a newer mode, and `restore_target` trusts the mode taken away
         # precisely because it is the most current answer.
+        #
+        # Nothing awaits between the running check above and the one `async_set_warmup`
+        # makes, so a write refused for running water cannot reach the counter below.
         target = restore_target(self._warmup_taken_away, self.last_mode) or target
         self._warmup_restores += 1
         self._warmup_restored_at = time.monotonic()
@@ -635,8 +692,9 @@ class WarmupManager:
         try:
             await self.async_set_warmup(target)
         except HomeAssistantError as err:
-            # Not retried. The known refusal is water running, and a shower is exactly when
-            # nobody wants this fighting the valve; the next disable will schedule another.
+            # Not retried. Running water is waited out above, so what lands here is Kohler
+            # or the valve refusing the write — offline, a rejected sign-in, an error — and
+            # a write that was actually sent counts toward the give-up limit.
             _LOGGER.warning("Warmup auto-restore could not write: %s", err)
             self._warmup_journal("restore_failed", target=target, error=str(err))
             return
@@ -646,3 +704,25 @@ class WarmupManager:
             attempt=self._warmup_restores,
             mode_now=self._valve.gcs_state.warmup_mode,
         )
+
+    async def _async_until_water_stops(self) -> None:
+        """Return once the valve reports no water running.
+
+        Woken by every coordinator update, as `Valve._async_keep_on_after_warmup` is, and
+        reading only the valve's own state. No timeout: a shower can last as long as it
+        likes, a stream that drops meanwhile reseeds and notifies on reconnect, and an
+        unload cancels the restore task this runs in.
+        """
+        poke = asyncio.Event()
+
+        @callback
+        def _on_update() -> None:
+            poke.set()
+
+        remove = self._valve.coordinator.async_add_listener(_on_update)
+        try:
+            while self._valve.gcs_state.is_running:
+                await poke.wait()
+                poke.clear()
+        finally:
+            remove()

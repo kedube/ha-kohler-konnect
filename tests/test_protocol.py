@@ -789,8 +789,8 @@ def test_a_preset_timer_rewrite_echoes_name_volume_and_valid_words_exactly():
         {"presetId": "not-a-number"},
         {
             "presetId": "2",
-            "logicalName": "ignored",
-            "name": "Morning",
+            "logicalName": "Morning",
+            "name": "ignored",
             "time": "1800",
             "volume": "12",
             "valveDetails": [

@@ -10,16 +10,26 @@ Two sources, both verified live, in preference order:
    query.
 
 Either yields the split directly, so nothing has to be inferred from a flat outlet count or
-from gaps in outlet ids. (Outlet ids turn out to be dense ``0..N-1`` with the zone boundary
-at N/2, but that arithmetic is never needed: both sources group outlets by valve already.)
+from gaps in outlet ids. (Ids are not the dense ``0..N-1`` this once said: each zone's
+valve reserves three ``outLetId`` slots, 0-2 and 3-5, whatever is fitted, so a K-28211
+reports ``0, 1, 3, 4`` — see ``ValveModel.outlet_id`` and ``docs/protocol/gcs_valve.md``
+§1.1.)
 
 Detection can still fail — an unreachable device, an unexpected payload — so callers must
-keep a manual fallback.
+keep a manual fallback. **A count outside 0-3 is such a failure**, not something to clamp:
+each zone's valve word has three outlet bits, so ``4`` or ``-1`` means the payload is not
+what this reads it as, and any split built from it would be a guess. Rejecting it falls
+back to the model the owner confirmed (or to asking them), which is the safer of the two
+for a device that opens water. A clamped ``4 -> 3`` would build entities for a layout
+nobody reported; taken as read, ``4`` made every write raise in ``encode_pair`` and ``-1``
+cut a 3-outlet valve's outlet total to 2.
 """
 
 from __future__ import annotations
 
 import logging
+
+from .valve_hex import OUTLETS_PER_VALVE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +44,21 @@ def _as_int(value: object) -> int:
         return 0
 
 
+def _split(first: int, second: int) -> tuple[int, int] | None:
+    """The detected split, or None when it is not one a valve can have."""
+    if first <= 0:
+        return None
+    if not (first <= OUTLETS_PER_VALVE and 0 <= second <= OUTLETS_PER_VALVE):
+        _LOGGER.debug(
+            "Ignoring a detected split of %s + %s outlets: each valve has 0-%s",
+            first,
+            second,
+            OUTLETS_PER_VALVE,
+        )
+        return None
+    return first, second
+
+
 def topology_from_valve_settings(setting: dict) -> tuple[int, int] | None:
     """Read ``(outlets_valve1, outlets_valve2)`` from a valve settings block.
 
@@ -43,8 +68,12 @@ def topology_from_valve_settings(setting: dict) -> tuple[int, int] | None:
 
     The sibling ``outlets`` total is deliberately ignored — it was ``null`` on the tested
     system while the per-valve counts were correct.
+
+    Anything that is not an object reads as no answer, like a missing array: the config
+    flow and setup catch only the client's own errors, so an `AttributeError` here failed
+    them both.
     """
-    entries = (setting or {}).get("valveSettings")
+    entries = setting.get("valveSettings") if isinstance(setting, dict) else None
     if not isinstance(entries, list):
         return None
 
@@ -59,10 +88,7 @@ def topology_from_valve_settings(setting: dict) -> tuple[int, int] | None:
         if index in (1, 2):
             counts[index] = _as_int(entry.get("noOfOutlets"))
 
-    first, second = counts.get(1, 0), counts.get(2, 0)
-    if first <= 0:
-        return None
-    return first, second
+    return _split(counts.get(1, 0), counts.get(2, 0))
 
 
 def topology_from_hub_configuration(configuration: dict) -> tuple[int, int] | None:
@@ -73,13 +99,17 @@ def topology_from_hub_configuration(configuration: dict) -> tuple[int, int] | No
     Reads ``configuredoutlets``, **not** ``parts.valve1``/``valve2``. Those count physical
     valve units, while the GCS API counts zones — so a single 6-outlet unit reports
     ``parts.valve2: NotConnected`` while genuinely having a populated zone 2.
+
+    Type-checked the same way as the valve's read: a zone that is not an object counts as
+    absent, and a configuration that is not one yields nothing.
     """
-    config = configuration or {}
-    first = _as_int((config.get("zoneone") or {}).get("configuredoutlets"))
-    second = _as_int((config.get("zonetwo") or {}).get("configuredoutlets"))
-    if first <= 0:
-        return None
-    return first, second
+    config = configuration if isinstance(configuration, dict) else {}
+
+    def configured(key: str) -> int:
+        zone = config.get(key)
+        return _as_int(zone.get("configuredoutlets")) if isinstance(zone, dict) else 0
+
+    return _split(configured("zoneone"), configured("zonetwo"))
 
 
 def describe(topology: tuple[int, int]) -> str:

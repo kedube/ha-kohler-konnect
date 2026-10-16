@@ -17,12 +17,15 @@ Three behaviours drive the design, each learned the hard way:
   ``$iothub/methods/res/200/?$rid=N`` or the service will consider them unhandled.
 
 The transport is paho-mqtt, which runs its own network thread. Callbacks are marshalled
-onto the owning event loop so consumers never touch that thread.
+onto the owning event loop so consumers never touch that thread. Reconnecting is this
+class's job, never paho's: every connect needs a freshly registered SAS password, which
+paho's own reconnect cannot fetch.
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import re
@@ -53,6 +56,16 @@ _RID = re.compile(r"\$rid=([^&]+)")
 # re-registers rather than reusing stale credentials.
 RECONNECT_MIN_SECONDS = 5
 RECONNECT_MAX_SECONDS = 300
+# How long a connection must last before the backoff starts again from the bottom. Until
+# 2026-10-16 every CONNACK reset it, so a broker that accepts the client and then drops it
+# at once — IoT Hub does exactly that to the older of two connections sharing a client id,
+# such as two Home Assistant instances holding the same persisted identity — drove a
+# reconnect, a re-registration and a full reseed every few seconds, indefinitely.
+STABLE_CONNECTION_SECONDS = 60
+# Backstop for a connection attempt that ends without paho saying so; see
+# `_check_connected`. Longer than anything paho reports on its own: a TLS handshake or a
+# missing CONNACK each give up after the keepalive, and DNS can add its own wait.
+CONNECT_TIMEOUT_SECONDS = 120
 KEEPALIVE_SECONDS = 60
 
 # Building an SSL context reads the system CA bundle from disk. That is blocking file I/O,
@@ -70,6 +83,30 @@ async def async_default_ssl_context() -> ssl.SSLContext:
         if _ssl_context is None:
             _ssl_context = await asyncio.to_thread(ssl.create_default_context)
         return _ssl_context
+
+
+def _contained[**P](what: str) -> Callable[[Callable[P, None]], Callable[P, None]]:
+    """Log, rather than raise, anything a paho callback throws.
+
+    paho-mqtt 2.x re-raises a callback's exception (``suppress_exceptions`` defaults to
+    False), and on the thread ``loop_start()`` runs that ends the thread outright: no
+    ``on_disconnect``, so ``connected`` stayed True and no reconnect was ever scheduled.
+    Until 2026-10-16 one malformed message — ``data.attributes`` sent as a number — left
+    the stream dead until the entry was reloaded. Each callback now contains its own
+    failure, and ``suppress_exceptions`` is set as well, as a backstop.
+    """
+
+    def decorate(callback: Callable[P, None]) -> Callable[P, None]:
+        @functools.wraps(callback)
+        def contained(*args: P.args, **kwargs: P.kwargs) -> None:
+            try:
+                callback(*args, **kwargs)
+            except Exception:
+                _LOGGER.exception("Kohler MQTT %s handler raised", what)
+
+        return contained
+
+    return decorate
 
 
 @dataclass(frozen=True)
@@ -151,6 +188,7 @@ class KonnectMqttStream:
         self._mqtt: mqtt.Client | None = None
         self._closing = False
         self._reconnect_task: asyncio.Task[None] | None = None
+        self._connect_watchdog: asyncio.TimerHandle | None = None
         self._backoff = RECONNECT_MIN_SECONDS
         self._connected_at: float | None = None
         # Reuse one registered identity instead of a throwaway per connect. None falls back
@@ -199,11 +237,22 @@ class KonnectMqttStream:
         if self._reconnect_task is not None:
             self._reconnect_task.cancel()
             self._reconnect_task = None
+        if self._connect_watchdog is not None:
+            self._connect_watchdog.cancel()
+            self._connect_watchdog = None
         client, self._mqtt = self._mqtt, None
         if client is not None:
             client.disconnect()
             await asyncio.to_thread(client.loop_stop)
         self.connected = False
+        # Closing a capture flushes and closes a file, which is blocking I/O, so it runs in
+        # a worker thread rather than on the event loop. Only once paho's thread has
+        # stopped, too: a message it was still handling would reopen the file just closed.
+        if self._raw_log is not None or self._report_log is not None:
+            await asyncio.to_thread(self._close_captures)
+
+    def _close_captures(self) -> None:
+        """Release the capture files. Blocking: run it in a worker thread."""
         # RAW MQTT LOG: release the capture file on unload.
         if self._raw_log is not None:
             self._raw_log.close()
@@ -246,40 +295,71 @@ class KonnectMqttStream:
 
         # Callback API version 1: the signatures below. paho-mqtt 2.x still supports it (with
         # a DeprecationWarning when it has to assume it, hence naming it); moving to version
-        # 2 means changing `_on_connect` and `_on_disconnect` together. Home Assistant pins
-        # 2.x, so the 1.x fallback that sat here could no longer run.
+        # 2 means changing `_on_connect`, `_on_disconnect` and `_on_connect_fail` together.
+        # Home Assistant pins 2.x, so the 1.x fallback that sat here could no longer run.
+        #
+        # `reconnect_on_failure=False`: reconnecting is `_async_reconnect`'s job alone. Left
+        # at paho's default, its network thread also reconnected by itself about a second
+        # after a drop — reusing the short-lived SAS password — while `_on_disconnect`
+        # scheduled `_async_reconnect`, which then tore down whichever client existed. Two
+        # loops: a healthy link killed moments after it came back, a spurious disconnect, a
+        # second registration and a second full reseed; with an expired password, CONNACK
+        # refusals every few seconds. Now a drop simply ends paho's thread. A first connect
+        # that fails before any CONNACK (DNS, TCP, TLS) ends it too, reporting only through
+        # `on_connect_fail` — and an exception that is not an `OSError` ends it reporting
+        # nothing at all, which is what the watchdog armed below is for.
         client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
             client_id=device_id,
             protocol=mqtt.MQTTv311,
             transport="tcp",
+            reconnect_on_failure=False,
         )
         client.username_pw_set(settings["username"], settings["password"])
         # Never `tls_set()` here: it loads CA certificates from disk on the calling thread.
         context = self._ssl_context or await async_default_ssl_context()
+        if self._closing:
+            # Stopped while registering: connecting now would leave a client nothing owns.
+            return
         client.tls_set_context(context)
+        # A backstop: every callback contains its own exceptions — see `_contained`.
+        client.suppress_exceptions = True
         client.on_connect = self._on_connect
+        client.on_connect_fail = self._on_connect_fail
         client.on_disconnect = self._on_disconnect
         client.on_message = self._on_message
 
         self._mqtt = client
         client.connect_async(host, MQTT_PORT, keepalive=KEEPALIVE_SECONDS)
         client.loop_start()
+        if self._connect_watchdog is not None:
+            self._connect_watchdog.cancel()
+        self._connect_watchdog = asyncio.get_running_loop().call_later(
+            CONNECT_TIMEOUT_SECONDS, self._check_connected, client
+        )
         _LOGGER.debug("Kohler MQTT connecting to %s as %s", host, device_id[-16:])
 
     # ------------------------------------------------------------------ #
     # paho callbacks — these run on paho's network thread
     # ------------------------------------------------------------------ #
+    @_contained("connect")
     def _on_connect(
         self, client: mqtt.Client, _userdata: Any, _flags: Any, rc: int, *_: Any
     ) -> None:
+        # A CONNACK can arrive after `async_stop`: paho's `reconnect()` sets the state back
+        # to CONNECTING, so a `disconnect()` made while an attempt is under way does not
+        # stop the CONNACK that answers it. Nor is a client this stream has already
+        # replaced its connection, whatever that client reports.
+        if self._closing or client is not self._mqtt:
+            return
         if rc != 0:
             _LOGGER.warning("Kohler MQTT connect refused: %s", mqtt.connack_string(rc))
             return
         client.subscribe(MQTT_SUBSCRIBE_TOPIC, qos=1)
         self.connected = True
         self._connected_at = time.monotonic()
-        self._backoff = RECONNECT_MIN_SECONDS
+        # The backoff is *not* reset here, only once a connection has lasted — see
+        # `STABLE_CONNECTION_SECONDS` and `_on_disconnect`.
         # Credentials demonstrably work again; re-arm for the next outage.
         self._auth_error_reported = False
         # Only mention warm-up when one can actually apply. A reused identity is already
@@ -298,20 +378,46 @@ class KonnectMqttStream:
             )
         self._dispatch_connected()
 
+    @_contained("disconnect")
     def _on_disconnect(
-        self, _client: mqtt.Client, _userdata: Any, rc: int, *_: Any
+        self, client: mqtt.Client, _userdata: Any, rc: int, *_: Any
     ) -> None:
+        if client is not self._mqtt:
+            # A client already replaced or stopped, reporting its own teardown.
+            return
+        stable = (
+            self._connected_at is not None
+            and time.monotonic() - self._connected_at >= STABLE_CONNECTION_SECONDS
+        )
         self.connected = False
         self._connected_at = None
         if self._closing:
             return
+        if stable:
+            self._backoff = RECONNECT_MIN_SECONDS
         _LOGGER.warning("Kohler MQTT disconnected (rc=%s); reconnecting", rc)
         self._dispatch_disconnected()
         self._schedule_reconnect()
 
+    @_contained("connect-failure")
+    def _on_connect_fail(self, client: mqtt.Client, _userdata: Any) -> None:
+        """The connection could not be opened at all: DNS, TCP or TLS, before a CONNACK.
+
+        paho reports this nowhere else. With `reconnect_on_failure` off its thread then
+        ends, so this is the one chance to retry.
+        """
+        if self._closing or client is not self._mqtt:
+            return
+        _LOGGER.warning("Kohler MQTT could not reach the IoT Hub; retrying")
+        self._schedule_reconnect()
+
+    @_contained("message")
     def _on_message(
         self, client: mqtt.Client, _userdata: Any, message: mqtt.MQTTMessage
     ) -> None:
+        if self._closing:
+            # Unloading. The captures are about to be closed, and writing would reopen them.
+            return
         # Acknowledge first: the service treats an unanswered direct method as unhandled,
         # and a decode failure should not suppress the acknowledgement.
         match = _RID.search(message.topic)
@@ -351,13 +457,17 @@ class KonnectMqttStream:
         data = payload.get("data")
         data = data if isinstance(data, dict) else {}
         attributes = data.get("attributes")
+        # A list, or nothing. This used to iterate `attributes or []` whatever it was, and a
+        # number or a bool is not iterable: the `TypeError` ended paho's thread.
+        if not isinstance(attributes, list):
+            attributes = []
         envelope = Envelope(
             sku=str(payload.get("sku") or ""),
             # Lowercase in every capture. `deviceId` is read too, as the faucet integration
             # this merged with always did; nothing has shown that spelling, and it is free.
             device_id=str(payload.get("deviceid") or payload.get("deviceId") or ""),
             code=str(data.get("code") or ""),
-            attributes=[a for a in (attributes or []) if isinstance(a, dict)],
+            attributes=[a for a in attributes if isinstance(a, dict)],
             received_at=time.time(),
             raw=payload,
         )
@@ -379,6 +489,10 @@ class KonnectMqttStream:
         loop.call_soon_threadsafe(self._safe_callback, envelope)
 
     def _safe_callback(self, envelope: Envelope) -> None:
+        # Hand-offs queued before `async_stop` still run while it waits for paho's thread;
+        # by then the consumer is being torn down. The same goes for the two below.
+        if self._closing:
+            return
         try:
             self._on_envelope(envelope)
         except Exception:
@@ -395,6 +509,8 @@ class KonnectMqttStream:
         loop.call_soon_threadsafe(self._safe_connected)
 
     def _safe_connected(self) -> None:
+        if self._closing:
+            return
         try:
             if self._on_connect_cb is not None:
                 self._on_connect_cb()
@@ -409,6 +525,8 @@ class KonnectMqttStream:
         loop.call_soon_threadsafe(self._safe_disconnected)
 
     def _safe_disconnected(self) -> None:
+        if self._closing:
+            return
         try:
             if self._on_disconnect_cb is not None:
                 self._on_disconnect_cb()
@@ -442,6 +560,26 @@ class KonnectMqttStream:
             return
         self._reconnect_task = asyncio.create_task(self._async_reconnect())
 
+    def _check_connected(self, client: mqtt.Client) -> None:
+        """Connect watchdog: retry an attempt that ended without paho reporting it.
+
+        Runs on the owning loop `CONNECT_TIMEOUT_SECONDS` after a connection is started.
+        Every ordinary failure reports itself well before then — refused or dropped through
+        `on_disconnect`, never opened through `on_connect_fail` — and starts the reconnect.
+        This is for the rest: paho's thread ends on any exception from opening the socket
+        that is not an `OSError`, and reports nothing, which would leave the stream down
+        until a reload.
+        """
+        self._connect_watchdog = None
+        if self._closing or client is not self._mqtt or self.connected:
+            return
+        if self._reconnect_task is not None and not self._reconnect_task.done():
+            return
+        _LOGGER.warning(
+            "Kohler MQTT did not connect within %ss; retrying", CONNECT_TIMEOUT_SECONDS
+        )
+        self._start_reconnect_task()
+
     async def _async_reconnect(self) -> None:
         """Reconnect with exponential backoff, re-registering each attempt."""
         while not self._closing:
@@ -449,6 +587,10 @@ class KonnectMqttStream:
             self._backoff = min(self._backoff * 2, RECONNECT_MAX_SECONDS)
             await asyncio.sleep(delay)
             if self._closing:
+                return
+            if self.connected:
+                # The current client came up during the wait after all — a first connect
+                # slower than the watchdog allowed. It is healthy; replacing it is not.
                 return
             old, self._mqtt = self._mqtt, None
             if old is not None:

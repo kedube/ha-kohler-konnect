@@ -13,11 +13,19 @@ split wrong silently operates the wrong outlet.
 
 Turning one on re-sends the complete valve command with that outlet's bit set and every
 other outlet in both zones preserved, at whatever the zone's temperature and flow numbers
-hold. The valve accepts no partial write.
+hold. The valve accepts no partial write. In a **paused** zone — whose outlets all read off
+— on opens only that outlet, and off drops it from the assignment the pause would resume
+to; see `Valve.async_set_zone_outlet`.
 
-Switches are **optimistic**: the toggle moves immediately and the reported state corrects it
-about a second later when the valve echoes back. Without that, every tap would sit visibly
-stuck for the round trip (measured 1.1-2.1 s on real hardware).
+Switches are **optimistic**: the toggle moves immediately and holds until the device
+reports the same position — about a second later on real hardware, when the valve echoes
+back — or a grace period runs out, when the device's own answer takes over. Without that,
+every tap would sit visibly stuck for the round trip (measured 1.1-2.1 s).
+
+No ``PARALLEL_UPDATES``: a platform-wide semaphore would queue every switch on the account —
+faucets and controllers too — behind one slow valve POST, and would still not cover the
+actions or the custom-shower watcher, which write without an entity. Valve writes are
+serialised where they are built, per valve — see `Valve.async_apply_valve`.
 """
 
 from __future__ import annotations
@@ -149,22 +157,22 @@ class OptimisticSwitchMixin:
     `MUSIC_STS`, another valve's status — and the switch snapped back before the device's
     own answer flipped it forward again.
 
-    So the guess clears on **this switch's own device reporting**, whatever it says — its
-    word decides, including when the valve opened something other than what was asked — or
-    on the grace expiring. Unlike a select, a disagreeing report is not held against: a
-    switch has two positions, and the device's is the true one. Its own reports are told
-    apart by the state's `last_update`, which every message from that device advances. A
-    subclass supplies `_device_is_on`; this supplies `is_on`.
+    So the guess clears on exactly the two things the select's does: **the device
+    reporting the position asked for**, or **the grace expiring** — after which the
+    device's own position shows, whatever it is. A subclass supplies `_device_is_on`; this
+    supplies `is_on`.
+
+    ⚠️ **Not "this device reported anything".** Until 2026-10-16 the guess also cleared on
+    any message from the switch's own device, told apart by its state's `last_update` — but
+    every message advances that: a controller's `MUSIC_STS`, `STEAM_STS`, `LIGHT_STS` and
+    `SYSTEM_STS`, a valve's `GCS_RECIEVED_STS` and its unprompted outlet-config records. Any
+    of them landing before the answer brought back the very snap-back-then-flip this exists
+    to prevent. The cost of holding is bounded by the grace: a device that does something
+    other than what was asked shows the guess for at most `OPTIMISTIC_GRACE_SECONDS`.
     """
 
     _optimistic: bool | None = None
     _optimistic_cancel = None
-    _optimistic_since: float | None = None
-
-    @property
-    def _reported_at(self) -> float | None:
-        """When this switch's own device last reported anything."""
-        return getattr(self._state, "last_update", None)
 
     @property
     def _device_is_on(self) -> bool | None:
@@ -181,8 +189,6 @@ class OptimisticSwitchMixin:
         """Show ``target`` at once, send ``action``, and hold it until the device agrees."""
         self._cancel_optimistic_timer()
         self._optimistic = target
-        # Taken before sending: the device's echo can land while the call is in flight.
-        self._optimistic_since = self._reported_at
         self.async_write_ha_state()
         try:
             await action
@@ -215,12 +221,10 @@ class OptimisticSwitchMixin:
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        # Only this device's own word replaces the guess; any other message on the account
-        # leaves it alone.
-        if self._optimistic is not None and (
-            self._device_is_on == self._optimistic
-            or self._reported_at != self._optimistic_since
-        ):
+        # The one clear that is always right: the device now reports what was asked for.
+        # Anything else — another device's message, or this one's on some other subject —
+        # leaves the guess to the grace timer.
+        if self._optimistic is not None and self._device_is_on == self._optimistic:
             self._cancel_optimistic_timer()
             self._optimistic = None
         super()._handle_coordinator_update()
@@ -421,9 +425,27 @@ class ZoneOutletSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
         self._attr_unique_id = outlet_unique_id(valve, zone, outlet)
 
     @property
+    def _outlet_exists(self) -> bool:
+        """Whether the valve's current layout still has this outlet.
+
+        `Valve._apply_topology` can shrink the model after setup; until the entry reloads,
+        this entity must read as unavailable rather than index past the zone's outlets — one
+        listener that raises stops every listener after it.
+        """
+        return self._outlet <= self._valve.model.outlets_in_zone(self._zone)
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._outlet_exists
+
+    @property
     def _device_is_on(self) -> bool | None:
         state = self._state
-        if state is None or state.zone_word(self._zone) is None:
+        if (
+            state is None
+            or not self._outlet_exists
+            or state.zone_word(self._zone) is None
+        ):
             return None
         return state.zone_outlets(self._zone)[self._outlet - 1]
 
@@ -435,7 +457,11 @@ class ZoneOutletSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
         and this stays on — the difference between "not running" and "not selected".
         """
         state = self._state
-        if state is None or state.zone_word(self._zone) is None:
+        if (
+            state is None
+            or not self._outlet_exists
+            or state.zone_word(self._zone) is None
+        ):
             return {}
         assigned = state.zone_outlets(self._zone, flowing=False)
         attributes: dict[str, Any] = {"assigned": assigned[self._outlet - 1]}
@@ -476,17 +502,11 @@ class ZoneOutletSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
         await self._async_set(False)
 
     async def _async_set(self, target: bool) -> None:
+        # No flow passed: the write takes the zone's `zone_flow` — the Flow number's value —
+        # when it is built, not when this was asked for, so a flow change queued ahead of
+        # this toggle is not undone by it. See `Valve.async_set_zone_outlet`.
         await self._async_switch(
-            target,
-            self._valve.async_set_zone_outlet(
-                self._zone,
-                self._outlet,
-                target,
-                # The flow the Flow number is showing for this zone. Without it every
-                # outlet toggle would rewrite the word with `DEFAULT_FLOW_PERCENT` and
-                # silently undo a flow the user had set.
-                flow=self._valve.zone_flow.get(self._zone),
-            ),
+            target, self._valve.async_set_zone_outlet(self._zone, self._outlet, target)
         )
 
 

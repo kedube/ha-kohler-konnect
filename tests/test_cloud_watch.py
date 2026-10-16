@@ -542,26 +542,35 @@ def test_entities_are_told_unless_the_caller_pushes_its_own_snapshot(rig):
 # --------------------------------------------------------------------------- #
 # Recovery — the power cycle that brings a valve back
 # --------------------------------------------------------------------------- #
-def test_a_valve_reported_offline_is_asked_about_as_soon_as_it_speaks(rig):
-    """Without this the sensor stayed off for hours after the valve was back."""
+def test_a_valve_reported_offline_is_reachable_as_soon_as_it_speaks(rig):
+    """Without this the sensor stayed off for hours after the valve was back.
+
+    The message came through Kohler's cloud, so it is the answer: nothing is asked.
+    """
     rig.watch.note_rest_payload({"connectionState": "Disconnected"}, "REST seed")
     assert rig.watch.connected is False
 
     rig.valve_speaks()
-    assert rig.run_checks() == 1
+    assert rig.spawned == 0
     assert rig.watch.connected is True
-    assert rig.watch.attributes["checked_because"] == (
-        "valve spoke again after being reported offline"
+    assert rig.watch.attributes["reachable_because"].startswith(
+        "the valve sent a message at "
     )
+    assert rig.refreshes == 2
 
     # Back online: further messages cost nothing.
     for _ in range(5):
         rig.valve_speaks()
-    assert rig.spawned == 1
+    assert rig.spawned == 0
+    assert rig.refreshes == 2
 
 
-def test_the_recovery_read_still_respects_the_cooldown(rig):
-    """Ask rather than assume — but not more often than any other read this module makes."""
+def test_recovery_does_not_wait_out_the_cooldown(rig):
+    """A power cycle inside the cooldown of the read that found the valve offline.
+
+    Until 2026-10-16 recovery was a read, the cooldown skipped it for every boot message,
+    and the sensor stayed off until trigger B asked three hours later.
+    """
     rig.client.replies = [{"connectionState": "Disconnected"}]
     rig.timers.advance(QUIET)
     rig.run_checks()
@@ -569,23 +578,20 @@ def test_the_recovery_read_still_respects_the_cooldown(rig):
 
     rig.timers.advance(300)
     rig.valve_speaks()
-    assert rig.spawned == 1, "inside the cooldown of the read that found it offline"
-
-    rig.timers.advance(COOLDOWN)
-    rig.valve_speaks()
-    assert rig.run_checks() == 1
+    assert rig.spawned == 1, "nothing more asked: the message is the answer"
     assert rig.watch.connected is True
 
 
-def test_a_valve_still_offline_after_speaking_stays_offline(rig):
-    """The answer comes from `connectionState`, not from the message that prompted it."""
+def test_kohlers_next_answer_still_decides_after_a_valve_message(rig):
+    """A message overrules a `Disconnected` it followed; a later `connectionState` wins."""
     rig.watch.note_rest_payload({"connectionState": "Disconnected"}, "REST seed")
-    rig.client.replies = [{"connectionState": "Disconnected"}]
-
     rig.valve_speaks()
-    rig.run_checks()
+    assert rig.watch.connected is True
+
+    rig.watch.note_rest_payload({"connectionState": "Disconnected"}, "REST seed")
 
     assert rig.watch.connected is False
+    assert rig.watch.attributes["reachable_because"] is None
 
 
 # --------------------------------------------------------------------------- #

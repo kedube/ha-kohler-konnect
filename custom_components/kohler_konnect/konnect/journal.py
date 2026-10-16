@@ -22,8 +22,10 @@ Switching it on:
 Volume is a handful of lines per shower. Files are one per Home Assistant run, each capped
 at `max_bytes`, and pruned to the newest `keep_files`.
 
-Thread safety: callers run on the event loop, but `note()` is cheap and the lock makes it
-safe from the paho thread too, matching `RawMqttLog`.
+Thread safety: `note()` runs on the event loop and never touches the file or the lock — it
+queues the line and raises `wants_open`. Everything that does file I/O (`prepare`, `roll`,
+`close`) runs in an executor and holds the lock, so the queue is written in order whichever
+worker thread gets there first.
 """
 
 from __future__ import annotations
@@ -49,7 +51,7 @@ _SWITCH_LOGGER = _LOGGER
 # Matches `RAW_MQTT_LOG_MAX_BYTES`. See `_max_bytes` for why a cap exists at all.
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 DEFAULT_KEEP_FILES: int | None = None
-#: Records held while waiting for `prepare()` to open a file. A handful arrive per shower.
+#: Records queued for `prepare()` to write. A handful arrive per shower.
 _PENDING_MAX = 200
 
 WARMUP_README = """\
@@ -104,7 +106,8 @@ Records
                     7-9 s after two of the four known disables. The window deliberately
                     closes before auto-restore could act, so this record never contains our
                     own write.
-  restore*          what auto-restore did: scheduled, skipped, done, or failed.
+  restore*          what auto-restore did: scheduled, deferred (water running — it writes
+                    once the water has stopped), skipped, done, or failed.
 
 Reading them
 ------------
@@ -180,11 +183,14 @@ class DebugJournal:
         self._handle: Any = None
         self._path: str | None = None
         self._announced = False
-        # Set when a record arrives with no file open. See `wants_open`.
+        # Set when `note()` queued a record, or found a switched-off file still open. See
+        # `wants_open`.
         self._wants_open = False
-        # Records waiting for that file, written by `prepare()`. Bounded: if no prepare()
-        # ever comes, the oldest are dropped rather than held for ever.
+        # Records waiting to be written by `prepare()`, oldest first. Bounded: if no
+        # prepare() ever comes, the oldest are dropped rather than held for ever.
         self._pending: deque[str] = deque(maxlen=_PENDING_MAX)
+        # Whether a file has ever been opened. See `prepare`.
+        self._opened = False
 
     @property
     def enabled(self) -> bool:
@@ -198,25 +204,46 @@ class DebugJournal:
 
     @property
     def wants_open(self) -> bool:
-        """True when a record arrived with no file open, so :meth:`prepare` should be called.
+        """True when :meth:`prepare` should be called: a record is queued for it to write.
 
         Unlike `RawMqttLog`, this log is written from the **event loop**, where its callers
-        run. Opening a file and creating a directory are blocking calls that must not
-        happen on it, so `note()` never opens one; it raises this flag instead and the caller
-        schedules `prepare()` in an executor. The record is held meanwhile, and `prepare()`
-        writes it once the file is open. The same happens when a full file needs rolling.
+        run. Opening a file, creating a directory, writing and flushing are all blocking
+        calls that must not happen on it — and a `disabled` record carries up to 400
+        messages — so `note()` never touches the file. It queues the record and raises this
+        flag, and the caller schedules `prepare()` in an executor, which opens a file if
+        there is none, rolls a full one, and writes everything queued, in order.
+
+        ⚠️ Until 2026-10-16 only the *open* was deferred: with a file already open, `note()`
+        wrote and flushed on the loop, under a lock an executor could be holding.
+
+        Also raised when a record arrives after the log was switched off with a file still
+        open, so `prepare()` can release it off the loop.
         """
         return self._wants_open
 
     def prepare(self) -> None:
-        """Open an empty file now, if switched on, so it is visibly working.
+        """Write what `note()` queued — opening a file first if there is none.
+
+        At setup there is nothing queued, and the empty file that results is the point: it
+        shows the journal is switched on and working. Switched off, it writes what was
+        queued while it was on and releases the file instead.
 
         Blocking file I/O: call it from an executor, not the event loop.
         """
-        if not self.enabled:
-            return
         with self._lock:
             self._wants_open = False
+            if not self.enabled:
+                # Here rather than in `note()`, which noticed the switch but runs on the
+                # loop. The records queued before it was switched off still belong.
+                self._drain_locked(roll_full=False)
+                self._close_locked()
+                self._pending.clear()
+                return
+            if self._handle is None and not self._pending and self._opened:
+                # Only the first call opens an empty file. Every note schedules one of
+                # these, so one can run after `close()` at unload, with its record already
+                # written there — and must not leave a fresh, unclosed file behind it.
+                return
             if self._handle is None:
                 try:
                     self._open_locked()
@@ -224,15 +251,17 @@ class DebugJournal:
                     _LOGGER.warning("%s could not open a file: %s", self._label, err)
                     self._pending.clear()
                     return
-            while self._pending:
-                if not self._write_locked(self._pending.popleft()):
-                    break
+            self._drain_locked(roll_full=True)
 
     def note(self, event: str, **fields: Any) -> None:
-        """Record one decision or transition. Cheap no-op when switched off."""
+        """Queue one decision or transition for :meth:`prepare`. Cheap no-op when off.
+
+        Never touches the file or the lock: it runs on the event loop. See `wants_open`.
+        """
         if not self.enabled:
             if self._handle is not None:
-                self.close()
+                # Switched off with a file open. Closing is file I/O; prepare() does it.
+                self._wants_open = True
             return
 
         record: dict[str, Any] = {
@@ -250,19 +279,34 @@ class DebugJournal:
         except (TypeError, ValueError):  # pragma: no cover - defensive
             return
 
-        with self._lock:
+        # Serialised here, so the record is the state at this moment however late the
+        # write. `deque.append` is atomic, and `prepare()` pops from the other end under
+        # the lock, so order is kept whichever executor thread writes.
+        self._pending.append(line + "\n")
+        self._wants_open = True
+
+    def _drain_locked(self, *, roll_full: bool) -> None:
+        """Write the queued records in order, into the open file.
+
+        A full file is rolled — closed and a new one opened — when ``roll_full``: rather
+        than truncate, since the older records are the ones a bug report needs. Without it
+        (closing) nothing new is opened, and what does not fit is dropped, as a record held
+        for a roll always was. Nothing is opened when no file is.
+        """
+        while self._pending:
             if self._handle is not None and self._written >= self._max_bytes:
-                # Full: roll rather than truncate, since the older records are the ones a
-                # bug report needs. Rolling opens a file, so it waits for prepare() too.
-                self._close_locked()
-            if self._handle is None or self._pending:
-                # No file yet, and opening one here would block the event loop. Hold the
-                # record and ask for a prepare(), which writes it. Behind any already held,
-                # so order is kept.
-                self._pending.append(line + "\n")
-                self._wants_open = True
+                if not roll_full:
+                    break
+                try:
+                    self._open_locked()
+                except OSError as err:
+                    _LOGGER.warning("%s could not open a file: %s", self._label, err)
+                    self._pending.clear()
+                    return
+            if self._handle is None:
+                break
+            if not self._write_locked(self._pending.popleft()):
                 return
-            self._write_locked(line + "\n")
 
     def _write_locked(self, encoded: str) -> bool:
         """Write one line to the open file. False, and switched off, if that failed."""
@@ -281,6 +325,7 @@ class DebugJournal:
 
     def _open_locked(self) -> None:
         self._close_locked()
+        self._opened = True
         self._written = 0
         os.makedirs(self._directory, exist_ok=True)
         self._write_readme()
@@ -353,17 +398,28 @@ class DebugJournal:
         if not self.enabled:
             return None
         with self._lock:
+            # Queued before the roll, so they belong to the file it closes.
+            self._drain_locked(roll_full=True)
             self._close_locked()
             try:
                 self._open_locked()
             except OSError as err:
                 _LOGGER.warning("%s could not start a new file: %s", self._label, err)
                 return None
+            # Anything queued with no file open to take it starts the new one.
+            self._drain_locked(roll_full=True)
             return self._path
 
     def close(self) -> None:
-        """Close the current file, if one is open, and drop any records held for one."""
+        """Write what is queued into the open file, then close it. For unload.
+
+        Records queued with no file open — or with the file full and waiting for a roll —
+        are dropped rather than a file opened only to be closed. Holds the lock, so it waits
+        out a `prepare()` already writing rather than racing it. Blocking file I/O: call it
+        from an executor, as the coordinator does.
+        """
         with self._lock:
+            self._drain_locked(roll_full=False)
             self._close_locked()
             self._pending.clear()
 

@@ -475,8 +475,10 @@ async def test_shower_on_follows_the_valve_once_it_reports(
     await setup(hass, config_entry)
     await call(hass, SWITCH_DOMAIN, SERVICE_TURN_ON, SHOWER_ON)
 
-    # The valve's report wins over what was asked for.
+    # The valve's report wins over what was asked for, once the grace runs out.
     await solo(hass, word(0))
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=13))
+    await hass.async_block_till_done()
     assert state(hass, SHOWER_ON).state == STATE_OFF
 
     # A shower started at the panel shows up too.
@@ -601,8 +603,10 @@ async def test_an_outlet_switch_holds_its_new_position_until_the_valve_reports(
     await call(hass, SWITCH_DOMAIN, SERVICE_TURN_ON, RAINHEAD)
     assert state(hass, RAINHEAD).state == STATE_ON
 
-    # Then the valve's own word decides, whatever was asked.
+    # Then the valve's own word decides, whatever was asked, once the grace runs out.
     await solo(hass, word(0b010))
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=13))
+    await hass.async_block_till_done()
     assert state(hass, RAINHEAD).state == STATE_OFF
     assert state(hass, SHOWERHEAD).state == STATE_ON
 

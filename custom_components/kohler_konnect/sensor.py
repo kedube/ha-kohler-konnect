@@ -379,6 +379,9 @@ class ValveWeeklyWaterSensor(_ValveWater, DailyWaterUsage):
     A rolling seven-day window rather than a calendar week: `Interval=WEEK` is refused by
     this endpoint (see `water.DailyWaterUsage`), and a rolling week answers "how much have we
     used lately" without depending on which day Kohler would have called the start.
+
+    No state class, so no long-term statistics and no place in the Energy dashboard: a
+    window that drops a day at a time is not a meter. See `DailyWaterUsage.state_class`.
     """
 
     _attr_name = "Water Used This Week"

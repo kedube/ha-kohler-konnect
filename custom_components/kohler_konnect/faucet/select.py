@@ -8,12 +8,15 @@ from typing import Any
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 
 from ..konnect import FaucetPreset
 from .coordinator import FaucetCoordinator
 from .entity import KohlerFaucetEntity, add_with_presets
 from .units import from_ml
+
+# The chosen preset's id, in the select's restore data.
+_PRESET_ID = "preset_id"
 
 
 def add_faucet_selects(
@@ -29,7 +32,8 @@ class FaucetPresetSelect(KohlerFaucetEntity, SelectEntity, RestoreEntity):
     """Which Konnect preset the "Dispense preset" button pours.
 
     One dropdown, in the app's order, however many presets there are. The choice is kept
-    by preset rather than by name, so renaming a preset in the app keeps it chosen.
+    by preset rather than by name, across restarts too, so renaming a preset in the app
+    keeps it chosen.
     """
 
     _attr_translation_key = "preset"
@@ -45,9 +49,25 @@ class FaucetPresetSelect(KohlerFaucetEntity, SelectEntity, RestoreEntity):
         await super().async_added_to_hass()
         if self.coordinator.preset_choice is not None:
             return
+        # By the preset's id, kept beside the state. Restoring by the label alone lost a
+        # preset renamed while Home Assistant was down, and the button then poured the
+        # first preset's amount instead. The label stands in when the id is gone (a state
+        # saved before the id was, or a preset deleted and saved again under its name);
+        # with neither, the id is kept, as a choice is while running.
+        extra = await self.async_get_last_extra_data()
+        preset_id = (extra.as_dict() if extra is not None else {}).get(_PRESET_ID)
+        if not isinstance(preset_id, str) or not preset_id:
+            preset_id = None
         state = await self.async_get_last_state()
-        if state is not None and (preset := self._labels.get(state.state)):
-            self.coordinator.preset_choice = preset.preset_id
+        if preset_id not in self.coordinator.presets and (
+            state is not None and (preset := self._labels.get(state.state))
+        ):
+            preset_id = preset.preset_id
+        self.coordinator.preset_choice = preset_id
+
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData:
+        return RestoredExtraData({_PRESET_ID: self.coordinator.preset_choice})
 
     @property
     def _labels(self) -> dict[str, FaucetPreset]:

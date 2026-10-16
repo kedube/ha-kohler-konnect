@@ -1556,7 +1556,10 @@ def test_the_cold_stop_sends_full_cold_and_reads_back_as_cold():
 
 
 def test_the_celsius_slider_stays_inside_the_codec_ceiling():
-    """14 (Cold) to 48 °C, and the top must not exceed what `encode_word` accepts."""
+    """14 (Cold) to 47 °C, and the top must not exceed what `encode_word` accepts.
+
+    47, not 48: the fixture's 47.7 °C scald limit is floored, as 48 would write 48.0.
+    """
     from custom_components.kohler_konnect.konnect.models import get_valve_model
     from custom_components.kohler_konnect.konnect.valve_hex import (
         TEMPERATURE_MAX_TENTHS,
@@ -1565,7 +1568,7 @@ def test_the_celsius_slider_stays_inside_the_codec_ceiling():
 
     number = _temperature_number(get_valve_model("K-28210"), "Celsius")
     assert number.native_min_value == 14
-    assert number.native_max_value == 48
+    assert number.native_max_value == 47
     ceiling = TEMPERATURE_MAX_TENTHS / TEMPERATURE_TENTHS_PER_DEGREE
     assert number.native_max_value <= ceiling, (
         "the slider must not offer a refused value"
@@ -1884,7 +1887,7 @@ def test_a_zone2_word_is_refused_on_a_single_zone_valve(valve_model):
     valve.name = "Shower Left"
 
     with pytest.raises(HomeAssistantError, match="one zone"):
-        asyncio.run(Valve.async_send_valve_hex(valve, "0184C801", "1184C801"))
+        asyncio.run(Valve._async_send_valve_hex(valve, "0184C801", "1184C801"))
 
 
 def test_the_report_log_records_decisions_beside_messages(tmp_path):
@@ -1972,7 +1975,8 @@ def test_the_report_log_never_opens_a_file_from_the_event_loop(tmp_path):
     written = [
         line for p in tmp_path.glob("*.jsonl") for line in p.read_text().splitlines()
     ]
-    assert len(written) == 1, "the record after prepare() must land"
+    # Both: the one that asked is queued for prepare(), not lost (since 2026-10-16).
+    assert len(written) == 2, "the records around prepare() must land"
 
 
 # --------------------------------------------------------------------------- #
@@ -2005,26 +2009,37 @@ def test_the_quiet_timer_survives_a_valve_that_has_never_spoken():
 
 
 @pytest.mark.parametrize(
-    ("connected", "asks"), [(False, True), (True, False), (None, False)]
+    ("connected", "after"), [(False, True), (True, True), (None, None)]
 )
-def test_a_valve_reported_offline_is_asked_about_again_when_it_speaks(connected, asks):
+def test_a_valve_reported_offline_is_marked_reachable_when_it_speaks(connected, after):
     """The power cycle that brings a valve back is followed by its own messages.
 
-    Only a valve last reported **off** is worth a read: on a healthy valve every message
-    would otherwise cost one, and before the first answer there is nothing to correct.
+    Each came through Kohler's cloud, so a valve last reported **off** is reachable the
+    moment it speaks — no read, so no cooldown to wait out (since 2026-10-16). A healthy
+    valve's messages change nothing, and before the first answer there is nothing to
+    correct.
     """
+    from types import SimpleNamespace
+
     from custom_components.kohler_konnect.cloud_watch import CloudConnectionWatch
 
     watch = CloudConnectionWatch.__new__(CloudConnectionWatch)
     watch._connected = connected
+    watch._stopped = False
     watch._pair_cancel = None
     watch._quiet_cancel = object()
+    refreshed: list = []
+    watch._coordinator = SimpleNamespace(
+        async_refresh_entities=lambda: refreshed.append(True)
+    )
     checked: list = []
     watch._request_check = lambda reason: checked.append(reason)
 
     watch.note_gcs_message()
 
-    assert bool(checked) is asks
+    assert checked == []
+    assert watch._connected is after
+    assert bool(refreshed) is (connected is False)
 
 
 def test_valves_are_seeded_once_not_twice():
@@ -2190,8 +2205,13 @@ def _seed_valve(client):
     valve.usage = {}
     valve.usage_daily = {}
     valve._usage_seeded_month = None
+    valve.about_parts = {}
     valve._seeded_presets = None
     valve._topology_checked = True
+    valve._push_serial = 0
+    valve._outlet_write_lock = asyncio.Lock()
+    valve._outlet_write_serial = 0
+    valve._outlet_written_at = None
     valve.cloud_watch = None
     # The seed reads the running edge after applying REST state, as a real valve does.
     valve._was_running = False
@@ -2731,7 +2751,7 @@ async def test_daily_usage_refreshes_when_a_shower_ends():
             self.usage_daily = {}
             self.hass = SimpleNamespace(async_create_task=asyncio.ensure_future)
             self.coordinator = SimpleNamespace(
-                async_refresh_entities=lambda: calls.append("rendered")
+                async_refresh_entities=lambda: calls.append("rendered"), closed=False
             )
 
         async def async_refresh_daily_usage(self):
@@ -3130,6 +3150,9 @@ def _write_valve(monkeypatch, *, fail_after=None, verify_as=None, verify_delay=N
         },
     )
     valve._note_local_write = lambda: None
+    # Writes are taken one at a time, and counted so a late read-back can tell.
+    valve._outlet_write_lock = asyncio.Lock()
+    valve._outlet_write_serial = 0
     # Verification runs detached (0.18.2); capture the task so a test can await it.
     valve._background_tasks = set()
     valve._verify_tasks = {}
@@ -3147,6 +3170,7 @@ def _write_valve(monkeypatch, *, fail_after=None, verify_as=None, verify_delay=N
         client=SimpleNamespace(async_get_gcs_settings=_read_back),
         hass=SimpleNamespace(async_create_task=asyncio.ensure_future),
         async_refresh_entities=lambda: None,
+        closed=False,
     )
     # The real error handling, bound to the stand-in: the write runs inside it.
     valve.coordinator.command_errors = MethodType(
@@ -3933,6 +3957,8 @@ def test_zone_subdevice_cleanup_and_service_resolution(monkeypatch):
 
     model = get_valve_model("K-28211")
     valve = make_valve(model, [11, 52, 31, 1], zone_grouping=ZONE_GROUPING_SUBDEVICES)
+    # Its own settings stated the layout: cleanup acts only on a confirmed one.
+    valve.topology_confirmed = True
     coordinator = make_coordinator([valve], zone_grouping=ZONE_GROUPING_SUBDEVICES)
 
     parent_dev = SimpleNamespace(
@@ -4152,7 +4178,9 @@ async def test_daily_usage_retries_once_only_when_first_read_lags():
             self._daily_usage_task = None
             self._background_tasks = set()
             self.hass = SimpleNamespace(async_create_task=asyncio.ensure_future)
-            self.coordinator = SimpleNamespace(async_refresh_entities=lambda: None)
+            self.coordinator = SimpleNamespace(
+                async_refresh_entities=lambda: None, closed=False
+            )
 
         async def async_refresh_daily_usage(self):
             self.usage_daily = self._responses.pop(0)
@@ -4231,7 +4259,9 @@ async def test_daily_usage_cancels_pending_task_when_water_restarts():
             self._daily_usage_task = None
             self._background_tasks = set()
             self.hass = SimpleNamespace(async_create_task=asyncio.ensure_future)
-            self.coordinator = SimpleNamespace(async_refresh_entities=lambda: None)
+            self.coordinator = SimpleNamespace(
+                async_refresh_entities=lambda: None, closed=False
+            )
 
         async def async_refresh_daily_usage(self):
             nonlocal reads
@@ -4352,6 +4382,7 @@ async def test_daily_usage_refresh_handles_auth_error_without_unhandled_exceptio
             self.coordinator = SimpleNamespace(
                 async_refresh_entities=lambda: None,
                 _handle_auth_error=auth_errors.append,
+                closed=False,
             )
 
         async def async_refresh_daily_usage(self):

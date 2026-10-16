@@ -188,6 +188,8 @@ def make_valve(
         last_warmup_mode=None,
         zone_flowing_for=lambda zone: None,
         about_parts={},
+        # The fault log's active entries, which the Problem sensor reads.
+        active_faults=[],
         firmware_info={},
         # A real `Valve` starts both usage series as {} and keeps them dicts.
         usage={},

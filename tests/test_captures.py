@@ -484,6 +484,7 @@ def test_a_journal_note_never_opens_a_file_it_asks_for_prepare_instead(tmp_path)
     journal.prepare()
     assert journal.wants_open is False
     journal.note("restore_done", mode="warmUpAllOutlets")
+    journal.prepare()
 
     (path,) = jsonl_files(directory)
     assert path.name.startswith("warmup_")
@@ -497,6 +498,7 @@ def test_switching_the_journal_off_drops_records_held_for_a_file(tmp_path):
     journal.close()
     journal.prepare()
     journal.note("restore_done", mode="warmUpAllOutlets")
+    journal.prepare()
 
     (path,) = jsonl_files(tmp_path / "j")
     assert [r["event"] for r in records(path)] == ["restore_done"]
@@ -514,6 +516,7 @@ def test_journal_records_carry_the_shared_clock_and_round_floats(tmp_path):
         before_window=[{"code": "GCS_WARM_STS"}],
         count=4,
     )
+    journal.prepare()
 
     (record,) = records(journal.path)
     assert record["event"] == "disabled"
@@ -533,6 +536,7 @@ def test_switching_the_journal_logger_off_closes_its_file(tmp_path):
 
     logging.getLogger(JOURNAL).setLevel(logging.INFO)
     journal.note("mode", before="on", after="off")
+    journal.prepare()  # what the warm-up manager schedules: the close is off the loop too
 
     assert journal.path is None
     assert [r["event"] for r in records(path)] == ["baseline"]
@@ -612,6 +616,7 @@ def test_a_full_disk_switches_the_journal_off_instead_of_raising(tmp_path, monke
     journal.prepare()
 
     journal.note("mode", before="on", after="off")  # must not raise
+    journal.prepare()  # where the write happens; must not raise either
 
     assert journal.enabled is False
     assert journal.path is None
@@ -631,6 +636,7 @@ def _fill_journal_to_its_cap(tmp_path) -> DebugJournal:
     journal = make_journal(tmp_path / "j", forced=True, max_bytes=100)
     journal.prepare()
     journal.note("announced", pad="z" * 120)
+    journal.prepare()
     assert journal._written >= 100
     return journal
 
@@ -873,6 +879,7 @@ def test_a_failed_report_write_keeps_the_episode_so_the_disk_can_come_back(
     disk["full"] = False
     log.write(TOPIC, b'{"n":2}')
     log.note("warmup", "mode", {"after": "on"})
+    log.prepare()
 
     lines = records(log.path)
     assert [r.get("payload") for r in lines] == ['{"n":2}', None]
@@ -912,7 +919,10 @@ def test_prepare_does_nothing_without_an_episode(tmp_path):
 
 
 def test_a_decision_at_a_full_report_part_lands_after_the_prepare_it_asks_for(tmp_path):
-    """`wants_open` promises the record that raised it is lost and the *next* one lands."""
+    """The record that raised `wants_open` lands in the next part, and so does the next.
+
+    Until 2026-10-16 the one that raised it was lost.
+    """
     log = ReportLog(str(tmp_path), max_bytes=150)
     log.start()
     log.write(TOPIC, json.dumps({"pad": "q" * 160}).encode())  # fills the part
@@ -926,4 +936,4 @@ def test_a_decision_at_a_full_report_part_lands_after_the_prepare_it_asks_for(tm
     decisions = [
         r for p in jsonl_files(tmp_path) for r in records(p) if r.get("journal")
     ]
-    assert [d["event"] for d in decisions] == ["disabled"]
+    assert [d["event"] for d in decisions] == ["mode", "disabled"]

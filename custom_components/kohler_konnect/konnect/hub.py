@@ -66,9 +66,32 @@ def outlet_flags(
 
     ``outlet_count`` is how many outlets that zone's valve actually has; the remaining
     slots are padding.
+
+    Every capture carries integers, but a slot is read through :func:`_slot_on` so a
+    ``["1", "0", "0"]`` array means what ``[1, 0, 0]`` does. Plain ``bool()`` read the
+    string ``"0"`` as True — every outlet in the zone running.
     """
     state = outlet_state or []
-    return [bool(state[i]) if i < len(state) else False for i in range(outlet_count)]
+    return [
+        _slot_on(state[i]) if i < len(state) else False for i in range(outlet_count)
+    ]
+
+
+def _slot_on(value: Any) -> bool:
+    """One outlet-array slot: a number, or the same number as a string.
+
+    A string that is not a whole number, other than ``"true"``/``"on"``, reads as off —
+    the same as the padding beyond the zone's outlets, and the same as ``0``.
+    """
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"true", "on"}:
+            return True
+        try:
+            return int(text) != 0
+        except ValueError:
+            return False
+    return bool(value)
 
 
 def zone_outlet_flags(
@@ -132,9 +155,11 @@ def _connected(value: Any) -> bool:
 
 
 def _int_or_none(value: Any) -> int | None:
+    # `OverflowError` too: `float("Infinity")` parses, and `int()` of it raises that rather
+    # than `ValueError` — out of `HubSettings.from_configuration`, failing the seed.
     try:
         return int(float(str(value)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -316,11 +341,29 @@ class HubCapabilities:
 
         Never gate zone-2 entities on ``parts.valve2``; it would hide half the outlets on a
         normal install. Use ``zoneone``/``zonetwo`` ``configuredoutlets`` for topology.
+
+        ``Connected`` is compared case-insensitively, through the same :func:`_connected`
+        as :class:`HubSettings` and the app. An exact match read a lowercase
+        ``connected`` as absent and hid every accessory entity.
+
+        A configuration or ``parts`` that is not an object says nothing about the hardware,
+        so it comes back **unread** (``known=False``) rather than as "no accessories": the
+        platforms create accessory entities when capabilities are unknown, and the next
+        seed reads again. Raising here — an `AttributeError` until 2026-10-16 — failed
+        setup, since the caller catches only `KohlerError`.
         """
-        parts = (configuration or {}).get("parts") or {}
+        if configuration is None:
+            configuration = {}
+        if not isinstance(configuration, dict):
+            return cls()
+        parts = configuration.get("parts")
+        if parts is None:
+            parts = {}
+        elif not isinstance(parts, dict):
+            return cls()
 
         def connected(*names: str) -> bool:
-            return any(parts.get(name) == CONNECTED for name in names)
+            return any(_connected(parts.get(name)) for name in names)
 
         return cls(
             water=connected("valve1", "valve2", "valveOne", "valveTwo"),
@@ -497,6 +540,11 @@ class HubDevice:
         to fail with HTTP 400 when sent all-null.) Until 2026-10-07 this sent ``zone2: null``,
         ``steam: {0, 0}`` and ``light: []``; app-side only, untested live either way.
 
+        A zone is "used" when it opens an outlet. :meth:`zones_for` builds every zone the
+        model has, so one with nothing open is dropped here — until 2026-10-16 it went out
+        as ``outlets: []``, a shape the app never sends, and a favorite with no water at all
+        still carried ``water``.
+
         🚨 **A favorite may not hold both water and steam** — the app refuses to build one
         ("A favorite cannot contain both Shower and Steam"), so this refuses too rather
         than find out what the controller does with it.
@@ -504,7 +552,7 @@ class HubDevice:
         water = {
             key: value
             for key, value in (("zone1", zone1), ("zone2", zone2))
-            if value is not None
+            if value is not None and value.get("outlets")
         }
         if water and steam:
             raise ValueError(
@@ -553,8 +601,8 @@ class HubDevice:
         splits them across zone1/zone2 the way the model dictates and converts each zone's
         flags to the 0-based position list a write expects.
 
-        A zone the model does not have comes back as ``None``, which
-        :meth:`_favorite_body` leaves out of the body, as the app does.
+        A zone the model does not have comes back as ``None``. Both that and a zone with no
+        outlet open are left out of the body by :meth:`_favorite_body`, as the app does.
         """
         zone1_flags, zone2_flags = model.split_outlets(outlets)
         zones: dict[str, dict[str, Any] | None] = {

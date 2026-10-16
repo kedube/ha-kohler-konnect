@@ -35,7 +35,8 @@
     },
     "abort": {
       "already_configured": "Det här Kohler-kontot är redan konfigurerat.",
-      "reauth_successful": "Inloggningen lyckades."
+      "reauth_successful": "Inloggningen lyckades.",
+      "unique_id_mismatch": "Det här är ett annat Kohler-konto än det som den här posten hör till."
     }
   },
   "options": {

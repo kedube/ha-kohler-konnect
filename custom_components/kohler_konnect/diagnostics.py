@@ -10,7 +10,9 @@ Two things do follow the button: ``requested_for``, naming it, and the singular 
 / ``controller`` blocks, which describe **that** device. Those singular keys exist only so
 a report from a single-device account reads as it always has; on an account with several,
 pressing the second valve's button and getting the first valve's limits under a
-``valve_1`` label is precisely the half-picture this module is meant to prevent.
+``valve_1`` label is precisely the half-picture this module is meant to prevent. A
+faucet's button names it ``faucet_<n>`` and gets a singular ``faucet`` block instead of
+either shower block.
 
 What this is for: **hardware validation reports.** Every claim in this integration is
 verified against very little hardware — a K-28212 with a controller, two K-28210 valves and
@@ -56,6 +58,7 @@ from .const import (
 )
 from .coordinator import Controller, KohlerKonnectCoordinator, Valve
 from .faucet.diagnostics import faucet_report
+from .konnect import AuthError
 
 # Entry.data/options keys whose VALUES are secrets or identity. Everything else in the
 # entry is validation-relevant configuration (model choice, outlet split, units, per-valve
@@ -165,6 +168,32 @@ def _identity_shaped(value: str) -> bool:
     return bool(_IDENTIFIER_VALUE.search(value))
 
 
+def _described(value: str) -> str:
+    """A string withheld from the report, as its type and length."""
+    return f"<{type(value).__name__}, {len(value)} chars>"
+
+
+def _guarded_block(node: Any) -> Any:
+    """A version-shaped block copied whole, with `_version_fields`' value check applied.
+
+    For `version_blocks`, which reproduce three named blocks in full. Those were trusted
+    on their name alone until 2026-10-16 — "version strings and update state" — while
+    `_version_fields`, walking the same record, checked every value it copied. A block is
+    still Kohler's to shape, and an update record is exactly where a download address, a
+    device id or a signed URL would sit; so every string here passes the same test: too
+    long, or identity-shaped, and it is described instead of copied.
+    """
+    if isinstance(node, Mapping):
+        return {key: _guarded_block(value) for key, value in node.items()}
+    if isinstance(node, list):
+        return [_guarded_block(item) for item in node]
+    if isinstance(node, str) and (
+        len(node) > _VERSION_VALUE_MAX_LEN or _identity_shaped(node)
+    ):
+        return _described(node)
+    return node
+
+
 def _version_fields(
     node: Any, path: str = "", found: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -203,7 +232,7 @@ def _version_fields(
             if isinstance(value, str) and (
                 len(value) > _VERSION_VALUE_MAX_LEN or _identity_shaped(value)
             ):
-                found[here] = f"<{type(value).__name__}, {len(value)} chars>"
+                found[here] = _described(value)
             else:
                 found[here] = value
     elif isinstance(node, list):
@@ -239,13 +268,14 @@ def _configuration_report(valve: Valve) -> dict[str, Any]:
         "systemConfiguration",
         "systemSettings",
     )
-    # Version-shaped blocks, reported in full. These carry no plumbing structure and no
-    # identity — they are version strings and update state — and withholding them is what
-    # made 0.7.1's `unknown` firmware unanswerable from a report: the summariser named
-    # `firmwareUpdate`, `otaReportedProperties` and `version` without ever saying what was
-    # in them, so the one question the report existed to answer needed a second round trip.
+    # Version-shaped blocks, reported in full. These carry no plumbing structure — they are
+    # version strings and update state — and withholding them is what made 0.7.1's
+    # `unknown` firmware unanswerable from a report: the summariser named `firmwareUpdate`,
+    # `otaReportedProperties` and `version` without ever saying what was in them, so the
+    # one question the report existed to answer needed a second round trip. In full, but not
+    # unchecked: see `_guarded_block`.
     version_blocks = {
-        key: configuration.get(key)
+        key: _guarded_block(configuration.get(key))
         for key in ("firmwareUpdate", "otaReportedProperties", "version")
         if key in configuration
     }
@@ -351,6 +381,23 @@ def _fault_log(payload: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     ]
 
 
+def _cloud_watch_report(valve: Valve) -> dict[str, Any]:
+    """The reachability watch behind `cloud_connected`, as its sensor's attributes show it.
+
+    A bare `cloud_connected: false` in the owner's reports said nothing about when it was
+    asked, why, or what came back; these are what the Cloud Connection sensor already
+    publishes for that question. The three values Kohler supplies — the state as reported,
+    its timestamp, and an error's text, which can quote a reply body — pass the identity
+    check every other copied value here does.
+    """
+    attributes = dict(valve.cloud_watch.attributes)
+    for key in ("connection_state", "cloud_last_connected", "last_error"):
+        value = attributes.get(key)
+        if isinstance(value, str) and _identity_shaped(value):
+            attributes[key] = _described(value)
+    return attributes
+
+
 def _valve_report(valve: Valve) -> dict[str, Any]:
     """One valve's state, limits, run-time clocks and warm-up settings."""
     gcs = valve.gcs_state
@@ -436,6 +483,7 @@ def _valve_report(valve: Valve) -> dict[str, Any]:
         },
         "last_update": gcs.last_update,
         "cloud_connected": valve.cloud_watch.connected,
+        "cloud_watch": _cloud_watch_report(valve),
         # `gcs-configuration`, read once at the first seed.
         #
         # **This block exists to settle an open question.** On the reference install — a
@@ -464,12 +512,36 @@ def _valve_report(valve: Valve) -> dict[str, Any]:
         # `currentSystemState` is reported above; `has_fault` folds in its `error` value,
         # which no capture has carried, so the first one shows in a report.
         "has_fault": gcs.has_fault,
+        # What the Problem sensor turns on for, from the seed's read of the fault log —
+        # code, area, valve and timestamp only. `fault_log`, read as the report is built,
+        # carries the whole log beside it.
+        "active_faults": [dict(fault) for fault in valve.active_faults],
         "dispensed_volume": gcs.dispensed_volume,
         "about": _about_report(valve.about_parts),
         "firmware": {
             part: _firmware_report(info)
             for part, info in (valve.firmware_info or {}).items()
         },
+    }
+
+
+def _light_groups_report(lights: Mapping[str, bool]) -> dict[str, bool]:
+    """Each light group's on/off, keyed by Kohler's group letter or a generic label.
+
+    A group's key is the bare letter MQTT names it by (`lightgroupA` → `a`), but REST can
+    name a group by its **display name** — the owner's own words, which this report keeps
+    out everywhere else (preset and favorite names are counted, not copied). So a key that
+    is a single letter passes, and any other becomes `group_1`, `group_2`, ... in a stable
+    order, like the `valve_0` labels that stand in for device ids.
+    """
+    named = iter(range(1, len(lights) + 1))
+    return {
+        (
+            key
+            if len(key) == 1 and key.isascii() and key.isalpha()
+            else f"group_{next(named)}"
+        ): on
+        for key, on in sorted(lights.items())
     }
 
 
@@ -510,7 +582,7 @@ def _controller_report(controller: Controller) -> dict[str, Any]:
         },
         "last_update": hub.last_update,
         "steam_status": hub.steam_status,
-        "light_groups": dict(hub.lights),
+        "light_groups": _light_groups_report(hub.lights),
         "active_experience": hub.active_experience,
         "error": hub.error,
         "error_components": dict(hub.error_components),
@@ -543,6 +615,7 @@ def _build(
     requested_for: str,
     valve_index: int = 0,
     controller_index: int = 0,
+    faucet_index: int | None = None,
 ) -> dict[str, Any]:
     """The whole installation, as this integration currently understands it.
 
@@ -550,6 +623,10 @@ def _build(
     ``controller`` blocks should describe — the one whose Download-diagnostics button was
     pressed. The full ``valves`` / ``controllers`` lists are unaffected and always carry
     every device; see the note beside those blocks for why the singular keys still exist.
+
+    ``faucet_index`` is set when a faucet's button was pressed. The singular block is then
+    ``faucet``, and there is no ``valve`` or ``controller``: a faucet is never part of a
+    shower, so neither would describe the device the report was asked about.
     """
     model = coordinator.model
 
@@ -593,8 +670,13 @@ def _build(
     # block is read for (a 30-minute and a 60-minute run-time limit, on the account that
     # found this). The full picture was always present in `valves`; the label was the lie,
     # which is the failure mode this module's header exists to warn about.
+    #
+    # **A faucet's button gets no `valve` block at all** (2026-10-16). The owner's reports
+    # from a faucet page carried valve 0's as if it described the faucet — the same
+    # half-picture, from the other side.
+    shower_blocks = faucet_index is None
     reports = [_valve_report(valve) for valve in coordinator.valves]
-    if reports:
+    if reports and shower_blocks:
         # Defensive: an out-of-range index would be a caller bug, but a diagnostics report
         # that raises is a report nobody can attach to an issue.
         primary = (
@@ -605,25 +687,29 @@ def _build(
         }
         payload["run_time"] = primary["run_time"]
         payload["warmup"] = primary["warmup"]
+    if reports:
         payload["valves"] = reports
 
     # One entry per controller, in the cloud's order. `controller` (singular) is kept so
     # reports from before 2026-09-08 and after read the same on a single-controller
     # account; `controllers` carries all of them. Follows the pressed device for the same
-    # reason as the valve block above.
+    # reason as the valve block above, and is left out of a faucet's report likewise.
     reports = [_controller_report(controller) for controller in coordinator.controllers]
-    if reports:
+    if reports and shower_blocks:
         payload["controller"] = (
             reports[controller_index]
             if 0 <= controller_index < len(reports)
             else reports[0]
         )
+    if reports:
         payload["controllers"] = reports
 
-    # One entry per faucet, in the cloud's order. No singular block: faucets arrived after
-    # the reports it keeps readable.
+    # One entry per faucet, in the cloud's order, and — from a faucet's own button — that
+    # faucet's report again as the singular `faucet`.
     if coordinator.faucets:
         payload["faucets"] = [faucet_report(faucet) for faucet in coordinator.faucets]
+        if faucet_index is not None and 0 <= faucet_index < len(payload["faucets"]):
+            payload["faucet"] = payload["faucets"][faucet_index]
 
     return payload
 
@@ -633,19 +719,45 @@ def _coordinator(hass: HomeAssistant, entry: ConfigEntry) -> KohlerKonnectCoordi
 
 
 async def _async_add_fault_logs(
-    coordinator: KohlerKonnectCoordinator, payload: dict[str, Any]
+    coordinator: KohlerKonnectCoordinator,
+    payload: dict[str, Any],
+    valve_index: int = 0,
 ) -> dict[str, Any]:
     """Attach each valve's `gcs-diagnostics` fault log, read now.
 
-    Read on demand rather than kept: it is only ever wanted at the moment someone is
-    building a report, and the client answers `{}` on failure, so an unreachable endpoint
-    costs an empty list rather than the report.
+    Read whole on demand: the seed keeps only the active entries (`active_faults`), and the
+    full log is only ever wanted at the moment someone is building a report. The client
+    answers `{}` for a failed request, so an unreachable endpoint costs an empty list
+    rather than the report.
+
+    ⚠️ **A sign-in failure used to cost the whole report** (fixed 2026-10-16). The token
+    layer under the read raises `AuthError` — `AuthUnavailable` when Kohler's sign-in is
+    down — and neither is a `KohlerError`, so it passed the client's own guard and the
+    download failed exactly when a report was most wanted. It is caught here, recorded
+    beside each log it cost as `fault_log_error`, and the remaining valves are not asked:
+    each would only fail the same way, after its own attempt to sign in.
+
+    The singular `valve` block takes the log of the valve it describes (``valve_index``),
+    and a report without one — a faucet's — is not given one.
     """
+    failure: str | None = None
     for index, valve in enumerate(coordinator.valves):
-        log = _fault_log(await valve.client.async_get_gcs_diagnostics(valve.device_id))
-        payload["valves"][index]["fault_log"] = log
-        if index == 0 or payload.get("requested_for") == f"valve_{index}":
-            payload.setdefault("valve", {})["fault_log"] = log
+        report: dict[str, Any]
+        if failure is None:
+            try:
+                report = {
+                    "fault_log": _fault_log(
+                        await valve.client.async_get_gcs_diagnostics(valve.device_id)
+                    )
+                }
+            except AuthError as err:
+                # The type only: the message is the sign-in service's, not ours to copy.
+                failure = f"sign-in failed ({type(err).__name__})"
+        if failure is not None:
+            report = {"fault_log": None, "fault_log_error": failure}
+        payload["valves"][index].update(report)
+        if index == valve_index and "valve" in payload:
+            payload["valve"].update(report)
     return payload
 
 
@@ -664,7 +776,8 @@ async def async_get_device_diagnostics(
 
     The whole-installation payload is the same whichever button was pressed — that is the
     point of this module. What follows the button is `requested_for` and the singular
-    `valve` / `controller` blocks, which describe the device whose page it came from.
+    `valve` / `controller` — or, for a faucet, `faucet` — blocks, which describe the device
+    whose page it came from.
     """
     coordinator = _coordinator(hass, entry)
     requested_for = "unknown_device"
@@ -672,6 +785,7 @@ async def async_get_device_diagnostics(
     # every single-device account has always produced.
     valve_index = 0
     controller_index = 0
+    faucet_index: int | None = None
     for domain, identifier in device.identifiers:
         if domain != DOMAIN:
             continue
@@ -695,9 +809,12 @@ async def async_get_device_diagnostics(
                 controller_index = index
         for index, faucet in enumerate(coordinator.faucets):
             if identifier == faucet.device_id:
-                requested_for = (
-                    "faucet" if len(coordinator.faucets) == 1 else f"faucet_{index}"
-                )
+                # Always indexed: a bare "faucet" named no device in a report whose
+                # singular block, until 2026-10-16, described valve 0 instead.
+                requested_for = f"faucet_{index}"
+                faucet_index = index
     return await _async_add_fault_logs(
-        coordinator, _build(coordinator, requested_for, valve_index, controller_index)
+        coordinator,
+        _build(coordinator, requested_for, valve_index, controller_index, faucet_index),
+        valve_index,
     )

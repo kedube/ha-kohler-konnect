@@ -169,14 +169,17 @@ async def test_faucet_preset_list_preferred(
     assert faucet(hass, config_entry).preset_source == "faucet-experience"
 
 
-@pytest.mark.parametrize("faucet_presets", [None, []])
+@pytest.mark.parametrize("faucet_presets", [None])
 async def test_account_preset_list_stands_in(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     kohler: FakeKohler,
     faucet_presets: list | None,
 ) -> None:
-    """If the faucet's list is unavailable or empty, the account's is used."""
+    """If the faucet's list is unavailable, the account's is used.
+
+    An empty list is an answer, not a failure; see `test_review_faucet.py`.
+    """
     kohler.faucet_presets = faucet_presets
     await _setup(hass, config_entry, kohler, PRESETS)
     assert hass.states.get(PRESET).attributes["options"] == ["Pasta pot", "Kettle"]

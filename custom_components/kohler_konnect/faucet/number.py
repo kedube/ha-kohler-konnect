@@ -10,7 +10,6 @@ from homeassistant.components.number import (
 )
 from homeassistant.const import EntityCategory
 
-from ..const import DISPENSE_MAX_ML, DISPENSE_MIN_ML
 from .coordinator import FaucetCoordinator
 from .entity import KohlerFaucetEntity
 from .units import HA_UNIT_KEYS, from_ml, to_ml
@@ -48,11 +47,14 @@ class FaucetDispenseAmount(KohlerFaucetEntity, RestoreNumber):
         data = await self.async_get_last_number_data()
         if data is None or data.native_value is None:
             return
-        # The value may be in the other unit system's unit.
+        # The value may be in the other unit system's unit, so it is kept within this
+        # one's range: 10 mL, restored as US units, showed below their 0.5 fl oz minimum.
         unit = HA_UNIT_KEYS.get(str(data.native_unit_of_measurement), "ml")
         ml = to_ml(float(data.native_value), unit)
+        profile = self.coordinator.profile
         self.coordinator.dispense_amount_ml = min(
-            max(ml, DISPENSE_MIN_ML), DISPENSE_MAX_ML
+            max(ml, to_ml(profile.number_min, self._unit)),
+            to_ml(profile.number_max, self._unit),
         )
 
     @property

@@ -21,6 +21,7 @@ uses the names Kohler itself shows: "Anthem" and "Anthem Plus".
 
 from __future__ import annotations
 
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -231,7 +232,40 @@ def outlet_unique_id(valve: Valve, zone: int, outlet: int) -> str:
     return f"{valve.device_id}_zone_{zone}_outlet_{outlet}"
 
 
-class KohlerValveEntity(CoordinatorEntity[KohlerKonnectCoordinator]):
+class _KohlerDeviceEntity(CoordinatorEntity[KohlerKonnectCoordinator]):
+    """Re-render only for a message about this entity's own device.
+
+    The account has one coordinator, so every notification reaches every shower entity.
+    For a message from one device, `KohlerKonnectCoordinator.devices_changed` names that
+    device for the length of the notification, and an entity belonging to another skips
+    its state write — until 2026-10-16 every message from any valve or controller wrote
+    the state of every entity on the account. A notification that is not about one device
+    (a reseed, a cloud check, a usage or firmware read, midnight) leaves it None, and
+    everything re-renders as before.
+
+    `_device_id` is always the Kohler device's own — the valve's for a zone sub-device's
+    entities too, since a zone has no messages of its own. Faucet entities sit on their own
+    coordinators and never see this.
+    """
+
+    _device_id: str
+
+    @property
+    def _update_device_ids(self) -> frozenset[str] | None:
+        """The devices whose messages re-render this entity; None for every message."""
+        return frozenset((self._device_id,))
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        changed = self.coordinator.devices_changed
+        if changed is not None:
+            wanted = self._update_device_ids
+            if wanted is not None and changed.isdisjoint(wanted):
+                return
+        super()._handle_coordinator_update()
+
+
+class KohlerValveEntity(_KohlerDeviceEntity):
     """Base for entities belonging to one Anthem digital valve.
 
     Takes the :class:`~.coordinator.Valve` it belongs to, for the same reason the
@@ -269,6 +303,20 @@ class KohlerValveEntity(CoordinatorEntity[KohlerKonnectCoordinator]):
             self._attr_device_info = valve_device_info(valve)
 
     @property
+    def _update_device_ids(self) -> frozenset[str] | None:
+        """This valve — and, on an account of one valve and one controller, that controller.
+
+        That pairing is the one case in which the two are taken to be the same shower, and
+        the valve's `System Status` reads the controller's warm-up there, so the
+        controller's messages must still reach it. Elsewhere a valve entity reads its own
+        valve only.
+        """
+        coordinator = self.coordinator
+        if len(coordinator.valves) == 1 and len(coordinator.controllers) == 1:
+            return frozenset((self._device_id, coordinator.controllers[0].device_id))
+        return frozenset((self._device_id,))
+
+    @property
     def _state(self):
         return self._valve.gcs_state
 
@@ -297,7 +345,7 @@ class ZoneWordEntity(KohlerValveEntity):
         return state.valve1 if self._zone == 1 else state.valve2
 
 
-class KohlerControllerEntity(CoordinatorEntity[KohlerKonnectCoordinator]):
+class KohlerControllerEntity(_KohlerDeviceEntity):
     """Base for entities belonging to one Anthem Plus system controller.
 
     Takes the :class:`~.coordinator.Controller` it belongs to, not just the coordinator:
