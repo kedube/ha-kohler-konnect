@@ -11,6 +11,8 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+## 1.04 — 2026-10-17
+
 **Fixed — safety**
 
 - **The faucet's water safety limit never gives up.** In 1.03 it stopped after ten failed
