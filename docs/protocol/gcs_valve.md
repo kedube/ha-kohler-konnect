@@ -17,7 +17,8 @@ The command word is documented byte by byte in [../gcs/valve_hex.md](../gcs/valv
 
 - **A "zone" is a valve body's half.** Zone 1 is `primaryValve1` and zone 2 is `secondaryValve1`. Each carries its own temperature, flow and three outlet bits.
 - **How a valve gets into the app.** Only the first-generation touchscreen `K-28214`, plugged into the valve, adds a GCS valve to the Konnect app. The Anthem Plus screen `K-28214-ASC` plugs into the controller and adds only the HUB. Both can be on one valve at once, which is how an account ends up with a GCS and a HUB for one shower (live).
-- **Topology source.** Read `gcs-state/gcsadvancestate` → `setting.valveSettings[].outletConfigurations` (works without a controller, live). `gcs-configuration`'s structural fields are null on a controller-attached valve.
+- **Topology source.** Read `gcs-state/gcsadvancestate` → `setting.valveSettings[]`, one entry per valve slot: `valve` names it (`Valve1`, `Valve2`, …) and `noOfOutlets` is its outlet count. `Valve1` and `Valve2` give the split (works without a controller, live). Each entry's `outletConfigurations[]` holds that valve's outlet records (§1.1, §2.1). `gcs-configuration`'s structural fields are null on a controller-attached valve.
+- **All eight slots are listed**, the unpopulated ones with `noOfOutlets` 0, so a single-zone valve reports `Valve2` as 0. This integration relies on that: a `Valve2` entry that is missing, or whose count is not a whole number, fails detection rather than meaning one zone (`konnect/topology.py`).
 
 ### 1.1 `outLetId` and outlet bits
 
@@ -248,6 +249,6 @@ The shapes and install flow are in [platform §7](platform.md#7-firmware). The c
 | Experiences (start/stop via `controlpresetorexperience`) | ✅ app-confirmed only |
 | Restart (`valvereset`) | ✅ app-confirmed only, disabled by default |
 | Firmware update entities (read-only) | ✅ |
-| Fault: error flag plus `currentSystemState == error`; fault log in diagnostics | ✅ |
+| Fault: error flag plus `currentSystemState == error`, and the fault log's active entries (read at setup, on each reconnect and twice a day); the whole log in diagnostics | ✅ |
 | Connection state (`Disconnected`) | ✅ |
 | Bath fill, UI config writes, eco/water-saving mode, experience management, factory reset | ❌ documented only |

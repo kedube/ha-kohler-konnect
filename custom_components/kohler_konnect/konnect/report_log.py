@@ -253,9 +253,11 @@ class ReportLog:
         attaches it again.
 
         Decisions still queued go into the part already open first, without opening or
-        rolling one. That is the only write here; `KonnectMqttStream.async_stop` calls this
-        on the event loop, and by then the `prepare()` each decision scheduled has almost
-        always written it already.
+        rolling one. That is the only write here, and it is blocking file I/O:
+        `KonnectMqttStream.async_stop` calls this from a worker thread (`asyncio.to_thread`,
+        through `_close_captures`) once paho's network thread has stopped — never on the
+        event loop. By then the `prepare()` each decision scheduled has almost always
+        written it already.
         """
         with self._lock:
             self._closed = True

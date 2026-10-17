@@ -21,8 +21,9 @@
       },
       "reauth_confirm": {
         "title": "Inicia sesión de nuevo",
-        "description": "La sesión guardada para {username} ha caducado. Introduce la contraseña de nuevo para volver a conectarte.",
+        "description": "La sesión guardada para {username} ha caducado. Introduce la contraseña de nuevo para volver a conectarte. Si el correo electrónico de tu cuenta de Kohler ha cambiado desde entonces, introduce el nuevo.",
         "data": {
+          "username": "Correo electrónico",
           "password": "Contraseña"
         }
       }
@@ -263,6 +264,10 @@
     "faucet_api_changed": {
       "title": "Kohler sigue rechazando las solicitudes de {name}",
       "description": "La nube de Kohler ha rechazado varias solicitudes seguidas; normalmente significa que Kohler ha cambiado su API. Busca una actualización de esta integración. Si no la hay, abre una incidencia y adjunta los diagnósticos de la integración.\n\nÚltimo error: {error}"
+    },
+    "faucet_auto_off_failed": {
+      "title": "Puede que el agua de {name} siga corriendo",
+      "description": "El agua abierta desde Home Assistant en {name} alcanzó su límite de seguridad, pero Home Assistant no ha podido cerrarla: la nube de Kohler no aceptó la orden, o el grifo no ha informado desde entonces de que el agua esté cerrada.\n\nHome Assistant lo sigue intentando —tras 1, 2, 5 y 10 minutos, y después cada 15 minutos— hasta saber que el agua está cerrada, también tras reiniciar. Si sigue corriendo, ciérrala en el grifo.\n\nEste mensaje desaparece en cuanto se sepa que el agua está cerrada.\n\nÚltimo error: {error}"
     },
     "replaced_integration": {
       "title": "Elimina las integraciones antiguas de Kohler",

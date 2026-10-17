@@ -67,6 +67,10 @@ from enum import Enum
 
 # The valve's first echo lands 1.1–2.1 s after the REST call returns, and it already carries
 # `warmUpStatus`. Ten seconds is five times that, with room for a slow cloud.
+#
+# Both bounds also decide, since 2026-10-16, whether a warm-up in progress is the one the
+# last words sent from Home Assistant started, and so whose outlets a command sent during it
+# keeps (`Valve._warmup_shower` in the coordinator). Change them with that in mind.
 WARMUP_WINDOW_SECONDS = 10.0
 # Corpus maximum warm-up is 69 s. If the valve is still warming up this long after the write,
 # something else is going on and this watcher should not be the thing that acts on it.

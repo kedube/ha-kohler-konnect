@@ -23,6 +23,19 @@ back to the model the owner confirmed (or to asking them), which is the safer of
 for a device that opens water. A clamped ``4 -> 3`` would build entities for a layout
 nobody reported; taken as read, ``4`` made every write raise in ``encode_pair`` and ``-1``
 cut a 3-outlet valve's outlet total to 2.
+
+**So is a zone-2 count that is missing or unreadable** (2026-10-16). Zone 2 is the one
+place where 0 is a legal answer — "a single-zone valve" — and every count that would not
+parse (``None``, ``"abc"``, even ``"3.0"``) used to read as 0, as did a ``Valve2`` entry
+or ``zonetwo`` block that was not there at all. So a garbled reply turned a 3 + 3 valve
+into a K-28210: every write then sent the unused-valve word for valve 2, so zone 2 could
+no longer be driven, or stopped, from Home Assistant — and since 1.03 the entry also
+reloads, remembers that layout and deletes the zone sub-devices, with the names and areas
+their owner gave them. A single-zone valve says "no zone 2" explicitly: its
+``valveSettings`` lists all eight slots, the unpopulated ones with ``noOfOutlets`` 0, so
+insisting on that answer costs it nothing. No single-zone controller has been captured; a
+``zonetwo`` one might leave out falls back like any failed detection, which costs a
+question in the setup flow rather than a zone.
 """
 
 from __future__ import annotations
@@ -37,15 +50,36 @@ _LOGGER = logging.getLogger(__name__)
 _VALVE_PREFIX = "valve"
 
 
-def _as_int(value: object) -> int:
+def _count(value: object) -> int | None:
+    """A reported outlet count, or None when the value is not one.
+
+    A whole number in any spelling reads as that number: ``3``, ``"3"``, ``" 3 "`` and the
+    ``"3.0"`` a float-minded serialiser produces. Anything else — ``None``, ``""``,
+    ``"abc"``, ``"2.5"``, ``"inf"`` — is no count at all, and **never 0**, which for zone 2
+    is a real answer; see the module docstring.
+    """
     try:
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        return 0
+        number = float(str(value).strip())
+    except (TypeError, ValueError, OverflowError):
+        return None
+    # False for a fraction, and for infinity and NaN as well.
+    return int(number) if number.is_integer() else None
 
 
-def _split(first: int, second: int) -> tuple[int, int] | None:
-    """The detected split, or None when it is not one a valve can have."""
+def _split(first: int | None, second: int | None) -> tuple[int, int] | None:
+    """The detected split, or None when it is not one a valve can have.
+
+    ``None`` for either zone is a count the reply did not give, or gave unreadably; it
+    fails the whole detection rather than standing in for 0.
+    """
+    if first is None or second is None:
+        _LOGGER.debug(
+            "Ignoring a detected split of %s + %s outlets: a zone's count is missing "
+            "or not a whole number",
+            first,
+            second,
+        )
+        return None
     if first <= 0:
         return None
     if not (first <= OUTLETS_PER_VALVE and 0 <= second <= OUTLETS_PER_VALVE):
@@ -64,7 +98,9 @@ def topology_from_valve_settings(setting: dict) -> tuple[int, int] | None:
 
     ``setting`` is the ``setting`` object of a ``gcsadvancestate`` response. Its
     ``valveSettings`` array carries all eight valve slots; unpopulated ones report
-    ``noOfOutlets`` of 0.
+    ``noOfOutlets`` of 0. So a single-zone valve answers ``Valve2: 0``, and a ``Valve2``
+    entry that is missing, or whose count is not a whole number, is a failed read — never
+    a single-zone valve (2026-10-16; see the module docstring).
 
     The sibling ``outlets`` total is deliberately ignored — it was ``null`` on the tested
     system while the per-valve counts were correct.
@@ -77,18 +113,21 @@ def topology_from_valve_settings(setting: dict) -> tuple[int, int] | None:
     if not isinstance(entries, list):
         return None
 
-    counts: dict[int, int] = {}
+    counts: dict[int, int | None] = {}
     for entry in entries:
         if not isinstance(entry, dict):
             continue
         name = str(entry.get("valve") or "").strip().lower()
         if not name.startswith(_VALVE_PREFIX):
             continue
-        index = _as_int(name[len(_VALVE_PREFIX) :])
+        try:
+            index = int(name[len(_VALVE_PREFIX) :])
+        except ValueError:
+            continue
         if index in (1, 2):
-            counts[index] = _as_int(entry.get("noOfOutlets"))
+            counts[index] = _count(entry.get("noOfOutlets"))
 
-    return _split(counts.get(1, 0), counts.get(2, 0))
+    return _split(counts.get(1), counts.get(2))
 
 
 def topology_from_hub_configuration(configuration: dict) -> tuple[int, int] | None:
@@ -101,13 +140,15 @@ def topology_from_hub_configuration(configuration: dict) -> tuple[int, int] | No
     ``parts.valve2: NotConnected`` while genuinely having a populated zone 2.
 
     Type-checked the same way as the valve's read: a zone that is not an object counts as
-    absent, and a configuration that is not one yields nothing.
+    absent, and a configuration that is not one yields nothing. **An absent or unreadable
+    ``zonetwo`` yields nothing too** (2026-10-16): it used to read as ``configuredoutlets``
+    0, a single-zone install, which shrank a two-zone controller to one.
     """
     config = configuration if isinstance(configuration, dict) else {}
 
-    def configured(key: str) -> int:
+    def configured(key: str) -> int | None:
         zone = config.get(key)
-        return _as_int(zone.get("configuredoutlets")) if isinstance(zone, dict) else 0
+        return _count(zone.get("configuredoutlets")) if isinstance(zone, dict) else None
 
     return _split(configured("zoneone"), configured("zonetwo"))
 

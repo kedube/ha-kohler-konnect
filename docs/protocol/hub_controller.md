@@ -7,7 +7,7 @@ The controller is a Linux box in front of one or two valves. It adds music (with
 ## 1. Zones, valves and parts
 
 - **The words disagree across payloads, and all mean the same thing:** hub-state `zone: "1"`, favorites `water.zone1`, configuration `zoneone`/`zonetwo`, MQTT `zone` or `component: "valve1"`. Resolve all of them through one helper (`zone_number` in `konnect/hub.py`).
-- **`parts.valve1`/`valve2` count physical valve bodies**, while GCS `valve1`/`valve2` count zones within one body. A 6-outlet K-28212 correctly reports `valve1: Connected, valve2: NotConnected` (live). **Never gate zone-2 entities on `parts.valve2`.** Use `zoneone`/`zonetwo` `configuredoutlets`.
+- **`parts.valve1`/`valve2` count physical valve bodies**, while GCS `valve1`/`valve2` count zones within one body. A 6-outlet K-28212 correctly reports `valve1: Connected, valve2: NotConnected` (live). **Never gate zone-2 entities on `parts.valve2`.** Use `zoneone`/`zonetwo` `configuredoutlets`. A single-zone install's `zonetwo` has never been captured, so this integration takes the split only from an explicit count in both: a `zonetwo` that is missing, or whose count is not a whole number, fails detection rather than meaning one zone (`konnect/topology.py`).
 - **Outlet arrays are padded to 6 slots per zone** whatever the hardware. Only the leading slots that belong to that zone's valve mean anything (live).
 - **Read and write shapes differ** (live):
   - read: `water.zoneN.outlets` is a **count** and `outletState` a 6-slot array;

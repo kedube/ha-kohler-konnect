@@ -48,11 +48,14 @@ DISPENSE_SCHEMA = vol.All(
 
 def _target_faucets(hass: HomeAssistant, call: ServiceCall) -> list[FaucetCoordinator]:
     """The loaded faucets the call is aimed at."""
-    faucets: list[FaucetCoordinator] = [
+    # An entry that is unloading still counts towards "more than one", but none of its
+    # faucets is a target; see `services._open`.
+    every: list[FaucetCoordinator] = [
         faucet
         for coordinator in hass.data.get(DOMAIN, {}).values()
         for faucet in coordinator.faucets
     ]
+    faucets = [faucet for faucet in every if not faucet.account.closed]
     if not faucets:
         raise ServiceValidationError(
             translation_domain=DOMAIN, translation_key="no_faucet"
@@ -72,7 +75,7 @@ def _target_faucets(hass: HomeAssistant, call: ServiceCall) -> list[FaucetCoordi
                 translation_domain=DOMAIN, translation_key="faucet_not_selected"
             )
         return targets
-    if len(faucets) > 1:
+    if len(every) > 1:
         # Never run water at every faucet in the house by accident.
         raise ServiceValidationError(
             translation_domain=DOMAIN, translation_key="faucet_required"

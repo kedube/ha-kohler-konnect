@@ -12,10 +12,12 @@ firmware availability, which nothing announces, is checked twice a day.
 Three things this has to get right:
 
 * **Cold start.** MQTT is event-driven and silent until the shower next changes, so a
-  restart would leave every entity unknown. One REST read at setup seeds everything.
+  restart would leave every entity unknown. One REST read at setup seeds everything, made
+  while the stream connects, so that nothing can change unseen between the two.
 * **Reconnects.** The broker replays nothing on connect: measured across 27 sessions, the
   first message is always a change event and six sessions received nothing for hours. So
-  every connect re-seeds, which is what makes dropping the poll safe.
+  every reconnect re-seeds, which is what makes dropping the poll safe. The first connect
+  needs less: only live state the setup read before the stream was up is read again.
 * **Token rotation.** B2C issues a new refresh token on every refresh and invalidates the
   old one. Losing it strands the account, so it is written back to the config entry
   whenever it changes.
@@ -30,7 +32,7 @@ import os
 import time
 import uuid
 from collections import Counter, deque
-from collections.abc import Coroutine, Iterator
+from collections.abc import Coroutine, Iterable, Iterator
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -75,6 +77,7 @@ from .const import (
     DOMAIN,
     ENABLE_RAW_MQTT_LOG,
     ENABLE_WARMUP_DEBUG_LOG,
+    FAUCET_SCAN_INTERVAL_IDLE,
     FAUCET_STORAGE_KEY,
     FAUCET_STORAGE_VERSION,
     FIRMWARE_CHECK_INTERVAL,
@@ -132,6 +135,7 @@ from .konnect import (
     unit_to_celsius,
 )
 from .konnect.const import (
+    MSG_GCS_OUTLET_CONFIG,
     MSG_HUB_LIGHT,
     MSG_HUB_MUSIC,
     MSG_HUB_SHOWER_VALVE,
@@ -139,6 +143,7 @@ from .konnect.const import (
 )
 from .konnect.entry_reload import reload_signature
 from .konnect.faucet import parse_event
+from .konnect.gcs import validate_outlet_record
 from .konnect.models import DEFAULT_VALVE_MODEL
 from .konnect.state import outlet_limits_from_settings
 from .konnect.usage import usage_series
@@ -157,27 +162,139 @@ from .konnect.valve_hex import (
     flow_percent_to_byte,
     normalize_word,
 )
-from .konnect.warmup_resume import Decision, WarmupResume
+from .konnect.warmup_resume import (
+    RESUME_DEADLINE_SECONDS,
+    WARMUP_WINDOW_SECONDS,
+    Decision,
+    WarmupResume,
+)
 from .registry import device_by_identifier
 from .warmup_manager import WarmupManager
 
 _LOGGER = logging.getLogger(__name__)
 
-#: The messages that carry what a `gcs-state` read also carries — the zone words, the
-#: warm-up mode and progress, the session flag. One of these arriving while that read is in
-#: flight means the read is older than what is already applied; see
-#: `Valve._async_seed_topology_and_state`. Presets, outlet records and the dispensed volume
-#: come from other reads, so a message about them conflicts with nothing.
-_GCS_STATE_CODES = frozenset({MSG_GCS_SOLO_STATUS, MSG_GCS_WARMUP_STATUS})
-
-#: The controller's counterpart: the messages whose fields `hub-state` also carries.
-_HUB_STATE_CODES = frozenset(
-    {MSG_HUB_SHOWER_VALVE, MSG_HUB_MUSIC, MSG_HUB_STEAM, MSG_HUB_LIGHT}
+#: The `GcsState` fields of a `gcs-state` read that a valve message can carry too: the zone
+#: words, and the session fields `GCS_SOLO_STS` reports with them; `GCS_WARM_STS` carries
+#: `warmup_mode`. `Valve._push_serials` counts each field a message did carry
+#: (`GcsState.carried`) — a word only if it decoded, a session field only if present. One
+#: carried while a read is in flight, or just before it went out, is newer than the read
+#: **for that field only**; see `Valve.apply_rest_reply`. Until 2026-10-16 they were
+#: counted in groups, so a report whose zone 1 word was garbled kept zone 1 shown running
+#: over a read that had it stopped, and any status report kept every session field out.
+#: Presets, outlet records and the dispensed volume come from other reads, so a message
+#: about them conflicts with nothing.
+_GCS_WORD_FIELDS = ("valve1", "valve2")
+_GCS_SESSION_FIELDS = (
+    "warmup_in_progress",
+    "system_state",
+    "active_preset_id",
+    "total_volume",
+    "total_flow",
 )
 
-#: `hass.data` key for each valve's own outlet split, as last read this run, by entry and
-#: device id. Outlives a reload, which is the point: see `_async_note_valve_topology`.
+#: How far `gcs-state` trails the valve's own reports, in seconds, with room to spare: it
+#: still showed the old warm-up mode immediately after a write and caught up by about 3 s
+#: (measured 2026-08-20). A report that arrived this shortly before a read was sent can be
+#: newer than the read's reply, so what it carried is kept over the reply's.
+_GCS_STATE_TRAILS_SECONDS = 5.0
+
+#: How long after setup's reads went out the stream's first connect may come and still be
+#: caught up with the live state alone; one later — a first start that failed, connecting
+#: on the back-off — reads everything again. See `KohlerKonnectCoordinator._first_connect_late`.
+_FIRST_CONNECT_GRACE_SECONDS = 30.0
+
+#: The controller's counterpart, by message: the `HubState` fields each carries of a
+#: `hub-state` read, and the `errorComponent` keys its `errorstate` feeds. `MUSIC_STS`,
+#: `STEAM_STS` and `LIGHT_STS` report one accessory each and `SHOWER_VALVE_STS` the zones,
+#: so one of them overtaking the read says nothing about the rest of the reply.
+_HUB_PUSH_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    MSG_HUB_SHOWER_VALVE: (("zones", "shower_warmup"), ("valve1", "valve2")),
+    MSG_HUB_MUSIC: (("music_on",), ("amplifier",)),
+    MSG_HUB_STEAM: (
+        (
+            "steam_on",
+            "steam_status",
+            "steam_temperature",
+            "steam_start_time",
+            "steam_total_time",
+        ),
+        ("steam",),
+    ),
+    MSG_HUB_LIGHT: (("lights",), ("light",)),
+}
+
+#: `hass.data` key for each device's own outlet split, as last read this run, by entry and
+#: device id — a valve's from its settings, a controller's (the valve behind it) from its
+#: configuration. Outlives a reload, which is the point: see `_async_note_topology`.
 _VALVE_TOPOLOGY = f"{DOMAIN}_valve_topology"
+
+#: How long an unload waits for a sign-in refresh already in flight; see
+#: `KohlerKonnectCoordinator.async_shutdown_stream`.
+_REFRESH_WAIT_SECONDS = 10
+
+#: Messages held while setup does not yet know which devices the account has; see
+#: `KohlerKonnectCoordinator._handle_envelope`. The stream reaches that point within
+#: seconds, so this only bounds an account read that hangs.
+_EARLY_MESSAGES_KEPT = 200
+
+
+@contextmanager
+def _keeping(
+    state: Any, fields: Iterable[str], components: Iterable[str] = ()
+) -> Iterator[None]:
+    """Run the block, then put ``fields`` of ``state`` back as they were.
+
+    How a REST read is applied around a push that overtook it: the read sets everything it
+    carries, and what the push carried goes back to the push's values. A dict is held as a
+    copy, since `HubState.apply_rest_state` fills `zones` and `lights` in place; anything
+    else as the very object it was — a valve word's identity is how `Valve._valve_baseline`
+    tells a report from the words it sent. ``components`` are keys of a controller's
+    `error_components`, which messages and the read share.
+    """
+    kept: dict[str, Any] = {}
+    for name in fields:
+        value = getattr(state, name)
+        kept[name] = dict(value) if isinstance(value, dict) else value
+    kept_components = {key: state.error_components.get(key) for key in components}
+    yield
+    for name, value in kept.items():
+        setattr(state, name, value)
+    for key, flag in kept_components.items():
+        if flag is None:
+            state.error_components.pop(key, None)
+        else:
+            state.error_components[key] = flag
+
+
+def _raise_first(results: Iterable[Any]) -> None:
+    """Raise the first exception `gather(..., return_exceptions=True)` collected, if any.
+
+    For reads that must all finish before a failure is reported: `gather` without
+    `return_exceptions` raises the first failure at once and leaves the rest running, against
+    a setup that has already failed.
+    """
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+
+
+def _usage_window(days_back: int) -> tuple[str, str]:
+    """`FromDate` and `ToDate` for a usage read covering ``days_back`` days up to today.
+
+    ⚠️ **"Today" is the later of the local date and the UTC one** (2026-10-16). The query
+    ended at the UTC date, which east of UTC — from local midnight to UTC midnight — is
+    yesterday, so the morning's first shower was left out of `Water Used Today` until UTC
+    caught up. The local date alone, as the faucets and the Konnect app ask, is wrong the
+    other way: on the accounts whose buckets carry UTC dates, a US evening's water sits
+    under tomorrow's date, which `water.py` reads as today's, and a local `ToDate` would cut
+    it off. The later of the two serves both, and each is a date the server already takes
+    — the UTC one from this query until now, the local one from the app and the faucets.
+    The window starts from the earlier, so it only ever grows.
+    """
+    local = dt_util.now().date()
+    utc = datetime.now(UTC).date()
+    start = min(local, utc) - timedelta(days=days_back)
+    return start.isoformat(), max(local, utc).isoformat()
 
 
 def _fault_is_active(entry: Any) -> bool:
@@ -433,14 +550,21 @@ class Controller:
         #: `steamExperiences`, `iceShowerExperiences`) — the firmware's fixed catalogue,
         #: read once.
         self.experiences: dict[str, list[dict[str, Any]]] = {}
-        #: `hub-diagnostics/{id}/active` `errorDetails[]`, refreshed on each seed.
+        #: `hub-diagnostics/{id}/active` `errorDetails[]`, refreshed on each seed and twice
+        #: a day. A read that fails keeps what was known; see
+        #: `KohlerKonnectCoordinator._async_refresh_active_errors`.
         self.active_errors: list[dict[str, Any]] = []
         #: The firmware read for this controller (`firmware/hub`), refreshed twice a day.
         self.firmware_info: dict[str, Any] = {}
-        #: Messages applied that carry what `hub-state` carries (`_HUB_STATE_CODES`). The
-        #: seed reads it before that GET and skips the reply if it moved — the same guard,
-        #: for the same reason, as `Valve._push_serial`.
-        self.push_serial = 0
+        #: Messages applied that carry part of what `hub-state` carries, counted per message
+        #: code (`_HUB_PUSH_FIELDS`). Read before that GET and compared after it: what a
+        #: message that moved in between carried is newer than the reply, and the rest of
+        #: the reply still applies — the same rule, for the same reason, as
+        #: `Valve._push_serials`.
+        self.push_serials: Counter[str] = Counter()
+        #: The stream connection the last successful `hub-state` read was sent under; see
+        #: `Valve.state_read_on`.
+        self.state_read_on: int | None = None
 
     @property
     def device_id(self) -> str:
@@ -604,6 +728,23 @@ def _setting_label(
     return "an outlet setting"
 
 
+def _field_label(field: str, value: int | None) -> str:
+    """`_setting_label` for one `OutletLimits` field at ``value``; its bare name if None."""
+    if value is None:
+        return {
+            "maximum_run_time": "Max Shower Duration",
+            "maximum_temperature_tenths": "Max Temperature",
+            "default_temperature_tenths": "Default Temperature",
+        }.get(field, "an outlet setting")
+    values: dict[str, int | None] = {
+        "maximum_run_time": None,
+        "maximum_temperature_tenths": None,
+        "default_temperature_tenths": None,
+    }
+    values[field] = value
+    return _setting_label(**values)
+
+
 class Valve:
     """One Anthem digital valve, with everything the coordinator keeps for it.
 
@@ -659,7 +800,7 @@ class Valve:
         # CUSTOM SHOWER: the "No pausing warm-up" watcher, one at a time, and
         # a serial that every command sent from here bumps, so the watcher can tell that
         # something else was sent after its own write. See `konnect/warmup_resume.py`.
-        self._custom_shower_task: asyncio.Task | None = None
+        self._custom_shower_task: asyncio.Future[Any] | None = None
         # **Every task this valve starts is held here so `stop()` can cancel it.** A
         # warm-up restore sleeps for a minute and then writes to the hardware, so one
         # surviving an unload means an HTTP write, and a config-entry mutation, from a
@@ -671,21 +812,58 @@ class Valve:
         # undo each other: `switch.turn_on` on two outlets opened one, and an outlet toggle
         # followed within the echo's ~2 s by a temperature change closed it again. The lock
         # serialises every command that sets the valve's words; `_sent_words` is what the
-        # last one sent, the next one's baseline until the valve reports — see
-        # `_valve_baseline`. `_sent_over` is the reported pair it was sent over.
+        # last one sent — the next one's baseline for `_sent_hold_seconds`, narrowed by any
+        # report since, and the shower a warm-up is warming up — see `_valve_baseline`.
+        # `_sent_over` is the reported pair when it was asked for, read before its POST.
         self._valve_write_lock = asyncio.Lock()
         self._sent_words: tuple[Any, Any] | None = None
         self._sent_over: tuple[Any, Any] = (None, None)
         self._sent_at = 0.0
         # The echo lands 1.1-2.1 s after the POST returns (measured), so this covers it
-        # with room to spare while keeping anything done at the wall from being masked for
-        # long. Any report ends it sooner.
+        # with room to spare while keeping anything done at the wall from being narrowed
+        # away for long. A report inside it narrows the words rather than ending them.
         self._sent_hold_seconds = 5.0
+        # Bumped by every command that decides the valve's words (`_note_local_write`) —
+        # a word write, a preset, a restart, a controller's command — and by nothing else,
+        # so a word write can tell that one landed while its own POST was in flight. The
+        # custom-shower watcher's `_local_write_serial` counts outlet settings as well.
+        self._words_serial = 0
+        # Bumped the moment a Stop is asked for, before it waits for the lock: every
+        # command asked for before it steps aside when its turn comes. See
+        # `async_stop_shower`.
+        self._stop_generation = 0
         # OUTLET SETTINGS, the same rule for `writeoutletconfig` chains: one at a time, and
         # a serial each bumps so a delayed read-back can tell another landed since. See
         # `async_write_outlet_setting`.
         self._outlet_write_lock = asyncio.Lock()
         self._outlet_write_serial = 0
+        # Each outlet setting written from here, by `OutletLimits` field, with the value
+        # written — until a read-back shows it on every outlet. A read the cloud has not
+        # caught up with must not put the old value back in the cache the next write
+        # echoes; see `_adopt_outlet_read`.
+        self._outlet_unconfirmed: dict[str, int] = {}
+        # Those of them a read past the catch-up window still contradicts, with the value
+        # it showed: no other outlet setting may be written until each is settled, since
+        # every write re-sends it. See `_settle_outlet_fields`.
+        self._outlet_disputed: dict[str, int | None] = {}
+        # What the valve last reported for each outlet — announced over MQTT or read — and
+        # when it last announced it (monotonic, as the message arrived): a `gcs-settings`
+        # read sent within the catch-up window after an announcement can still show what
+        # came before, so the announcement stands for that outlet. See `_reported_outlets`.
+        self._outlet_reported: dict[int, Any] = {}
+        self._outlet_announced_at: dict[int, float] = {}
+        # The fields of each outlet's latest announcement taken for a late echo: a guess,
+        # so a read decides them. See `_note_outlet_announcement`.
+        self._outlet_guessed: dict[int, frozenset[str]] = {}
+        # Until when the outlet records cannot be vouched for (monotonic): the stream has
+        # just come back, and a change it missed may not show in the cloud's copy yet.
+        # Outlet writes wait it out, then read first; see `note_stream_gap`.
+        self._outlets_unsure_until: float | None = None
+        # The values each outlet setting written from here replaced, and any it was set to
+        # just before, within the catch-up window: an announcement inside it showing one is
+        # a late echo, and one showing anything else a change made elsewhere. See
+        # `_note_outlet_announcement`.
+        self._outlet_superseded: dict[str, set[int | None]] = {}
         # When the latest outlet write began (monotonic), so a reseed's `gcs-settings` read
         # inside the cloud's catch-up window cannot put the old values back. See
         # `_outlet_limits_settled`.
@@ -701,14 +879,27 @@ class Valve:
         self._zone_clock = ZoneClock()
         # Whether the valve's own outlet split has been read yet — see `async_seed`.
         self._topology_checked = False
-        # Messages applied that carry what `gcs-state` carries (`_GCS_STATE_CODES`). Read
-        # before that GET and compared after it: a push that landed in between is newer than
-        # the reply, which `gcs-state` serves seconds behind the device. See
-        # `_async_seed_topology_and_state`.
-        self._push_serial = 0
-        #: The valve's active faults from its `gcs-diagnostics` log, re-read on every seed —
-        #: code, area, valve and timestamp only. What the Problem sensor turns on for; see
-        #: `async_refresh_faults`.
+        # Whether its settings and its presets have answered since setup; see
+        # `seed_incomplete`.
+        self._settings_read = self._presets_read = False
+        # Messages applied that carry part of what `gcs-state` carries, counted per field
+        # (`GcsState.carried`; `_GCS_WORD_FIELDS`, `_GCS_SESSION_FIELDS`, `warmup_mode`).
+        # Read before that GET and compared after it: a field a push carried in between is
+        # newer than the reply, which `gcs-state` serves seconds behind the device, and the
+        # rest of the reply still applies. See `apply_rest_reply`; the warm-up manager's own
+        # read of the mode compares "warmup_mode".
+        self._push_serials: Counter[str] = Counter()
+        # When each of those fields was last reported (monotonic, as the message arrived):
+        # a read sent within `_GCS_STATE_TRAILS_SECONDS` of it can answer from before it.
+        self._reported_at: dict[str, float] = {}
+        #: The stream connection (`KohlerKonnectCoordinator.stream_connects`) the last
+        #: successful `gcs-state` read was sent under — 0 before the stream first connected,
+        #: None until a read has succeeded. How the first connect tells which reads it
+        #: covers; see `KohlerKonnectCoordinator._handle_connected`.
+        self.state_read_on: int | None = None
+        #: The valve's active faults from its `gcs-diagnostics` log, re-read on every seed
+        #: and twice a day — code, area, valve and timestamp only. What the Problem sensor
+        #: turns on for; see `async_refresh_faults`.
         self.active_faults: list[dict[str, Any]] = []
         # The `gcs-configuration` record, read once at the first seed. None means "not read
         # yet"; `{}` means the read was attempted and produced nothing usable, which is the
@@ -959,28 +1150,46 @@ class Valve:
     # Lifecycle, driven by the coordinator
     # ------------------------------------------------------------------ #
     def _note_local_write(self) -> None:
-        """Count a command sent from this integration to this valve.
+        """Count a command sent from this integration that decides this valve's words.
 
         Read by the custom-shower watcher: if the serial has moved since its own write,
         something else was sent in the meantime and the watcher must not resume on top
         of it. Controller commands bump every valve's serial through the coordinator, since
         which valve a controller fronts is not knowable from the cloud.
 
-        **Also drops the last-sent words** (`_valve_baseline`). Most commands counted here —
-        a preset, a controller favorite, a restart — decide the valve's words next, so the
-        last ones written from here no longer describe them; for the rest, falling back to
-        the report costs nothing. A word write re-arms the overlay once its own POST has
-        landed.
+        **Also drops the last-sent words** (`_valve_baseline`) and counts against
+        `_words_serial`. Most commands counted here — a preset, a controller favorite, a
+        restart — decide the valve's words next, so the last ones written from here no
+        longer describe them; for the rest, falling back to the report costs nothing. A
+        word write re-arms the overlay once its own POST has landed, and puts back what it
+        was built on, narrowed by it, if that POST fails (`_async_send_words`).
+
+        **An outlet setting is not counted here** (2026-10-16): it changes no word, so it
+        bumps the watcher's serial alone. Coming through here, it dropped the words a write
+        had just sent — the next temperature change inside the echo's round trip closed the
+        outlet just opened — and kept a word write in flight from arming them at all.
         """
         self._local_write_serial += 1
+        self._words_serial += 1
         self._sent_words = None
 
     def handle_envelope(self, envelope: Envelope) -> bool:
         """Apply one of this valve's MQTT messages. True if anything changed."""
-        was_warmup = self.gcs_state.warmup_mode
-        changed = self.gcs_state.apply_envelope(envelope)
-        if changed and envelope.code in _GCS_STATE_CODES:
-            self._push_serial += 1
+        state = self.gcs_state
+        was_warmup = state.warmup_mode
+        outlets = dict(state.outlet_limits)
+        changed = state.apply_envelope(envelope)
+        # When it arrived, not when it is handled: one held until the devices were known is
+        # handled seconds late, and stamped then it kept a read's words over a Stop at the
+        # panel made in between (2026-10-16).
+        arrived = envelope.received_monotonic
+        if envelope.code == MSG_GCS_OUTLET_CONFIG:
+            self._note_outlet_announcement(outlets, at=arrived)
+        for field in state.carried:
+            self._push_serials[field] += 1
+            self._reported_at[field] = max(
+                arrived, self._reported_at.get(field, arrived)
+            )
         self._handle_warmup_mode_change(
             was_warmup,
             self.gcs_state.warmup_mode,
@@ -1136,7 +1345,7 @@ class Valve:
         layout on every valve but the first, permanently. Returning the answer lets the next
         reconnect try again. The decode is fixed immediately; entities already built from
         the old layout are not, so a change found after the platforms loaded reloads the
-        entry — see `KohlerKonnectCoordinator._async_note_valve_topology`.
+        entry — see `KohlerKonnectCoordinator._async_note_topology`.
         """
         detected = topology_from_valve_settings(settings)
         if not detected:
@@ -1206,11 +1415,17 @@ class Valve:
         anything reported re-sent the *old* scald limit with the new duration, silently
         undoing the first write. Two writes could also interleave their per-outlet chains.
         Fixed 2026-10-16: the whole chain runs under `_outlet_write_lock`, and each outlet's
-        cached record takes the written fields as soon as its POST is accepted.
+        cached record takes the written fields as soon as its POST is accepted — and keeps
+        them against any read the cloud has not caught up with (`_adopt_outlet_read`).
 
         **Default above maximum is refused before anything is sent**, checked against every
         outlet: the client refuses it per outlet too, but only when it reaches that outlet,
-        which used to leave the earlier ones written and a message saying so.
+        which used to leave the earlier ones written and a message saying so. **So is every
+        other refusal** — an unread field, a value outside the ranges the write accepts —
+        through the client's own `validate_outlet_record`, run on every outlet first.
+
+        Counted for the custom-shower watcher, but **not** as a command that decides the
+        valve's words (`_note_local_write`): the words this integration last sent stand.
         """
         changes = {
             name: value
@@ -1228,6 +1443,35 @@ class Valve:
                     f"{self.name} has not reported its outlet configuration yet, so "
                     "there is nothing to write back. Try again once it has."
                 )
+            # 🚨 **Not over a setting the valve has not confirmed** (2026-10-16). This write
+            # re-sends every other field from the cache, and one written from here that no
+            # read has confirmed may since have been set differently in the app — a scald
+            # limit lowered there among them. Sending it again on the back of an unrelated
+            # change is how such a limit was loosened. So one still unconfirmed past the
+            # catch-up window is read again first, and if the valve's cloud still shows
+            # something else the write is refused until the owner settles it, by setting
+            # that one again.
+            await self._async_confirm_outlet_fields(changes)
+            others = [field for field in self._outlet_disputed if field not in changes]
+            if others and (
+                not any(field in self._outlet_disputed for field in changes)
+                or any(o not in self._outlet_reported for o in limits)
+            ):
+                field = others[0]
+                raise HomeAssistantError(
+                    f"Nothing was written to {self.name}: "
+                    f"{_field_label(field, self._outlet_unconfirmed.get(field))} was set "
+                    "from Home Assistant, but the valve still reports "
+                    f"{_field_label(field, self._outlet_disputed[field])}, and every "
+                    "outlet setting sends the others with it. Set "
+                    f"{_field_label(field, None)} again first, then this one."
+                )
+            # Setting a disputed one again, any other goes as the valve reports it, not as
+            # set from here: refused for it instead, two disputed settings each waited on
+            # the other, and no outlet setting could be written until a restart
+            # (2026-10-16).
+            for field in others:
+                self._drop_outlet_field(field)
             for outlet_id in sorted(limits):
                 record = limits[outlet_id]
                 maximum = changes.get(
@@ -1244,9 +1488,41 @@ class Valve:
                         f"of {maximum / 10:.1f} °C, which the valve refuses. Lower "
                         "Default Temperature first, or raise Max Temperature."
                     )
-            self._note_local_write()
+            # Every other refusal, on every outlet, before the first is written: an
+            # out-of-range flow ceiling on outlet 3 left outlets 1 and 2 written.
+            for outlet_id in sorted(limits):
+                try:
+                    validate_outlet_record(
+                        limits[outlet_id],
+                        maximum_run_time=maximum_run_time,
+                        maximum_temperature_tenths=maximum_temperature_tenths,
+                        default_temperature_tenths=default_temperature_tenths,
+                    )
+                except KohlerError as err:
+                    raise HomeAssistantError(
+                        f"Nothing was written to {self.name}: outlet "
+                        f"{self._outlet_label(outlet_id)}'s record would be refused, so "
+                        f"no outlet was changed. ({err})"
+                    ) from err
+            # The watcher's count only: an outlet record is not the valve's words, so
+            # `_note_local_write`, which drops the words last sent, is not for this.
+            self._local_write_serial += 1
             self._outlet_write_serial += 1
-            self._outlet_written_at = time.monotonic()
+            now = time.monotonic()
+            if (
+                self._outlet_written_at is None
+                or now - self._outlet_written_at >= OUTLET_WRITE_VERIFY_DELAY_SECONDS
+            ):
+                self._outlet_superseded.clear()  # nothing older can still be on its way
+            for field in changes:
+                replaced = self._outlet_superseded.setdefault(field, set())
+                replaced.update(getattr(record, field) for record in limits.values())
+                # And what the valve reports, which for a setting not yet confirmed — the
+                # re-set a dispute asks for — is not what the cache holds (2026-10-16).
+                replaced.update(
+                    getattr(record, field) for record in self._outlet_reported.values()
+                )
+            self._outlet_written_at = now
             serial = self._outlet_write_serial
 
             written: list[int] = []
@@ -1284,6 +1560,11 @@ class Valve:
                     ) from err
                 finally:
                     if written:
+                        # Until a read-back shows it, no read may put the old value back.
+                        self._outlet_unconfirmed.update(changes)
+                        # Set again, so whatever disputed it is answered.
+                        for field in changes:
+                            self._outlet_disputed.pop(field, None)
                         self.coordinator.async_refresh_entities()
 
             # **Not awaited.** See the docstring: the wait is what made the entity
@@ -1330,11 +1611,32 @@ class Valve:
         read replaces the cached records only if no outlet write has happened since: lagging
         by up to 25 s, it can still carry what a later write replaced, and the cache is what
         the next write echoes back.
+
+        🚨 **Even then it does not replace a value written from here that it does not show
+        yet** (`_adopt_outlet_read`, 2026-10-16). It used to replace everything and decide
+        it was stale afterwards: Max Temperature lowered to 43.3 °C, the cloud still saying
+        47.7 °C at this read, put 47.7 back in the cache — and the next setting written,
+        Max Shower Duration, re-sent it to every outlet. **And each setting has its own
+        repair issue**, cleared only by its own check: with one per valve, that duration's
+        successful check deleted the scald limit's warning, so the limit was loosened
+        silently.
         """
         setting = _setting_label(
             maximum_run_time, maximum_temperature_tenths, default_temperature_tenths
         )
+        wanted = {
+            field: value
+            for field, value in (
+                ("maximum_run_time", maximum_run_time),
+                ("maximum_temperature_tenths", maximum_temperature_tenths),
+                ("default_temperature_tenths", default_temperature_tenths),
+            )
+            if value is not None
+        }
+        # The same key `async_write_outlet_setting` files this check under.
+        fields = tuple(wanted)
         await asyncio.sleep(OUTLET_WRITE_VERIFY_DELAY_SECONDS)
+        requested_at = time.monotonic()
         try:
             settings = await self.client.async_get_gcs_settings(
                 self.gcs_device.device_id
@@ -1343,68 +1645,402 @@ class Valve:
             if credential_is_dead(err):
                 self.coordinator._handle_auth_error(err)
             self._raise_write_issue(
-                setting, f"Reading the value back from {self.name} failed: {err}"
+                fields,
+                setting,
+                f"Reading the value back from {self.name} failed: {err}",
             )
             return
 
         fresh = outlet_limits_from_settings(settings)
         if not fresh:
             self._raise_write_issue(
+                fields,
                 setting,
                 f"{self.name} reported no outlet configuration to check the change "
                 "against.",
             )
             return
+        fresh = self._reported_outlets(fresh, requested_at)
         if self._outlet_write_serial == serial:
-            self.gcs_state.outlet_limits.update(fresh)
+            self._adopt_outlet_read(fresh)
+            self._outlets_caught_up(requested_at)
             # The read is fresher than anything shown, so show it now rather than waiting
             # for the valve's own outlet-config announcement.
             self.coordinator.async_refresh_entities()
+        # Whatever this read shows on every outlet is confirmed, this write's or another's,
+        # and from now on a read may replace it. A value it contradicts stays unconfirmed
+        # rather than disputed: right at the catch-up window, a lagging cloud is the likely
+        # reason, and the next write of another setting reads again before it sends it.
+        self._settle_outlet_fields(fresh, dispute=False)
 
-        wanted = {
-            "maximum_run_time": maximum_run_time,
-            "maximum_temperature_tenths": maximum_temperature_tenths,
-            "default_temperature_tenths": default_temperature_tenths,
-        }
         stale = [
             self._outlet_label(outlet_id)
             for outlet_id, limit in sorted(fresh.items())
             for field, value in wanted.items()
-            if value is not None and getattr(limit, field) != value
+            if getattr(limit, field) != value
         ]
         if stale:
             self._raise_write_issue(
+                fields,
                 setting,
                 f"{self.name} is still reporting the old value on outlet(s) "
                 f"{', '.join(stale)}.",
             )
             return
-        # Verified: clear any warning left by an earlier attempt.
-        self._clear_write_issue()
+        # Verified: clear this setting's warning, left by an earlier attempt — and only
+        # this setting's.
+        self._clear_write_issue(fields)
 
-    @property
-    def _write_issue_id(self) -> str:
-        """One issue per valve, so two valves cannot overwrite each other's warning."""
-        return f"outlet_write_unverified_{device_issue_key(self.device_id)}"
+    def _adopt_outlet_read(self, fresh: dict[int, Any]) -> None:
+        """Take a `gcs-settings` read into the cached outlet records, except what it undoes.
 
-    def _clear_write_issue(self) -> None:
-        """Drop any standing warning — a verified write means the last one is stale."""
-        ir.async_delete_issue(self.hass, DOMAIN, self._write_issue_id)
+        The read replaces each outlet's record — it is fresher than anything shown for a
+        field this integration has not written, a change made in the app, say. **Not for
+        a field written from here that it does not show yet** (`_outlet_unconfirmed`): the
+        cloud document trails a write by up to ~25 s, sometimes longer, and the cache is
+        what the next outlet write echoes to every outlet. Such a field keeps whatever the
+        cache holds — the value written, or what the valve has announced over MQTT since,
+        which is the device's own word.
 
-    def _raise_write_issue(self, setting: str, detail: str) -> None:
+        The reseed's read (`_async_seed_topology_and_state`) comes through here too, once
+        `_outlet_limits_settled` allows it at all. Every read is taken as the valve reports
+        it first (`_reported_outlets`).
+        """
+        cache = self.gcs_state.outlet_limits
+        for outlet_id, record in fresh.items():
+            cached = cache.get(outlet_id)
+            keep = {
+                field: getattr(cached, field)
+                for field, value in self._outlet_unconfirmed.items()
+                if cached is not None and getattr(record, field) != value
+            }
+            cache[outlet_id] = dataclasses.replace(record, **keep) if keep else record
+
+    def _reported_outlets(
+        self, fresh: dict[int, Any], requested_at: float
+    ) -> dict[int, Any]:
+        """A `gcs-settings` read's outlets, each as the valve last reported it.
+
+        The read's own record, except for an outlet the valve announced within the cloud's
+        catch-up window (`OUTLET_WRITE_VERIFY_DELAY_SECONDS`) before the read was sent: the
+        document can still show what came before, and the announcement is the device's own
+        word. 🚨 **Taken as it came, a read put the old values back** (2026-10-16): the app
+        lowered Max Temperature to 40.0 °C, the valve announced it, and a read seconds later
+        — the check before a duration write — still said 47.7 °C. That went into the cache,
+        and the write sent it to every outlet; it could confirm a value of Home Assistant's
+        the announcement had just disputed, too, clearing the dispute. ``requested_at`` is
+        when the read was sent (monotonic).
+        """
+        cutoff = requested_at - OUTLET_WRITE_VERIFY_DELAY_SECONDS
+        view: dict[int, Any] = {}
+        for outlet_id, record in fresh.items():
+            reported = self._outlet_reported.get(outlet_id)
+            if (
+                reported is not None
+                and self._outlet_announced_at.get(outlet_id, cutoff) > cutoff
+            ):
+                # The announcement's own word; what it was guessed to echo, the read's.
+                guessed = self._outlet_guessed.get(outlet_id, frozenset())
+                record = dataclasses.replace(
+                    reported, **{field: getattr(record, field) for field in guessed}
+                )
+            view[outlet_id] = record
+        self._outlet_reported.update(view)
+        return view
+
+    def _drop_outlet_field(self, field: str) -> None:
+        """Give up a disputed setting written from here: each outlet takes what it reports.
+
+        For a write of another disputed setting; see `async_write_outlet_setting`. Sent as
+        the valve reports it, the setting changes nothing there.
+        """
+        limits = self.gcs_state.outlet_limits
+        for outlet_id, record in limits.items():
+            limits[outlet_id] = dataclasses.replace(
+                record, **{field: getattr(self._outlet_reported[outlet_id], field)}
+            )
+        written = self._outlet_unconfirmed.pop(field, None)
+        reported = self._outlet_disputed.pop(field, None)
+        self._outlet_superseded.pop(field, None)
+        self._clear_write_issue((field,))
+        _LOGGER.warning(
+            "%s set from Home Assistant was never taken up by %s, which reports %s: "
+            "dropped, so that outlet settings send it as the valve reports it",
+            _field_label(field, written),
+            self.name,
+            _field_label(field, reported),
+        )
+
+    def _settle_outlet_fields(
+        self, fresh: dict[int, Any], *, dispute: bool = True
+    ) -> None:
+        """Confirm, or dispute, each outlet setting written from here against a read.
+
+        **Confirmed** when the read shows the value written on every outlet: from then on
+        a read may replace it. **Disputed** when a read made after the cloud's catch-up
+        window (`OUTLET_WRITE_VERIFY_DELAY_SECONDS`) still shows something else
+        (2026-10-16). Nothing here can tell why — a cloud still behind, a valve that did not
+        apply it, or a change made in the app since, a lower scald limit perhaps — so the
+        cache keeps the value written, and no *other* outlet setting may be written while
+        it stands (`async_write_outlet_setting`), since each would send it again. Before
+        this a field the cloud never confirmed stayed unconfirmed for good: every later
+        read kept it out, and the next unrelated write re-sent it over whatever the app
+        had set. Settled by a read that shows it, or by setting it again.
+
+        ``fresh`` is a REST read or a valve announcement's outlets (`OutletLimits` by
+        outlet id); an announcement carries one outlet, so it can dispute but never
+        confirm. ``dispute`` False confirms only — for the write's own read-back, whose
+        warning covers a value it does not show yet. A new dispute raises the setting's
+        repair issue.
+        """
+        outlets = self.gcs_state.outlet_limits
+        written_at = self._outlet_written_at
+        settled = (
+            written_at is None
+            or time.monotonic() - written_at >= OUTLET_WRITE_VERIFY_DELAY_SECONDS
+        )
+        for field, value in list(self._outlet_unconfirmed.items()):
+            shown = [getattr(fresh[o], field) for o in outlets if o in fresh]
+            if len(shown) == len(outlets) and all(v == value for v in shown):
+                del self._outlet_unconfirmed[field]
+                self._outlet_disputed.pop(field, None)
+                self._outlet_superseded.pop(field, None)
+                # Applied after all, so its "may not have been applied" goes too.
+                self._clear_write_issue((field,))
+                continue
+            other = next((v for v in shown if v != value), None)
+            if (
+                not dispute
+                or not settled
+                or other is None
+                or field in self._outlet_disputed
+            ):
+                continue
+            self._outlet_disputed[field] = other
+            self._raise_write_issue(
+                (field,),
+                _field_label(field, value),
+                f"{self.name} still reports {_field_label(field, other)} well after the "
+                "change. Until it is set again, no other outlet setting can be changed "
+                "from Home Assistant, because each change sends this one with it — "
+                "except another that disagrees the same way, which sends this one as "
+                "the valve reports it.",
+            )
+
+    async def _async_confirm_outlet_fields(self, changes: dict[str, int]) -> None:
+        """Read the outlet records again before a write re-sends what may be stale.
+
+        For a field written from here, not part of this write, and still unconfirmed past
+        the catch-up window — inside it the value written is what the valve is about to
+        show, and re-sending it is right. Costs one `gcs-settings` read in that rare state,
+        and settles it: a read that shows the value confirms it and the write goes ahead;
+        one that shows another disputes it (`_settle_outlet_fields`).
+
+        **And while the stream cannot vouch for the records** (2026-10-16): down, when a
+        change made in the app is never announced, or just back, when one made in the gap
+        may not reach the cloud's copy for the catch-up window (`note_stream_gap`) — a
+        write then waits that out, and reads first. Called with `_outlet_write_lock` held.
+        """
+        now = time.monotonic()
+        unsure = self._outlets_unsure_until
+        if unsure is not None and now < unsure:
+            raise HomeAssistantError(
+                f"Nothing was written to {self.name}: the connection to Kohler has just "
+                "come back, and a change made in the Konnect app meanwhile may not show "
+                "yet. Every outlet setting sends the others with it, so try again in "
+                f"{int(unsure - now) + 1} s."
+            )
+        stream = self.coordinator.stream
+        unannounced = unsure is not None or stream is None or not stream.connected
+        written_at = self._outlet_written_at
+        if not unannounced and (
+            written_at is None
+            or now - written_at < OUTLET_WRITE_VERIFY_DELAY_SECONDS
+            or not any(field not in changes for field in self._outlet_unconfirmed)
+        ):
+            return
+        requested_at = now
+        try:
+            settings = await self.client.async_get_gcs_settings(
+                self.gcs_device.device_id
+            )
+        except (AuthError, KohlerError) as err:
+            if credential_is_dead(err):
+                self.coordinator._handle_auth_error(err)
+            self._refuse_unchecked(
+                changes, f"checking it first failed ({err})", err, always=unannounced
+            )
+            return
+        fresh = outlet_limits_from_settings(settings)
+        if not fresh:
+            # Nothing to check it against is no check: sent again on that, it went out
+            # unchecked (2026-10-16).
+            self._refuse_unchecked(
+                changes,
+                "the valve reported no outlet configuration to check it against",
+                always=unannounced,
+            )
+            return
+        fresh = self._reported_outlets(fresh, requested_at)
+        self._adopt_outlet_read(fresh)
+        self._outlets_caught_up(requested_at)
+        self._settle_outlet_fields(fresh)
+
+    def note_stream_gap(self) -> None:
+        """The stream is back after a gap, in which an announcement may have been missed.
+
+        Nothing replays one, and the cloud's copy can take the catch-up window to show the
+        change it was for. A reconnect's read could still show the old value, or an
+        announcement from before the gap stand in for one that showed the new
+        (`_reported_outlets`), and the next write sent the old scald limit to every outlet
+        (2026-10-16). So outlet writes wait out the window, and the first after it reads
+        the records again (`_async_confirm_outlet_fields`).
+        """
+        self._outlets_unsure_until = (
+            time.monotonic() + OUTLET_WRITE_VERIFY_DELAY_SECONDS
+        )
+
+    def _outlets_caught_up(self, requested_at: float) -> None:
+        """A read taken in: sent once `_outlets_unsure_until` is over, it vouches again."""
+        until = self._outlets_unsure_until
+        if until is not None and requested_at >= until:
+            self._outlets_unsure_until = None
+
+    def _refuse_unchecked(
+        self,
+        changes: dict[str, int],
+        why: str,
+        err: Exception | None = None,
+        *,
+        always: bool = False,
+    ) -> None:
+        """Refuse a write over a setting still unconfirmed, which could not be checked.
+
+        Unless the write's own read-back has confirmed it meanwhile: then there is nothing
+        left to check, and the write goes ahead. Asking for the next one regardless raised
+        `StopIteration` out of the coroutine (2026-10-16). ``always`` refuses whatever is
+        unconfirmed: the read was for the records as a whole.
+        """
+        pending = next((f for f in self._outlet_unconfirmed if f not in changes), None)
+        if pending is None and always:
+            raise HomeAssistantError(
+                f"Nothing was written to {self.name}: with no word from the valve "
+                f"meanwhile, its outlet settings are read first, and {why}. Every outlet "
+                "setting sends the others with it, so try again shortly."
+            ) from err
+        if pending is None:
+            return
+        raise HomeAssistantError(
+            f"Nothing was written to {self.name}: "
+            f"{_field_label(pending, self._outlet_unconfirmed[pending])} set from "
+            f"Home Assistant has not been confirmed yet, and {why}. Every outlet "
+            "setting sends the others with it, so try again shortly."
+        ) from err
+
+    def _note_outlet_announcement(self, before: dict[int, Any], *, at: float) -> None:
+        """Hold the valve's outlet-config announcement to the same rule as a read.
+
+        `GcsState` takes an announcement into the cache as it comes, one outlet at a time,
+        and it is the device's own word — but it is not always the latest one: two saves a
+        second apart, and the announcement of the first could land after the second was
+        sent, putting the value it replaced back in the cache the next write echoes
+        (2026-10-16). Inside the catch-up window a value written from here therefore stands
+        against such a late echo — **only against one** (2026-10-16): a value the setting
+        held before, not one set in the app meanwhile, which the next write echoed back
+        over the app's. Past the window, a disagreeing announcement disputes the field, as
+        a read would (`_settle_outlet_fields`). ``before`` is the cache before the message;
+        ``at`` is when it arrived (monotonic). What it leaves in the cache is what the valve
+        reports for the outlet, for reads sent soon after (`_reported_outlets`).
+        """
+        outlets = self.gcs_state.outlet_limits
+        written_at = self._outlet_written_at
+        settled = (
+            written_at is None
+            or time.monotonic() - written_at >= OUTLET_WRITE_VERIFY_DELAY_SECONDS
+        )
+        announced = {
+            outlet_id: record
+            for outlet_id, record in outlets.items()
+            if record is not before.get(outlet_id)
+        }
+        guessed: dict[int, frozenset[str]] = {}
+        if announced and self._outlet_unconfirmed and not settled:
+            for outlet_id, record in announced.items():
+                old = before.get(outlet_id)
+                if old is None:
+                    continue
+                keep = {
+                    field: getattr(old, field)
+                    for field, value in self._outlet_unconfirmed.items()
+                    if getattr(record, field) != value
+                    and getattr(record, field) in self._outlet_superseded.get(field, ())
+                }
+                if keep:
+                    outlets[outlet_id] = dataclasses.replace(record, **keep)
+                    guessed[outlet_id] = frozenset(keep)
+        for outlet_id, record in announced.items():
+            # What the valve said, and when. 🚨 **Not a field taken for a late echo**
+            # (2026-10-16): that is a guess, and a read must still be able to show it
+            # wrong. Kept as the outlet's report, it stood in for the cloud at the
+            # read-back, which never saw the cloud's value: a write the valve ignored
+            # counted as confirmed, and a limit set back in the app was loosened again
+            # by the next write. Only that field — dropping the whole record let a read
+            # still behind put back what the same save had changed in another.
+            self._outlet_reported[outlet_id] = record
+            self._outlet_announced_at[outlet_id] = at
+            self._outlet_guessed[outlet_id] = guessed.get(outlet_id, frozenset())
+        if announced and self._outlet_unconfirmed and settled:
+            self._settle_outlet_fields(
+                {outlet_id: outlets[outlet_id] for outlet_id in announced}
+            )
+
+    def _write_issue_id(self, fields: tuple[str, ...]) -> str:
+        """One issue per valve **and per setting**, so none overwrites another's warning.
+
+        Per setting since 2026-10-16: one per valve let any setting that verified delete the
+        warning another had raised. The device's key stays last, which is how removing the
+        entry finds its devices' issues (`async_remove_entry`).
+        """
+        setting = "_".join(fields)
+        return f"outlet_write_unverified_{setting}_{device_issue_key(self.device_id)}"
+
+    def _clear_write_issue(self, fields: tuple[str, ...]) -> None:
+        """Drop one setting's warning — a verified write means its last one is stale."""
+        ir.async_delete_issue(self.hass, DOMAIN, self._write_issue_id(fields))
+
+    def forget_outlet_write_issues(self) -> None:
+        """Drop every outlet-setting warning a previous run left for this valve.
+
+        Repair issues outlive a restart; what they are about does not. One saying no other
+        outlet setting can be changed until this one is set again stayed up after a restart
+        had let them all be changed again (2026-10-16).
+        """
+        prefix = "outlet_write_unverified_"
+        suffix = f"_{device_issue_key(self.device_id)}"
+        for domain, issue_id in list(ir.async_get(self.hass).issues):
+            if (
+                domain == DOMAIN
+                and issue_id.startswith(prefix)
+                and issue_id.endswith(suffix)
+            ):
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+
+    def _raise_write_issue(
+        self, fields: tuple[str, ...], setting: str, detail: str
+    ) -> None:
         """Surface an unverified write where the user will actually see it."""
         _LOGGER.warning("%s — %s", setting, detail)
         ir.async_create_issue(
             self.hass,
             DOMAIN,
-            self._write_issue_id,
+            self._write_issue_id(fields),
             is_fixable=False,
             severity=ir.IssueSeverity.WARNING,
             translation_key="outlet_write_unverified",
             translation_placeholders={"setting": setting, "detail": detail},
         )
 
-    def _seed_independent_reads(self) -> asyncio.Future[list[None]]:
+    def _seed_independent_reads(self) -> asyncio.Future[list[Any]]:
         """Start the seed reads that depend on nothing, so they overlap the ones that do.
 
         `gcs-configuration`, the two `gcs-usage` series, `about` and `gcs-preset` are
@@ -1414,13 +2050,18 @@ class Valve:
         from every cold start.
 
         Started rather than awaited inline so the caller can keep working (`gather` schedules
-        both at once); every read inside is individually guarded, so one failure cannot
-        blank the others and nothing here can fail setup. Cancellation-safe: the caller
-        always awaits it.
+        both at once); every read inside is individually guarded against `KohlerError`, so
+        one failure cannot blank the others. Cancellation-safe: the caller always awaits it.
+
+        ⚠️ **Failures are collected, not raised** (2026-10-16). The token layer raises
+        `AuthError`, which none of those guards catches, and a plain `gather` raised it at
+        once and left the sibling read running against a setup that had already failed.
+        The caller raises the first once both have finished; see `_raise_first`.
         """
         return asyncio.gather(
             self._async_seed_configuration(),
             self._async_seed_presets(),
+            return_exceptions=True,
         )
 
     async def _async_seed_configuration(self) -> None:
@@ -1439,7 +2080,8 @@ class Valve:
         daily refresh retries the monthly series too; see `async_refresh_daily_usage`.
 
         Entirely diagnostic; a failure is logged and setup continues. All of it overlaps,
-        since none of it depends on the rest.
+        since none of it depends on the rest — and all of it finishes before a sign-in
+        failure from any of it is raised, for the reason `_seed_independent_reads` gives.
         """
         reads: list[Coroutine[Any, Any, None]] = []
         if self.configuration is None:
@@ -1454,7 +2096,7 @@ class Valve:
             reads.append(self.async_refresh_monthly_usage())
         if not self.about_parts:
             reads.append(self._async_read_about())
-        await asyncio.gather(*reads)
+        _raise_first(await asyncio.gather(*reads, return_exceptions=True))
 
     async def _async_read_configuration(self) -> None:
         """Read `gcs-configuration` once; a failure latches `{}`."""
@@ -1480,11 +2122,9 @@ class Valve:
 
     async def async_refresh_monthly_usage(self) -> None:
         """Read the per-month usage series (`Interval=MONTH`, 400 days back)."""
-        now = datetime.now(UTC)
+        from_date, to_date = _usage_window(400)
         fresh = await self.client.async_get_usage(
-            self.gcs_device.device_id,
-            from_date=(now - timedelta(days=400)).date().isoformat(),
-            to_date=now.date().isoformat(),
+            self.gcs_device.device_id, from_date=from_date, to_date=to_date
         )
         # `async_get_usage` returns `{}` on a transient HTTP failure; only overwrite
         # `self.usage` when the read succeeds (or on cold start when nothing is held yet),
@@ -1513,39 +2153,63 @@ class Valve:
         ``monthly`` False leaves the monthly series alone, for a caller that is reading it
         alongside this one — the first seed, and a manual refresh whose seed is retrying it.
         """
-        now = datetime.now(UTC)
+        # When a shower ends in a new local calendar month after initial seed, re-read the
+        # monthly series once so the newly completed month is locked into `self.usage`
+        # before the 35-day daily window rolls past its start — and while the monthly
+        # series has never been read successfully at all, read it here too, rather than
+        # leaving it lost until a restart.
+        #
+        # ⚠️ **Before the daily series, not after it** (2026-10-16). Each month counts the
+        # larger of the two series' figures (`water._month_totals`), and the new daily
+        # window can start part-way into last month — so swapped in first, it lowered last
+        # month, and `Water Used This Year` with it, until the monthly read landed. With the
+        # monthly figure in place first the swap cannot lower a month; only a monthly read
+        # that fails leaves last month short, until the next one answers.
+        seeded_month = self._usage_seeded_month
+        if monthly and (
+            seeded_month is None or dt_util.now().strftime("%Y-%m") != seeded_month
+        ):
+            await self.async_refresh_monthly_usage()
+        from_date, to_date = _usage_window(35)
         fresh = await self.client.async_get_usage(
             self.gcs_device.device_id,
-            from_date=(now - timedelta(days=35)).date().isoformat(),
-            to_date=now.date().isoformat(),
+            from_date=from_date,
+            to_date=to_date,
             interval="DAY",
         )
         # Keep the prior daily series if a post-shower read transiently returns `{}`, so
         # `Water Used Today` and `Water Used This Week` do not blank to `unknown`.
         if fresh or not self.usage_daily:
             self.usage_daily = fresh
-        # When a shower ends in a new local calendar month after initial seed, re-read the
-        # monthly series once so the newly completed month is locked into `self.usage`
-        # before the 35-day daily window rolls past its start — and while the monthly
-        # series has never been read successfully at all, read it here too, rather than
-        # leaving it lost until a restart.
-        seeded_month = self._usage_seeded_month
-        if monthly and (
-            seeded_month is None or dt_util.now().strftime("%Y-%m") != seeded_month
-        ):
-            await self.async_refresh_monthly_usage()
 
     async def _async_seed_presets(self) -> None:
         """Seed the preset slots. Independent of topology — see `_seed_independent_reads`."""
         try:
             presets = await self.client.async_get_gcs_presets(self.gcs_device.device_id)
             self.gcs_state.apply_preset_list(presets)
+            self._presets_read = True
             # Kept for `_async_sync_default_preset_timer`, which needs the *raw* record
             # — title, volume and each valve's `hexString` — none of which survive
             # `apply_preset_list`; `GcsPreset` keeps only id, name and is_experience.
             self._seeded_presets = presets
         except KohlerError as err:
             _LOGGER.debug("Could not read GCS presets: %s", err)
+
+    @property
+    def seed_incomplete(self) -> bool:
+        """Whether a read this valve's controls depend on has not answered since setup.
+
+        Its outlet layout and records — without them every outlet setting is refused — and
+        its presets, without which the Favorite list is empty. The stream's first connect
+        reads such a valve whole rather than only its live state; see
+        `KohlerKonnectCoordinator._async_read_missed_live_state`. **Whether the reads
+        answered**, not whether what they fill is empty (2026-10-16): a message replayed
+        from before the devices were known filled one and hid a read that had failed, and
+        a valve with no presets was read whole at every start.
+        """
+        return not (
+            self._topology_checked and self._settings_read and self._presets_read
+        )
 
     async def async_seed(self) -> None:
         """Read this valve's state, limits and presets over REST.
@@ -1585,7 +2249,7 @@ class Valve:
             with suppress(asyncio.CancelledError):
                 await background
             raise
-        await background
+        _raise_first(await background)
 
     def _outlet_limits_settled(self, serial_before_read: int) -> bool:
         """Whether a `gcs-settings` read may replace the cached outlet records.
@@ -1611,9 +2275,11 @@ class Valve:
         """The one genuinely ordered pair: settings decide topology, topology decodes state."""
         try:
             outlet_writes = self._outlet_write_serial
+            requested_at = time.monotonic()
             settings = await self.client.async_get_gcs_settings(
                 self.gcs_device.device_id
             )
+            self._settings_read = True
             # The same read says how the outlets split across the zones, which is what
             # this valve decodes and encodes every word with — its own layout, not the
             # entry's. See `_apply_topology`; once is enough, plumbing does not change.
@@ -1622,65 +2288,163 @@ class Valve:
                 before = (self.model.outlets_valve1, self.model.outlets_valve2)
                 self._topology_checked = self._apply_topology(settings)
                 if self._topology_checked:
-                    self.coordinator._async_note_valve_topology(
+                    self.coordinator._async_note_topology(
                         self,
                         changed=before
                         != (self.model.outlets_valve1, self.model.outlets_valve2),
                     )
             limits = outlet_limits_from_settings(settings)
             if limits and self._outlet_limits_settled(outlet_writes):
-                self.gcs_state.outlet_limits.update(limits)
+                # Through `_adopt_outlet_read`, not a plain update: past the settle window
+                # the cloud can still be showing a value written from here that it has not
+                # caught up with, and the cache is what the next outlet write echoes. And
+                # as the valve reports it: an outlet it announced just before the read
+                # stands as announced.
+                limits = self._reported_outlets(limits, requested_at)
+                self._adopt_outlet_read(limits)
+                self._outlets_caught_up(requested_at)
+                self._settle_outlet_fields(limits)
         except KohlerError as err:
             _LOGGER.debug("Could not read outlet limits over REST: %s", err)
 
+        await self.async_read_live_state()
+
+    async def async_read_live_state(self) -> None:
+        """Read `gcs-state` and apply what nothing newer has overtaken.
+
+        The second half of every seed, and on its own the first connect's catch-up for a
+        valve read before the stream was up — see
+        `KohlerKonnectCoordinator._handle_connected`. A `KohlerError` is logged and changes
+        nothing; a sign-in failure is the caller's. What is applied, and what is kept, is
+        `apply_rest_reply`'s to decide.
+        """
+        serials = dict(self._push_serials)
+        # This valve's own word writes, not `_local_write_serial`, which an outlet setting
+        # bumps too: one saved during the read changed no word, and keeping the words over
+        # the read for it held a stopped shower's stale words (2026-10-16).
+        writes = self._words_serial
+        connection = self.coordinator.stream_connects
+        # When the read was sent, so a `Disconnected` it brings back cannot overrule a
+        # message the valve sent after it — see `CloudConnectionWatch.note_rest_payload`.
+        requested_at = time.monotonic()
         try:
-            pushes = self._push_serial
             payload = await self.client.async_get_gcs_state(self.gcs_device.device_id)
-            if self.cloud_watch is not None:
-                # CLOUD CONNECTION WATCH. `connectionState` is a sibling of `state` in
-                # this payload, and `apply_rest_state` below reads only `state` — so
-                # without this line the field we already paid for is discarded, and the
-                # sensor sits at `unknown` until a trigger fires hours later. Free: no
-                # extra request, and it does not consume the check cooldown.
-                #
-                # `notify=False` — this runs during `async_setup`, before the platforms
-                # exist; every caller of this method pushes a snapshot of its own.
-                self.cloud_watch.note_rest_payload(
-                    payload,
-                    "REST seed (setup, reconnect or update_entity)",
-                    notify=False,
-                )
-            if self._push_serial != pushes:
-                # ⚠️ **The valve pushed its state while this read was in flight, so the
-                # reply is the older of the two** (2026-10-16). `gcs-state` is a cloud
-                # document that trails the device by seconds, and applying it replaced the
-                # zone words and warm-up mode with whatever it last held: a shower stopped,
-                # the stream reconnected, and the reseed's reply still showed the outlet
-                # open — and every later write rebuilds both words from that. The pushed
-                # state stands; `connectionState` above is not about the valve's state, so
-                # it is kept either way.
-                _LOGGER.debug(
-                    "%s pushed its state while gcs-state was being read; keeping the push",
-                    self.name,
-                )
-                return
-            was_warmup = self.gcs_state.warmup_mode
-            self.gcs_state.apply_rest_state(payload)
-            # A shower that ended while the stream was down still gets its usage read.
-            self._note_running_for_usage()
-            # Warm-up gets its own call rather than thirty lines here: a mode that moved
-            # while the stream was down reaches nothing else, and the reasoning about why
-            # belongs beside the rest of the warm-up machinery. See
-            # `WarmupManager.note_seeded_mode`.
-            self.warmup.note_seeded_mode(was_warmup, self.gcs_state.warmup_mode)
         except KohlerError as err:
             _LOGGER.debug("Could not seed GCS state: %s", err)
+            return
+        if self.cloud_watch is not None:
+            # CLOUD CONNECTION WATCH. `connectionState` is a sibling of `state` in this
+            # payload, and `apply_rest_state` reads only `state` — so without this line the
+            # field we already paid for is discarded, and the sensor sits at `unknown` until
+            # a trigger fires hours later. Free: no extra request, and it does not consume
+            # the check cooldown. Not about the valve's state, so taken whatever is kept.
+            #
+            # `notify=False` — this runs during `async_setup`, before the platforms exist;
+            # every caller of this method pushes a snapshot of its own.
+            self.cloud_watch.note_rest_payload(
+                payload,
+                "REST seed (setup, reconnect or update_entity)",
+                notify=False,
+                requested_at=requested_at,
+            )
+        was_warmup = self.gcs_state.warmup_mode
+        self.apply_rest_reply(payload, serials, writes, requested_at=requested_at)
+        self.state_read_on = connection
+        # A shower that ended while the stream was down still gets its usage read.
+        self._note_running_for_usage()
+        # Warm-up gets its own call rather than thirty lines here: a mode that moved while
+        # the stream was down reaches nothing else, and the reasoning about why belongs
+        # beside the rest of the warm-up machinery. See `WarmupManager.note_seeded_mode`.
+        self.warmup.note_seeded_mode(was_warmup, self.gcs_state.warmup_mode)
+
+    def apply_rest_reply(
+        self,
+        payload: Any,
+        serials: dict[str, int],
+        writes: int,
+        *,
+        requested_at: float | None = None,
+    ) -> set[str]:
+        """Apply a `gcs-state` reply, keeping what overtook it since the read was sent.
+
+        ``serials`` and ``writes`` are `_push_serials` and `_words_serial` as they stood
+        when the read went out, and ``requested_at`` the monotonic time it went out. Returns
+        the fields kept rather than applied, so a caller reading for one of them can tell
+        its answer was overtaken.
+
+        ⚠️ **A push that lands while the read is in flight is newer than the reply**
+        (2026-10-16). `gcs-state` is a cloud document that trails the device by seconds,
+        and applying it put back whatever it last held: a shower stopped, the stream
+        reconnected, and the reseed's reply still showed the outlet open — and every later
+        write rebuilds both words from that. So what a push carried during the read stands.
+
+        ⚠️ **Only what that push carried** (2026-10-16). The guard began by dropping the
+        whole reply for any such push, and the two messages carry different halves of it:
+        `GCS_WARM_STS` only the warm-up mode, `GCS_SOLO_STS` everything but. A warm-up
+        announcement during a reconnect's read left a stopped shower shown running; the
+        running shower's own reports during one hid a warm-up disable made while the
+        stream was down — the very change auto-restore exists for. Each group the pushes
+        moved (`_push_serials`) keeps its pushed values; the rest of the reply applies — and
+        since the same day field by field, by what each message carried.
+
+        **The zone words are kept, too, when a write from here can be newer** — one sent
+        while the read was in flight, or one whose overlay still stands in for the valve's
+        report (`_sent_words_pending`) — and the session fields reported with them. The
+        reply can predate the write, and ending the overlay with it put back the words the
+        write had replaced, which the next write then built on (2026-10-16).
+
+        **And when the valve reported its words just before the read was sent**: the
+        document trails the valve by seconds (`_GCS_STATE_TRAILS_SECONDS`), so a reply to a
+        read sent that soon after a report can predate it — a Stop at the panel, reported a
+        second before a reconnect's read, put back as running (2026-10-16).
+        """
+        kept = {
+            field
+            for field, count in self._push_serials.items()
+            if count != serials.get(field, 0)
+        }
+        if self._words_serial != writes or self._sent_words_pending():
+            kept |= {*_GCS_WORD_FIELDS, *_GCS_SESSION_FIELDS}
+        if requested_at is not None:
+            kept |= {
+                field
+                for field, at in self._reported_at.items()
+                if requested_at - at < _GCS_STATE_TRAILS_SECONDS
+            }
+        if kept:
+            _LOGGER.debug(
+                "Keeping %s's %s over a gcs-state reply that is older",
+                self.name,
+                ", ".join(sorted(kept)),
+            )
+        with _keeping(self.gcs_state, sorted(kept)):
+            self.gcs_state.apply_rest_state(payload)
+        return kept
+
+    def _sent_words_pending(self) -> bool:
+        """Whether the words last sent from here still stand in for the valve's report.
+
+        `_valve_baseline`'s test, without its side effect of dropping an overlay that has
+        lapsed: armed, inside the hold, and no report since the write. `_sent_words` alone
+        will not do — it is cleared only when the next write asks for a baseline, so it can
+        outlive its hold by days, and a reseed that trusted it would never again correct
+        the words.
+        """
+        if self._sent_words is None:
+            return False
+        state = self.gcs_state
+        return (
+            time.monotonic() - self._sent_at <= self._sent_hold_seconds
+            and state.valve1 is self._sent_over[0]
+            and state.valve2 is self._sent_over[1]
+        )
 
     async def async_refresh_faults(self) -> None:
         """Read the valve's fault log and keep the entries that are still active.
 
         The valve's counterpart of the controller's `hub-diagnostics/{id}/active` read, and
-        run on every seed like it — setup, each reconnect, a manual `update_entity`.
+        run when it is — on every seed (setup, each reconnect, a manual `update_entity`) and
+        twice a day; see `KohlerKonnectCoordinator.async_refresh_faults`.
 
         ⚠️ **Until 2026-10-16 this log was read only when someone built a diagnostics
         report**, so a fault the valve was reporting never reached its Problem sensor. The
@@ -1732,8 +2496,9 @@ class Valve:
         # So a file that records a `disabled` an hour in has no record of what was displaced
         # or since when, and an empty file cannot be told apart from a broken one.
         #
-        # Written here rather than in `_async_seed_state` because the first seed runs before
-        # this log exists, and this is the one place that happens exactly once per file.
+        # Called from `async_setup`, once its seed is done, rather than from
+        # `_async_seed_state`, which runs on every reconnect too: this is the one place that
+        # happens exactly once per file.
         self.warmup._warmup_journal(
             "baseline",
             mode=self.gcs_state.warmup_mode,
@@ -1806,6 +2571,13 @@ class Valve:
                 plan.previous,
                 DEFAULT_PRESET_TIMER_SECONDS,
             )
+        elif plan.reason == "unsafe":
+            # `plan_preset_timer` has said which word failed; this records the outcome.
+            _LOGGER.debug(
+                "Preset %s run timer left alone: a stored valve word failed validation, "
+                "and a rewrite would send it back as no word at all",
+                DEFAULT_PRESET_ID,
+            )
         else:
             _LOGGER.debug(
                 "Preset %s run timer needs no change (%s)",
@@ -1862,39 +2634,184 @@ class Valve:
             flowing[zone] = bool(word and word.outlet_mask and not word.paused)
         self._zone_clock.update(flowing)
 
-    def _valve_baseline(self) -> tuple[Any, Any]:
-        """The zone words the next write builds on: the last ones sent, until the valve reports.
+    def _valve_baseline(self, *, outlets: bool = True) -> tuple[Any, Any]:
+        """The zone words the next write builds on: the last ones sent, then the report.
 
         Every write rebuilds both zones, so its baseline decides what it keeps. The reported
         words lag a write by the echo's 1.1-2.1 s, and a write built on them inside that
-        window silently reverted the one before it — GitHub issue #1. So the words this
-        integration last sent stand in for the report until **any** report arrives after
-        them, or `_sent_hold_seconds` pass, whichever is first.
+        window silently reverted the one before it — GitHub issue #1. So for
+        `_sent_hold_seconds` the words this integration last sent stand in for the report.
 
-        ⚠️ **Any report ends it, not only one that agrees.** A report that disagrees is the
-        valve's own answer — a warm-up hijack, a stop pressed at the wall — and a write that
-        carried the overlay past it would undo that, which for a stop means turning the
-        water back on. The cost is that the echo of the *earlier* of two quick writes can
-        land after the later one and briefly stand as the baseline: that closes an outlet
-        rather than opening one, which is the direction to err in.
+        🚨 **A report inside that window narrows them; it never widens them** (2026-10-16).
+        Until then any report ended the overlay, on the reasoning that one which disagrees is
+        the valve's own answer. But a report is not always newer than the write: the late
+        echo of an *earlier* write, or a status the valve sent before it applied this one,
+        arrives just the same — and building on it **opened water**. Running at ``0x01``, a
+        Stop sent ``0x00``, a report from before the Stop still said ``0x01``, and the next
+        temperature change went out as ``0x01``; outlet 1 on, outlet 1 off, the first one's
+        late echo, then outlet 2 on went out as ``0x03``. Content cannot tell a stale report
+        from a change made at the wall — a Stop at the panel and the late echo of a Stop
+        sent from here are the same word — so neither is trusted to add anything: for each
+        zone the valve has reported since, the outlets are those open in **both** the sent
+        word and the report, and the zone is paused if **either** is. A Stop stays a Stop
+        until the hold ends, a stale report cannot reopen an outlet or lift a pause, and a
+        Stop or pause at the wall still holds. The temperature is the report's, as it was.
+        The cost lands on the safe side: an outlet opened at the wall inside those seconds
+        is closed by a write built on them, and a stale report can close one this
+        integration had just opened.
+
+        Remembering recently sent pairs to recognise their late echoes was considered and
+        left out: it could only ever be used to *keep* an outlet a report shows closed —
+        the one thing a Stop at the wall that happens to match an earlier write must never
+        get. Narrowing is already safe for every report, stale or not.
 
         A report is told apart by identity, not content: `GcsState` decodes every
-        `GCS_SOLO_STS`, and every REST seed, into new word objects, so a word other than the
-        one in place when the overlay was armed means the valve has spoken since.
+        `GCS_SOLO_STS` whose words decode as a pair, and every REST seed, into new word
+        objects, so a word other than the one in place when the write was asked for
+        (`_sent_over`, read before its POST) means the valve has spoken since. A report with
+        a garbled or missing word leaves its own zone's object as it was
+        (`GcsState._apply_solo`), so it cannot end that zone's hold.
+
+        🚨 **During a warm-up the report describes the warm-up, not the shower**, so the
+        outlets come from `_warmup_shower` instead, or the write is refused with a
+        `HomeAssistantError` when that shower was not sent from here. ``outlets`` says the
+        caller takes outlets from this baseline; a Stop, which names every zone's, does not,
+        and is never refused.
         """
+
+        def described(word: Any) -> str:
+            return f"outlets 0x{word.outlet_mask:02X}" + (
+                " paused" if word.paused else ""
+            )
+
         state = self.gcs_state
         reported = (state.valve1, state.valve2)
+        # During a warm-up the outlets come from `_warmup_shower`, not from any narrowing.
+        warming = outlets and self._warming_up()
         sent = self._sent_words
-        if sent is None:
-            return reported
-        if (
+        baseline = reported
+        if sent is not None and (
             time.monotonic() - self._sent_at <= self._sent_hold_seconds
-            and reported[0] is self._sent_over[0]
-            and reported[1] is self._sent_over[1]
         ):
-            return sent
-        self._sent_words = None
-        return reported
+            words = []
+            for zone, own, now, then in zip(
+                (1, 2), sent, reported, self._sent_over, strict=True
+            ):
+                word = own if now is then else self._narrowed(now, own)
+                if (
+                    outlets
+                    and not warming
+                    and own is not None
+                    and word is not None
+                    and (word.outlet_mask, word.paused) != (own.outlet_mask, own.paused)
+                ):
+                    _LOGGER.info(
+                        "%s: zone %d reported %s since the last command sent it %s; "
+                        "building on what both say, %s, rather than reopening anything",
+                        self.name,
+                        zone,
+                        described(now),
+                        described(own),
+                        described(word),
+                    )
+                words.append(word)
+            baseline = (words[0], words[1])
+        if not warming:
+            return baseline
+        shower = self._warmup_shower()
+        if shower is None:
+            _LOGGER.info(
+                "%s: not sending a command that keeps outlets as they stand: the valve "
+                "is warming up a shower whose outlets were not sent from here",
+                self.name,
+            )
+            raise HomeAssistantError(
+                f"{self.name} is warming up, and until it finishes the outlets it reports "
+                "are the warm-up's own rather than the shower's, so a change sent now "
+                "would run every one of them. Nothing was sent. Try again once the "
+                "warm-up is over, stop the shower, or send the whole shower in one "
+                "command with the custom_shower action."
+            )
+        # The shower's outlets go only to a zone that is still warming. One reported stopped
+        # or paused since — at the panel, in the app — keeps what it reports: taking the
+        # shower's assignment there re-opened a zone someone had just closed (2026-10-16).
+        return tuple(
+            self._with_assignment(word, own)
+            if now is not None and now.outlet_mask and not now.paused
+            else word
+            for word, own, now in zip(baseline, shower, reported, strict=True)
+        )
+
+    @staticmethod
+    def _narrowed(word: Any, other: Any) -> Any:
+        """``word`` with only the outlets ``other`` also has open, paused if either is.
+
+        The one merge `_valve_baseline` and `_async_send_words` make, in the direction that
+        never opens water: it can close an outlet or keep a pause, nothing else. ``word``
+        supplies every other field, and is returned as it is where there is no ``other`` —
+        never ``other`` in its place, whose outlets would then be taken whole.
+        """
+        if word is None or other is None:
+            return word
+        return dataclasses.replace(
+            word,
+            outlet_mask=word.outlet_mask & other.outlet_mask,
+            paused=word.paused or other.paused,
+        )
+
+    @staticmethod
+    def _with_assignment(word: Any, own: Any) -> Any:
+        """``word`` with ``own``'s outlets and pause — or ``own`` where there is no word."""
+        if word is None or own is None:
+            return own if word is None else word
+        return dataclasses.replace(word, outlet_mask=own.outlet_mask, paused=own.paused)
+
+    def _warming_up(self) -> bool:
+        """Whether the valve says it is warming up, and is running water to do it.
+
+        Both, so a ``warmUpStatus`` left over from a report that did not repeat it cannot
+        make an idle or paused valve's words read as a warm-up's.
+        """
+        state = self.gcs_state
+        return bool(state.warmup_in_progress) and any(
+            word is not None and word.outlet_mask and not word.paused
+            for word in (state.valve1, state.valve2)
+        )
+
+    def _warmup_shower(self) -> tuple[Any, Any] | None:
+        """The last words sent from here, when they are the shower the valve is warming up.
+
+        🚨 **The masks a warming valve reports are the warm-up's**, not the shower's: every
+        outlet of its warm-up set (``0x07``/``0x03`` on the reference install), whatever
+        was asked for. A write during the warm-up hijacks it onto the outlets the write
+        names (2026-09-06 live test, session 24 §2c), so one built on those masks — a
+        temperature or flow change, an outlet toggle — turned the warm-up into a shower on
+        every warm-up outlet, until 2026-10-16.
+
+        The words count as that shower when they left an outlet running, nothing has decided
+        the valve's words since (`_note_local_write` drops them), they were sent less than
+        `RESUME_DEADLINE_SECONDS` ago — longer than any warm-up measured — and the valve has
+        run without a break since: some zone has been flowing (`zone_flowing_for`) since no
+        later than `WARMUP_WINDOW_SECONDS` after they were sent, when a warm-up they started
+        shows itself. A shower stopped and started again at the panel meanwhile restarts
+        that clock. Anything else is a warm-up started elsewhere — the panel, the app, a
+        favorite — whose outlets nothing here knows, and None.
+        """
+        sent = self._sent_words
+        if sent is None or not any(
+            word is not None and word.outlet_mask and not word.paused for word in sent
+        ):
+            return None
+        age = time.monotonic() - self._sent_at
+        if age > RESUME_DEADLINE_SECONDS:
+            return None
+        flowing = (self.zone_flowing_for(zone) for zone in self.model.zones)
+        if not any(
+            seconds is not None and seconds >= age - WARMUP_WINDOW_SECONDS
+            for seconds in flowing
+        ):
+            return None
+        return sent
 
     def _wire_flow(self, zone: int, percent: float) -> float:
         """A zone's flow as chosen — percent of its own ceiling — restated for `encode_word`.
@@ -1914,28 +2831,89 @@ class Valve:
         """POST a pair of words and arm the overlay; return the serial this write took.
 
         The caller holds `_valve_write_lock` and built the words from `_valve_baseline`.
-        The overlay is armed only once the POST has landed, and only if nothing else was
-        sent meanwhile: a controller command moves the valve's words without passing through
-        here, and counts against the serial (`KohlerKonnectCoordinator._note_local_write`).
+        The overlay is armed only once the POST has landed, and only if nothing else decided
+        the valve's words meanwhile: a controller command moves them without passing
+        through here, and counts against `_words_serial`
+        (`KohlerKonnectCoordinator._note_local_write`). An outlet setting does not.
+
+        **The report the words are sent over is read before the POST** (2026-10-16), not
+        once it has landed: a Stop pressed at the panel and reported while the POST was in
+        flight used to become that report, so it read as "nothing since" and the next
+        write went out on the words sent — water back on.
+
+        🚨 **A POST that fails, or is cancelled, puts the words before it back**
+        (2026-10-16). They used to go with it, so a retry built on the report instead —
+        lagging, inside the echo's round trip — and closed the outlet the last command had
+        just opened. But a POST that failed may still have reached the valve (a timeout
+        after the cloud took it), so what comes back is what this write was built on —
+        those words, or the report when none stood in — **narrowed by it**, as by a report,
+        and held for `_sent_hold_seconds` from the failure: an outlet it closed stays
+        closed and a pause it set stays set, so a Stop that "failed" after it landed is not
+        undone by the next command, while nothing it would have opened is taken up. Not
+        when something else decided the words meanwhile, whose own dropping of them
+        stands.
         """
+        state = self.gcs_state
+        previous = (self._sent_words, self._sent_over, self._sent_at)
+        asked_over = (state.valve1, state.valve2)
+        asked_at = time.monotonic()
+        warming = self._warming_up()
+        # The sentinel addresses no valve and the device discards the whole command, so a
+        # write carrying it changes nothing worth remembering.
+        words = (
+            None
+            if word1 == UNUSED_VALVE_WORD
+            or (self.model.uses_valve2 and word2 == UNUSED_VALVE_WORD)
+            else (
+                decode_word(word1),
+                decode_word(word2) if self.model.uses_valve2 else None,
+            )
+        )
         self._note_local_write()
         serial = self._local_write_serial
-        with self.coordinator.command_errors(VALVE_OFFLINE):
-            await self.gcs.async_write_valves(word1, word2)
-        if self._local_write_serial != serial:
+        decided = self._words_serial
+        try:
+            with self.coordinator.command_errors(VALVE_OFFLINE):
+                await self.gcs.async_write_valves(word1, word2)
+        except BaseException:
+            if self._words_serial == decided:
+                sent, over, at = previous
+                # A Stop goes the usual way even during a warm-up, so it holds afresh: the
+                # warm-up can end as it lands, and its last report — the warm-up's outlets,
+                # no longer warming up — became what the next command was built on
+                # (2026-10-16).
+                stops = words is not None and not any(
+                    word is not None and word.outlet_mask for word in words
+                )
+                if words is not None and warming and not stops:
+                    # 🚨 **Never the report during a warm-up** (2026-10-16): it shows the
+                    # warm-up's whole outlet set, so narrowing it by this write made exactly
+                    # the failed command's outlets, which `_warmup_shower` then handed to
+                    # the next write — a change refused before now went through, onto a
+                    # warm-up started at the panel. Only the shower words that started this
+                    # warm-up, if they were sent from here, are narrowed, keeping the time
+                    # `_warmup_shower` ages them by.
+                    if sent is not None:
+                        sent = (
+                            self._narrowed(sent[0], words[0]),
+                            self._narrowed(sent[1], words[1]),
+                        )
+                elif words is not None:
+                    if sent is None or asked_at - at > self._sent_hold_seconds:
+                        # Nothing stood in for the report, so the report is what this
+                        # write was built on.
+                        sent, over = asked_over, asked_over
+                    sent = (
+                        self._narrowed(sent[0], words[0]),
+                        self._narrowed(sent[1], words[1]),
+                    )
+                    at = time.monotonic()
+                self._sent_words, self._sent_over, self._sent_at = sent, over, at
+            raise
+        if self._words_serial != decided or words is None:
             return serial
-        # The sentinel addresses no valve and the device discards the whole command, so a
-        # write carrying it changed nothing worth remembering.
-        if word1 == UNUSED_VALVE_WORD or (
-            self.model.uses_valve2 and word2 == UNUSED_VALVE_WORD
-        ):
-            return serial
-        state = self.gcs_state
-        self._sent_words = (
-            decode_word(word1),
-            decode_word(word2) if self.model.uses_valve2 else None,
-        )
-        self._sent_over = (state.valve1, state.valve2)
+        self._sent_words = words
+        self._sent_over = asked_over
         self._sent_at = time.monotonic()
         return serial
 
@@ -1960,9 +2938,15 @@ class Valve:
         temperature, flow, or outlet adjustment.
 
         **"Current state" is `_valve_baseline`**, and writes are taken one at a time under
-        `_valve_write_lock`: the words the last write sent until the valve reports again,
-        so a second write inside the echo's round trip builds on the first rather than
-        undoing it (GitHub issue #1, fixed 2026-10-16).
+        `_valve_write_lock`: for a few seconds the words the last write sent, narrowed by
+        any report since, so a second write inside the echo's round trip builds on the first
+        rather than undoing it (GitHub issue #1, fixed 2026-10-16), while a report that
+        arrives in between can close an outlet or keep a pause but never reopen anything.
+        During a warm-up the outlets are those of the shower being warmed up, or the write
+        is refused when that shower was started elsewhere — see `_warmup_shower`.
+
+        **A Stop asked for after this goes first** — see `async_stop_shower`: once this
+        holds the lock, it is refused with a `HomeAssistantError` if one was.
 
         🚨 **The pause flag is preserved too.** A zone holding a paused assignment — byte 3
         ``0x41``, outlet 1 still assigned and no water flowing — used to be re-sent as
@@ -1985,13 +2969,34 @@ class Valve:
         Consequence worth knowing: adjusting temperature from Home Assistant mid-shower also
         restores the flow Home Assistant holds, if the wall panel had changed it.
         """
+        requested = self._stop_generation
         async with self._valve_write_lock:
+            self._refuse_if_stopped_since(requested)
             await self._async_apply_valve_locked(
                 temperatures={1: zone1_temperature, 2: zone2_temperature},
                 flows={1: zone1_flow, 2: zone2_flow},
                 zone_masks=zone_masks or {},
                 zone_paused=zone_paused or {},
             )
+
+    def _refuse_if_stopped_since(self, requested: int) -> None:
+        """Refuse a command asked for before a Stop that is still waiting behind it.
+
+        ``requested`` is `_stop_generation` as it stood when the command was asked for,
+        before it waited for `_valve_write_lock`; this runs once it holds the lock. A
+        command asked for after the Stop goes ahead as usual, behind it. See
+        `async_stop_shower`.
+        """
+        if self._stop_generation == requested:
+            return
+        _LOGGER.info(
+            "%s: a command asked for before a Stop was not sent; the Stop goes first",
+            self.name,
+        )
+        raise HomeAssistantError(
+            f"Not sent to {self.name}: superseded by a Stop asked for after it, which "
+            "goes first."
+        )
 
     async def _async_apply_valve_locked(
         self,
@@ -2000,14 +3005,25 @@ class Valve:
         flows: dict[int, float | None],
         zone_masks: dict[int, int],
         zone_paused: dict[int, bool],
+        baseline: tuple[Any, Any] | None = None,
     ) -> None:
-        """`async_apply_valve`'s body, for a caller already holding `_valve_write_lock`."""
+        """`async_apply_valve`'s body, for a caller already holding `_valve_write_lock`.
+
+        ``baseline`` is the caller's own `_valve_baseline`, where it built a mask from it
+        already, so both are built on the same one.
+        """
+        if baseline is None:
+            # Outlets come from the baseline for every zone the write does not name; a Stop
+            # names them all, so it is never refused during a warm-up.
+            baseline = self._valve_baseline(
+                outlets=any(zone not in zone_masks for zone in self.model.zones)
+            )
         # Masks are per zone throughout — no global outlet numbering is involved, so no
         # model-dependent mapping can be applied wrongly here.
-        baseline = dict(zip((1, 2), self._valve_baseline(), strict=True))
+        current = dict(zip((1, 2), baseline, strict=True))
 
         def resolve(zone: int, prefix: int) -> str:
-            word = baseline[zone]
+            word = current[zone]
             temperature = temperatures.get(zone)
             celsius = (
                 unit_to_celsius(temperature, self.temperature_unit)
@@ -2073,7 +3089,11 @@ class Valve:
         alone" can only be expressed by sending zone 2's own current word, which is what this
         does: its setpoint, assignment and pause as `_valve_baseline` has them, under the
         same `_valve_write_lock` as every other write. Flow follows zone 2's ``zone_flow``
-        like every other write.
+        like every other write. During a warm-up started elsewhere that assignment is the
+        warm-up's, so a zone 1 word alone is refused there; both words are always sent.
+
+        Like every write, it steps aside for a Stop asked for after it
+        (`async_stop_shower`).
 
         Returns the decoded interpretation of what was sent, so an automation or a person can
         confirm the word meant what they thought.
@@ -2082,13 +3102,15 @@ class Valve:
         return result
 
     async def _async_send_valve_hex(
-        self, zone1_hex: str, zone2_hex: str | None
+        self, zone1_hex: str, zone2_hex: str | None, *, requested: int | None = None
     ) -> tuple[dict[str, Any], int]:
         """`async_send_valve_hex`, also returning the serial its write took.
 
         For `async_custom_shower`, whose watcher must notice anything sent after its own
         write — including while this POST was in flight, which reading the serial once the
-        call had returned missed.
+        call had returned missed. ``requested`` is the `_stop_generation` it was asked for
+        under, when the caller took it; otherwise it is taken here, before the lock — nothing
+        before that awaits, so it is still the moment this was asked for.
         """
         word1 = _command_half(zone1_hex, "zone1_hex")
 
@@ -2134,7 +3156,10 @@ class Valve:
                 "included. To close zone 1 instead, send a word with outlet mask 00."
             )
 
+        if requested is None:
+            requested = self._stop_generation
         async with self._valve_write_lock:
+            self._refuse_if_stopped_since(requested)
             if word2 is None:
                 # Re-send zone 2 as it stands — never the sentinel, which would risk the
                 # device discarding the whole command. See the docstring.
@@ -2188,14 +3213,23 @@ class Valve:
         again just before the new one is stored — two overlapping calls each found nothing to
         cancel up front, and the second's assignment orphaned the first, which could later
         resume the older shower.
+
+        🚨 **A Stop asked for after this outranks it** (2026-10-16): the write steps aside
+        if one is waiting behind it, and the watcher never resumes once one has been asked
+        for, even before it has taken the lock — see `async_stop_shower`.
         """
+        requested = self._stop_generation
         self._cancel_custom_shower("a new custom shower was sent")
-        result, serial = await self._async_send_valve_hex(zone1_hex, zone2_hex)
+        result, serial = await self._async_send_valve_hex(
+            zone1_hex, zone2_hex, requested=requested
+        )
         self._cancel_custom_shower("a new custom shower was sent")
         if keep_on_after_warmup:
-            task = self.hass.async_create_task(
+            # Tracked, so an unload that came while the write was on its way gets no
+            # watcher — it lived on for up to three minutes after one (2026-10-16).
+            task = self._track(
                 self._async_keep_on_after_warmup(
-                    result["zone1_hex"], result["zone2_hex"], serial
+                    result["zone1_hex"], result["zone2_hex"], serial, requested
                 )
             )
             task.add_done_callback(self._custom_shower_done)
@@ -2203,7 +3237,7 @@ class Valve:
         return result
 
     @callback
-    def _custom_shower_done(self, task: asyncio.Task) -> None:
+    def _custom_shower_done(self, task: asyncio.Future[Any]) -> None:
         """Drop the finished watcher, and log anything it died of that it did not expect."""
         if self._custom_shower_task is task:
             self._custom_shower_task = None
@@ -2222,7 +3256,7 @@ class Valve:
             task.cancel()
 
     async def _async_keep_on_after_warmup(
-        self, word1: str, word2: str, serial: int
+        self, word1: str, word2: str, serial: int, requested: int
     ) -> None:
         """Re-send a custom shower once the valve's warm-up ends in its pause.
 
@@ -2231,12 +3265,24 @@ class Valve:
         state — `warmUpStatus`, the pause flag, the masks and the primary word's
         at-temperature bit, the evidence that a pause is the warm-up's own end rather than
         a stop pressed in the app or at the panel — never the controller's.
+
+        ``serial`` is the `_local_write_serial` the custom shower's own write took, and
+        ``requested`` the `_stop_generation` it was asked for under: anything sent since, or
+        a Stop asked for since — counted before it waits for the lock, so a Stop queued
+        behind a write in flight counts too — and this gives up rather than resume.
         """
         poke = asyncio.Event()
 
         @callback
         def _on_update() -> None:
             poke.set()
+
+        def superseded() -> str | None:
+            if self._stop_generation != requested:
+                return "a Stop was asked for since"
+            if self._local_write_serial != serial:
+                return "another command was sent since"
+            return None
 
         remove = self.coordinator.async_add_listener(_on_update)
         watch = WarmupResume(time.monotonic())
@@ -2247,10 +3293,9 @@ class Valve:
                 except TimeoutError:
                     pass
                 poke.clear()
-                if self._local_write_serial != serial:
+                if (reason := superseded()) is not None:
                     _LOGGER.info(
-                        "custom_shower: another command was sent since; not resuming "
-                        "after the warm-up"
+                        "custom_shower: %s; not resuming after the warm-up", reason
                     )
                     return
                 state = self.gcs_state
@@ -2273,10 +3318,10 @@ class Valve:
                         # Again under the lock: a write that was queued for it counts
                         # itself only once it holds it, so the check above could not see
                         # it — and resuming after it would undo it.
-                        if self._local_write_serial != serial:
+                        if (reason := superseded()) is not None:
                             _LOGGER.info(
-                                "custom_shower: another command was sent since; not "
-                                "resuming after the warm-up"
+                                "custom_shower: %s; not resuming after the warm-up",
+                                reason,
                             )
                             return
                         _LOGGER.info(
@@ -2328,7 +3373,13 @@ class Valve:
         switch showed as on. **Off** keeps the zone paused and drops the outlet from the
         assignment it would resume to. Either way nothing runs that the user did not just
         turn on.
+
+        The assignment toggled is `_valve_baseline`'s, so a report since the last command
+        can only have narrowed it, and during a warm-up it is the shower's rather than the
+        warm-up set's — or the toggle is refused (`_warmup_shower`). A Stop asked for after
+        this goes first (`async_stop_shower`).
         """
+        requested = self._stop_generation
         try:
             count = self.model.outlets_in_zone(zone)
         except ValueError:
@@ -2340,7 +3391,9 @@ class Valve:
             )
         bit = 1 << (outlet - 1)
         async with self._valve_write_lock:
-            word = self._valve_baseline()[zone - 1]
+            self._refuse_if_stopped_since(requested)
+            baseline = self._valve_baseline()
+            word = baseline[zone - 1]
             mask = word.outlet_mask if word else 0
             paused = bool(word and word.paused)
             if on:
@@ -2353,6 +3406,7 @@ class Valve:
                 flows={zone: flow},
                 zone_masks={zone: mask},
                 zone_paused={zone: paused},
+                baseline=baseline,
             )
 
     async def async_activate_preset(self, preset_id: int | str) -> None:
@@ -2366,9 +3420,13 @@ class Valve:
         temperature.
 
         Taken in turn with the word writes (`_valve_write_lock`), since it changes the same
-        words, and it drops their last-sent overlay: the preset decides them now.
+        words, and it drops their last-sent overlay: the preset decides them now. Like them,
+        it steps aside for a Stop asked for after it (`async_stop_shower`) rather than start
+        water the Stop then has to end.
         """
+        requested = self._stop_generation
         async with self._valve_write_lock:
+            self._refuse_if_stopped_since(requested)
             self._note_local_write()
             with self.coordinator.command_errors(VALVE_OFFLINE):
                 await self.gcs.async_activate_preset(preset_id, True)
@@ -2393,9 +3451,13 @@ class Valve:
         Same ``controlpresetorexperience {preset, action}`` body as a preset — what Konnect
         3.0.6's current screens send for an experience id. App-confirmed; this integration
         long held that the valve ignores it, on no recorded test. Serialised with the word
-        writes for the same reason as a preset.
+        writes for the same reason as a preset; starting one steps aside for a Stop asked
+        for after it, as a preset does, while stopping one goes ahead regardless.
         """
+        requested = self._stop_generation
         async with self._valve_write_lock:
+            if on:
+                self._refuse_if_stopped_since(requested)
             self._note_local_write()
             with self.coordinator.command_errors(VALVE_OFFLINE):
                 await self.gcs.async_activate_preset(preset_id, on)
@@ -2410,15 +3472,35 @@ class Valve:
         which needed that distinction, was removed on 2026-10-08; ``0x00`` stays because it
         is the form verified live from here.
 
-        Still routed through `async_apply_valve` rather than `GcsDevice.async_turn_off()`,
+        Still built by `async_apply_valve`'s body rather than `GcsDevice.async_turn_off()`,
         which would write a flat 38.0 °C to both zones — this preserves each zone's own
         setpoint while clearing its outlets. Both masks are overridden and no pause is
-        passed, so a zone that was paused is stopped with a plain ``0x00`` like the other.
+        passed, so a zone that was paused is stopped with a plain ``0x00`` like the other —
+        and since it takes no outlet from anything reported, it is never refused, warm-up
+        or not.
 
-        Queued behind any write in flight (`_valve_write_lock`) rather than racing it: a
-        stop that overtook an open would leave the water running once the open landed.
+        Queued behind the write in flight (`_valve_write_lock`) rather than racing it: a
+        stop that overtook an open would leave the water running once the open landed. That
+        POST is never cancelled — whether it reached the valve could not then be known, and
+        the Stop follows it either way.
+
+        🚨 **But no longer behind everything else queued** (2026-10-16). The lock is
+        first-come, first-served and each holder keeps it for a whole POST — up to 30 s,
+        about a minute with a sign-in refresh — so a Stop waited behind every command asked
+        for before it, any of which could start water. The Stop is now counted the moment it
+        is asked for (`_stop_generation`, before anything is awaited), and every command
+        asked for before it — a word write, a favorite or experience starting — steps aside
+        when its turn comes, with a `HomeAssistantError` for whoever asked
+        (`_refuse_if_stopped_since`); the custom-shower watcher gives up instead of
+        resuming. Commands asked for after the Stop go ahead as usual, behind it. A Stop
+        that is itself cancelled while it waits still counts: what was asked for before it
+        stays unsent, which is the side to err on.
         """
-        await self.async_apply_valve(zone_masks={1: 0, 2: 0})
+        self._stop_generation += 1
+        async with self._valve_write_lock:
+            await self._async_apply_valve_locked(
+                temperatures={}, flows={}, zone_masks={1: 0, 2: 0}, zone_paused={}
+            )
 
     # ------------------------------------------------------------------ #
     # Warm-up
@@ -2464,8 +3546,9 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         # `update_interval=SCAN_INTERVAL` disables interval polling entirely. Shower state is
         # push-only: MQTT carries every change, and the REST reads happen on two *events* —
-        # setup, and every MQTT (re)connect — rather than on a clock. (Firmware availability
-        # is the one exception, read twice a day; see `FIRMWARE_CHECK_INTERVAL`.)
+        # setup, and every MQTT reconnect — rather than on a clock. (Firmware availability,
+        # and the fault logs beside it, are the one exception, read twice a day; see
+        # `FIRMWARE_CHECK_INTERVAL`.)
         #
         # ⚠️ **That was one event short of the truth until 2026-08-21.**
         # `async_config_entry_first_refresh()` runs immediately after `async_setup()` and the
@@ -2508,7 +3591,11 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.water_units: str = entry.data.get(CONF_WATER_UNITS, "Standard")
 
         session = async_get_clientsession(hass)
-        self.auth = KohlerAuth(session, entry.data.get(CONF_REFRESH_TOKEN))
+        self.auth = KohlerAuth(
+            session,
+            entry.data.get(CONF_REFRESH_TOKEN),
+            refresh_token_source=self._stored_refresh_token,
+        )
         # Persist a rotated refresh token the moment B2C issues one. Without this the entry
         # keeps a token Kohler has already retired, and on a push-only install nothing else
         # writes it back for hours — see `KohlerAuth._async_token_request`.
@@ -2547,7 +3634,9 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.faucets: list[FaucetCoordinator] = []
         self._faucets_by_id: dict[str, FaucetCoordinator] = {}
         # What the faucets keep across restarts — cleared leaks, the leak alert, the safety
-        # deadline — in one file per entry, keyed by device id.
+        # limit (its deadline, when it was set, whether the water was seen running) and
+        # whether instant updates have proved themselves — in one file per entry, keyed by
+        # device id.
         self._faucet_store: Store[dict[str, Any]] = Store(
             hass,
             FAUCET_STORAGE_VERSION,
@@ -2557,17 +3646,43 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # The faucets' first reads, started early in `async_setup` so they overlap the
         # showers' seed, and collected at its end. Held so a failed setup can cancel them.
         self._faucet_first_refresh: asyncio.Task | None = None
+        # When those reads finished (monotonic) — what decides whether the first connect
+        # reads the faucets again; see `_faucets_just_read`.
+        self._faucets_read_at: float | None = None
         self.stream: KonnectMqttStream | None = None
+        # The stream's registration and first connection attempt, started first thing in
+        # `async_setup` and collected at its end. Held so a failed setup can cancel it.
+        self._stream_start: asyncio.Task | None = None
+        #: How many times the stream has connected. Each live-state read records the count
+        #: it was sent under (`Valve.state_read_on`, `Controller.state_read_on`), which is
+        #: how the first connect tells the reads it covers from the ones it does not.
+        self.stream_connects = 0
+        # Set once the setup's seed has finished. A connect before then is caught up on by
+        # `async_setup` itself, so the two reads never run over the same state at once.
+        self._setup_seed_done = False
+        # When setup's seed went out, and when the stream first connected (monotonic); see
+        # `_first_connect_late`.
+        self._seed_started_at: float | None = None
+        self._first_connect_at: float | None = None
+        # Messages that arrived before the account read said which devices exist, handed on
+        # once it has; None from then on. See `_handle_envelope`.
+        self._early_envelopes: deque[Envelope] | None = deque(
+            maxlen=_EARLY_MESSAGES_KEPT
+        )
         self.raw_log: RawMqttLog | None = None
         # REPORT LOG: the consumer-side capture behind the "Report Log" switch — one file
         # per switch-on, appended across restarts. See `konnect/report_log.py`.
         self.report_log: ReportLog | None = None
-        #: The reseed spawned on every MQTT connect. Held so `async_shutdown_stream` can
-        #: cancel it — it outlives an unload otherwise, see `_handle_connected`.
+        #: The reseed spawned on an MQTT connect — after the first, only the live-state
+        #: catch-up. Held so `async_shutdown_stream` can cancel it — it outlives an unload
+        #: otherwise, see `_handle_connected`.
         self._reseed_task: asyncio.Task | None = None
+        # A connect came while that reseed was running, so it reads everything again.
+        self._reseed_again = False
         # The twice-daily firmware check — the one clock in an otherwise push-only design,
-        # because nothing pushes "an update is available". Cancelled on unload, the check
-        # in flight included: `_firmware_task` holds whichever one is running.
+        # because nothing pushes "an update is available" — and the fault reads that ride on
+        # it. Cancelled on unload, the check in flight included: `_firmware_task` holds
+        # whichever one is running.
         self._firmware_unsub: Any = None
         self._firmware_task: asyncio.Task | None = None
         # Local midnight tick: re-renders date-sensitive usage entities (`Water Used Today`,
@@ -2593,124 +3708,23 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # Setup / teardown
     # ------------------------------------------------------------------ #
     async def async_setup(self) -> None:
-        """Discover devices, seed state from REST, then start the MQTT stream."""
-        try:
-            customer = await self.client.async_get_customer()
-        except AuthUnavailable as err:
-            # Kohler unreachable, not a bad credential — retry setup, do not ask the user
-            # to sign in again.
-            raise ConfigEntryNotReady(f"Cannot reach Kohler: {err}") from err
-        except AuthError as err:
-            raise ConfigEntryAuthFailed(str(err)) from err
-        except KohlerError as err:
-            raise ConfigEntryNotReady(f"Cannot reach Kohler: {err}") from err
+        """Start the MQTT stream, discover devices, and seed their state from REST.
 
-        self.temperature_unit = customer.temperature_unit or self.temperature_unit
-        self.water_units = customer.water_units or self.water_units
-        valves = customer.gcs_devices
-        controllers = customer.hub_devices
-        faucets = customer.faucet_devices
-        if not valves and not controllers and not faucets:
-            raise ConfigEntryNotReady("No supported Kohler devices on this account")
+        ⚠️ **The stream starts as soon as the sign-in has worked, and the reads run while it
+        connects** (2026-10-16). It used to start only once every device had been seeded, so
+        its registration and connection queued behind the account read and each device's
+        settings and state — about five cloud round trips in a row, 12.7 s of
+        `config_entry_setup` on the owner's Raspberry Pi — and the connect then re-read
+        every device in full, seconds after setup had: each valve was read twice per start.
+        The stream needs nothing the reads produce, so it overlaps them now, and its first
+        connect re-reads only what setup read before it was up; see `_handle_connected`.
 
-        # Every valve, not the first one. Each carries its own state, zone clock, warm-up
-        # restore, cloud watch and settings — see `Valve`. Each starts from its own layout
-        # where one was read earlier this run, else the entry's; see `_valve_model`.
-        names = valve_names(valves)
-        self.valves = [
-            Valve(
-                self,
-                device,
-                self._valve_model(device.device_id),
-                names[device.device_id],
-                tag=device.device_id if len(valves) > 1 else None,
-            )
-            for device in valves
-        ]
-        self._valves_by_id = {v.device_id: v for v in self.valves}
-        if len(self.valves) > 1:
-            _LOGGER.info(
-                "Account has %d Anthem valves: %s",
-                len(self.valves),
-                ", ".join(valve.name for valve in self.valves),
-            )
-        # Every controller, not the first one. Each gets its own command surface and its
-        # own state, both keyed by its device id: the one account-level MQTT stream carries
-        # messages for all of them, and `_handle_envelope` sorts them by that id. The
-        # entry's model is only the starting layout — `_async_seed_state` replaces it per
-        # controller with what that controller's own configuration says.
-        names = controller_names(controllers)
-        self.controllers = [
-            Controller(
-                device,
-                HubDevice(self.client, device.device_id, self.temperature_unit),
-                HubState(self.model),
-                names[device.device_id],
-            )
-            for device in controllers
-        ]
-        self._controllers_by_id = {c.device_id: c for c in self.controllers}
-        if len(self.controllers) > 1:
-            _LOGGER.info(
-                "Account has %d Anthem Plus controllers: %s",
-                len(self.controllers),
-                ", ".join(controller.name for controller in self.controllers),
-            )
-        # Every faucet, each with its own coordinator. They poll on their own clock, so
-        # they are not seeded with the showers: each takes its own first read.
-        names = faucet_names(faucets)
-        self.faucets = [
-            FaucetCoordinator(
-                self.hass, self.entry, self, device, names[device.device_id]
-            )
-            for device in faucets
-        ]
-        self._faucets_by_id = {f.device_id.lower(): f for f in self.faucets}
-        if self.faucets:
-            self._faucet_data = dict(await self._faucet_store.async_load() or {})
-            for faucet in self.faucets:
-                faucet.load(self._faucet_data.get(faucet.device_id) or {})
-            # **Started now, collected at the end of this method** (2026-10-16). A faucet's
-            # first read is half a dozen round trips in a row — state, configuration,
-            # presets, firmware, two usage series — and it used to begin only once every
-            # shower had been seeded and the stream started, in `async_setup_entry`. None of
-            # it depends on the showers, so it overlaps all of that instead: the owner's
-            # Raspberry Pi measured 14.1 s of `config_entry_setup` for two valves and a
-            # faucet. Not a first refresh that can fail the entry: a faucet Kohler cannot
-            # answer for right now should not take the showers down with it — its entities
-            # show unavailable and it retries on its own clock.
-            self._faucet_first_refresh = self.hass.async_create_task(
-                self._async_first_refresh_faucets()
-            )
-
-        try:
-            await self._async_seed_state()
-        except AuthUnavailable as err:
-            # Same split as the customer read above. The seed swallows `KohlerError` per
-            # read ("failures for one device do not blank the other"), but the token layer
-            # under every read raises `AuthError`, which is not a `KohlerError` — left bare,
-            # a rejection here escaped `async_setup_entry` as an unhandled exception: no
-            # reauth prompt, no retry, an entry stuck on "Failed to set up". Found 2026-08-21
-            # while proving the startup-read fold; fixed 2026-08-22.
-            raise ConfigEntryNotReady(f"Cannot reach Kohler: {err}") from err
-        except AuthError as err:
-            raise ConfigEntryAuthFailed(str(err)) from err
-        # `async_config_entry_first_refresh()` follows immediately in `async_setup_entry` and
-        # would repeat every read above for nothing. Claimed here, spent in
-        # `_async_update_data`.
-        self._seeded_during_setup = True
-        # Each valve's own preset, so the valves need not take turns. Every exception is
-        # collected before any is raised, so a failure cannot leave a sibling writing to its
-        # valve after setup has given up.
-        results = await asyncio.gather(
-            *(valve._async_sync_default_preset_timer() for valve in self.valves),
-            return_exceptions=True,
-        )
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result
-        self._persist_refresh_token()
-
+        **Home Assistant stopping part-way through ends it** (2026-10-16). The stop listener
+        in `__init__.py` shuts this coordinator down while a read here is still awaited, and
+        what followed started the stream, the cloud watches and the firmware timers again
+        with nothing left to stop them. Each step that starts something checks first; see
+        `_raise_if_closed`.
+        """
         # One identity for the life of this config entry. Generated on first setup and
         # persisted, so restarts and reconnects reuse it instead of leaving a trail of
         # dead registrations on the Kohler account.
@@ -2723,6 +3737,10 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 data={**self.entry.data, CONF_MOBILE_DEVICE_ID: mobile_device_id},
             )
 
+        # The captures and the warm-up journal come before the stream, which writes to the
+        # first two from its first message — and a warm-up announced during setup belongs
+        # in the third. Local files only, so they cost no round trip.
+        #
         # RAW MQTT LOG: constructed unconditionally and switched on at runtime, so capture
         # can be started from the UI mid-session without a reload. Nothing touches the disk
         # until a message arrives while it is on. See `konnect/raw_log.py`.
@@ -2751,7 +3769,7 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.hass.async_add_executor_job(self.report_log.resume, episode)
 
         # WARMUP JOURNAL: in the same directory as the raw capture, on the same clock, so
-        # the two interleave — see `WARMUP_README`.
+        # the two interleave — see `WARMUP_README`. Its baseline record waits for the seed.
         self.warmup_log = DebugJournal(
             self.hass.config.path(RAW_MQTT_LOG_DIR),
             forced=ENABLE_WARMUP_DEBUG_LOG,
@@ -2765,8 +3783,18 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             label="Warmup journal",
         )
         await self.hass.async_add_executor_job(self.warmup_log.prepare)
-        for valve in self.valves:
-            valve.journal_baseline()
+
+        try:
+            # Signed in first, on its own. The stream's registration and the account read
+            # both wait for the token anyway, so this adds no round trip — and a sign-in
+            # that fails fails setup before the stream has started, rather than leaving it
+            # retrying behind a setup that gave up.
+            await self.auth.async_get_access_token()
+        except AuthUnavailable as err:
+            raise ConfigEntryNotReady(f"Cannot reach Kohler: {err}") from err
+        except AuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
+        self._raise_if_closed()
 
         self.stream = KonnectMqttStream(
             self.client,
@@ -2781,15 +3809,163 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # has connected before, so silence from it is real silence.
             expect_warmup=first_registration,
         )
+        # Started, not awaited: registering needs only the client and the identity, so it
+        # overlaps the account read instead of waiting for it. Collected below.
+        self._stream_start = self.hass.async_create_task(
+            self._async_start_stream(self.stream)
+        )
+
         try:
-            await self.stream.async_start()
-        except (AuthError, KohlerError) as err:
-            # State is already seeded, so the integration is usable but frozen until the
-            # stream recovers. A warning rather than a setup failure — the reconnect loop
-            # keeps trying, and each success re-seeds.
-            _LOGGER.warning("Kohler MQTT stream did not start: %s", err)
-            if credential_is_dead(err):
-                self._handle_auth_error(err)
+            customer = await self.client.async_get_customer()
+        except AuthUnavailable as err:
+            # Kohler unreachable, not a bad credential — retry setup, do not ask the user
+            # to sign in again.
+            raise ConfigEntryNotReady(f"Cannot reach Kohler: {err}") from err
+        except AuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except KohlerError as err:
+            raise ConfigEntryNotReady(f"Cannot reach Kohler: {err}") from err
+        self._raise_if_closed()
+
+        self.temperature_unit = customer.temperature_unit or self.temperature_unit
+        self.water_units = customer.water_units or self.water_units
+        valves = customer.gcs_devices
+        controllers = customer.hub_devices
+        faucets = customer.faucet_devices
+        if not valves and not controllers and not faucets:
+            raise ConfigEntryNotReady("No supported Kohler devices on this account")
+
+        # Every valve, not the first one. Each carries its own state, zone clock, warm-up
+        # restore, cloud watch and settings — see `Valve`. Each starts from its own layout
+        # where one was read earlier this run, else the entry's; see `_known_model`.
+        names = valve_names(valves)
+        self.valves = [
+            Valve(
+                self,
+                device,
+                self._known_model(device.device_id),
+                names[device.device_id],
+                tag=device.device_id if len(valves) > 1 else None,
+            )
+            for device in valves
+        ]
+        self._valves_by_id = {v.device_id: v for v in self.valves}
+        if len(self.valves) > 1:
+            _LOGGER.info(
+                "Account has %d Anthem valves: %s",
+                len(self.valves),
+                ", ".join(valve.name for valve in self.valves),
+            )
+        # Every controller, not the first one. Each gets its own command surface and its
+        # own state, both keyed by its device id: the one account-level MQTT stream carries
+        # messages for all of them, and `_handle_envelope` sorts them by that id. Each
+        # starts from the layout it reported earlier this run, else the entry's —
+        # `_async_seed_state` replaces it with what its own configuration says.
+        names = controller_names(controllers)
+        self.controllers = [
+            Controller(
+                device,
+                HubDevice(self.client, device.device_id, self.temperature_unit),
+                HubState(self._known_model(device.device_id)),
+                names[device.device_id],
+            )
+            for device in controllers
+        ]
+        self._controllers_by_id = {c.device_id: c for c in self.controllers}
+        if len(self.controllers) > 1:
+            _LOGGER.info(
+                "Account has %d Anthem Plus controllers: %s",
+                len(self.controllers),
+                ", ".join(controller.name for controller in self.controllers),
+            )
+        # Every faucet, each with its own coordinator. They poll on their own clock, so
+        # they are not seeded with the showers: each takes its own first read.
+        names = faucet_names(faucets)
+        self.faucets = [
+            FaucetCoordinator(
+                self.hass, self.entry, self, device, names[device.device_id]
+            )
+            for device in faucets
+        ]
+        self._faucets_by_id = {f.device_id.lower(): f for f in self.faucets}
+        if self.faucets:
+            self._faucet_data = dict(await self._faucet_store.async_load() or {})
+            for faucet in self.faucets:
+                faucet.load(self._faucet_data.get(faucet.device_id) or {})
+        self._raise_if_closed()
+        # The devices are known, so what the stream delivered before they were goes to
+        # them now — after each faucet's stored state is back, which an event replayed
+        # first would be overwritten by.
+        early, self._early_envelopes = self._early_envelopes, None
+        for envelope in early or ():
+            self._handle_envelope(envelope)
+        if self.faucets:
+            # **Started now, collected at the end of this method** (2026-10-16). A faucet's
+            # first read is half a dozen round trips in a row — state, configuration,
+            # presets, firmware, two usage series — and it used to begin only once every
+            # shower had been seeded and the stream started, in `async_setup_entry`. None of
+            # it depends on the showers, so it overlaps all of that instead: the owner's
+            # Raspberry Pi measured 14.1 s of `config_entry_setup` for two valves and a
+            # faucet. Not a first refresh that can fail the entry: a faucet Kohler cannot
+            # answer for right now should not take the showers down with it — its entities
+            # show unavailable and it retries on its own clock.
+            self._faucet_first_refresh = self.hass.async_create_task(
+                self._async_first_refresh_faucets()
+            )
+
+        # What a run before this one warned of about an outlet setting has gone with it:
+        # nothing set from here is pending now, and the read below says what the valve has.
+        for valve in self.valves:
+            valve.forget_outlet_write_issues()
+        self._seed_started_at = time.monotonic()
+        try:
+            await self._async_seed_state()
+        except AuthUnavailable as err:
+            # Same split as the customer read above. The seed swallows `KohlerError` per
+            # read ("failures for one device do not blank the other"), but the token layer
+            # under every read raises `AuthError`, which is not a `KohlerError` — left bare,
+            # a rejection here escaped `async_setup_entry` as an unhandled exception: no
+            # reauth prompt, no retry, an entry stuck on "Failed to set up". Found 2026-08-21
+            # while proving the startup-read fold; fixed 2026-08-22.
+            raise ConfigEntryNotReady(f"Cannot reach Kohler: {err}") from err
+        except AuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
+        self._raise_if_closed()
+        # The mode the seed found, before anything read since can be journalled over it.
+        for valve in self.valves:
+            valve.journal_baseline()
+        # `async_config_entry_first_refresh()` follows immediately in `async_setup_entry` and
+        # would repeat every read above for nothing. Claimed here, spent in
+        # `_async_update_data`.
+        self._seeded_during_setup = True
+        # A connect during the seed left its catch-up to this point, so the two never read
+        # into the same state at once; see `_handle_connected`.
+        self._setup_seed_done = True
+        if self.stream_connects:
+            self._reseed_task = self.hass.async_create_task(
+                self._async_reseed_after_connect()
+            )
+        # Each valve's own preset, so the valves need not take turns. Every exception is
+        # collected before any is raised, so a failure cannot leave a sibling writing to its
+        # valve after setup has given up.
+        _raise_first(
+            await asyncio.gather(
+                *(valve._async_sync_default_preset_timer() for valve in self.valves),
+                return_exceptions=True,
+            )
+        )
+        self._raise_if_closed()
+        self._persist_refresh_token()
+
+        # Waited for rather than awaited: an unload cancels it, which is not this setup
+        # being cancelled — `_raise_if_closed` says what happened instead.
+        start = self._stream_start
+        if start is not None:
+            await asyncio.wait({start})
+            self._stream_start = None
+        self._raise_if_closed()
+        if start is not None:
+            start.result()
 
         for valve in self.valves:
             # Arms trigger B's countdown. Nothing is asked of Kohler until the valve has
@@ -2809,20 +3985,84 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # The faucets' first reads, started before the seed. Collected here because the
         # platforms build the faucets' entities from them as soon as this returns.
-        if self._faucet_first_refresh is not None:
-            await self._faucet_first_refresh
+        if (refresh := self._faucet_first_refresh) is not None:
+            await asyncio.wait({refresh})
             self._faucet_first_refresh = None
+            self._raise_if_closed()
+            refresh.result()
+
+    async def _async_start_stream(self, stream: KonnectMqttStream) -> None:
+        """Register and start connecting — the task `async_setup` starts first.
+
+        A failure is a warning rather than a setup failure: the stream retries on its own
+        backoff, and the first connect that succeeds catches up on what setup read before
+        it. A credential the registration found dead still asks to sign in again.
+        """
+        try:
+            await stream.async_start()
+        except (AuthError, KohlerError) as err:
+            if self.closed:
+                return
+            _LOGGER.warning("Kohler MQTT stream did not start: %s", err)
+            if credential_is_dead(err):
+                self._handle_auth_error(err)
+
+    def _raise_if_closed(self) -> None:
+        """Abandon setup once `async_shutdown_stream` has run.
+
+        While `async_setup` runs that means Home Assistant is stopping: its stop listener
+        has shut this coordinator down, and anything set up after this point — the stream's
+        work, the cloud watches, the firmware and midnight timers — would run on with
+        nothing left to stop it. Not ready, rather than an error: nothing is wrong with the
+        account, and Home Assistant does not retry an entry while it stops.
+        """
+        if self.closed:
+            raise ConfigEntryNotReady("Home Assistant is stopping")
 
     async def _async_first_refresh_faucets(self) -> None:
         """Each faucet's first read, all at once. See where `async_setup` starts this."""
         await asyncio.gather(*(faucet.async_refresh() for faucet in self.faucets))
+        self._faucets_read_at = time.monotonic()
 
     @callback
-    def _valve_model(self, device_id: str) -> ValveModel:
-        """The layout a valve starts from: its own, if read earlier this run, else the entry's.
+    def _first_connect_late(self) -> bool:
+        """Whether the stream's first connect came long after setup's reads went out.
 
-        See `_async_note_valve_topology`, which records it. A valve whose settings read
-        fails at setup would otherwise fall back to the entry's layout — after a reload made
+        Then what they read — outlet settings, presets — may have changed unannounced in
+        between: a first start that failed connects on the back-off, up to minutes later.
+        🚨 **Read whole then** (2026-10-16): only `gcs-state` was, so a scald limit lowered in
+        the app meanwhile stayed at its old value in the cache, and the next outlet setting
+        written from here sent that old value to every outlet.
+        """
+        seeded, connected = self._seed_started_at, self._first_connect_at
+        return (
+            seeded is None
+            or connected is None
+            or connected - seeded > _FIRST_CONNECT_GRACE_SECONDS
+        )
+
+    def _faucets_just_read(self) -> bool:
+        """Whether the faucets' first reads are still running, or finished only just now.
+
+        What spares them a second read on the stream's first connect; see
+        `_handle_connected`. "Just now" is within one idle poll: a faucet polls at that pace
+        until the stream has proven it reports the faucet, so a read that recent is as
+        fresh as its own clock would keep it anyway.
+        """
+        if self._faucet_first_refresh is not None:
+            return True
+        read_at = self._faucets_read_at
+        return (
+            read_at is not None
+            and time.monotonic() - read_at < FAUCET_SCAN_INTERVAL_IDLE.total_seconds()
+        )
+
+    @callback
+    def _known_model(self, device_id: str) -> ValveModel:
+        """The layout a device starts from: its own, if read earlier this run, else the entry's.
+
+        See `_async_note_topology`, which records it. A device whose layout read fails at
+        setup would otherwise fall back to the entry's layout — after a reload made
         precisely because that layout was wrong for it.
         """
         known = self.hass.data.get(_VALVE_TOPOLOGY, {}).get(self.entry.entry_id, {})
@@ -2830,28 +4070,32 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self.model if split is None else model_for_topology(*split)
 
     @callback
-    def _async_note_valve_topology(self, valve: Valve, *, changed: bool) -> None:
-        """Remember a valve's own layout, and reload if its entities were built from another.
+    def _async_note_topology(
+        self, device: Valve | Controller, *, changed: bool
+    ) -> None:
+        """Remember a device's own layout, and reload if its entities were built from another.
 
-        ⚠️ **A layout can change after the entities exist** (fixed 2026-10-16). The settings
-        read that states it is retried until it answers, so when it fails at setup the
-        entities are built from the entry's layout and a reconnect's read can replace it
+        ⚠️ **A layout can change after the entities exist** (fixed 2026-10-16). The valve's
+        settings read that states it is retried until it answers, so when it fails at setup
+        the entities are built from the entry's layout and a reconnect's read can replace it
         minutes or hours later. The decode follows at once; the entities did not, so a
         K-28212 entry fronting a K-28210 kept zone 2's controls and sensors — reading a zone
-        the valve does not have — until someone thought to reload.
+        the valve does not have — until someone thought to reload. A controller learns its
+        layout the same way, from the first configuration read that answers, and until the
+        second 2026-10-16 review its entities were left as they were built, too.
 
         So once the platforms have loaded, a changed layout reloads the entry, **once per
         coordinator** — and the layout is remembered in `hass.data`, which outlives the
-        reload, so the next coordinator starts from it (see `_valve_model`). A settings read
-        that fails at every setup therefore cannot reload again and again: the layout that
-        caused the reload is the one the reload starts with. Only a genuinely different
-        answer reloads once more.
+        reload, so the next coordinator starts from it (see `_known_model`). A read that
+        fails at every setup therefore cannot reload again and again: the layout that caused
+        the reload is the one the reload starts with. Only a genuinely different answer
+        reloads once more.
         """
-        model = valve.model
+        model = device.model
         known = self.hass.data.setdefault(_VALVE_TOPOLOGY, {}).setdefault(
             self.entry.entry_id, {}
         )
-        known[valve.device_id] = (model.outlets_valve1, model.outlets_valve2)
+        known[device.device_id] = (model.outlets_valve1, model.outlets_valve2)
         if (
             not changed
             or not self.entities_built
@@ -2860,11 +4104,11 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             return
         self._topology_reload_scheduled = True
-        # The valve's name, not its id, for the reason given in `Valve._apply_topology`.
+        # The device's name, not its id, for the reason given in `Valve._apply_topology`.
         _LOGGER.info(
             "%s reports a different outlet layout (%s) from the one its entities were "
             "built with; reloading Kohler Konnect so they match",
-            valve.name,
+            device.name,
             model.sku,
         )
         self.hass.config_entries.async_schedule_reload(self.entry.entry_id)
@@ -2930,26 +4174,61 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @callback
     def _handle_connected(self) -> None:
-        """Re-seed whenever the stream connects.
+        """Catch up on what the stream could not report before it connected.
 
         This is what replaces interval polling. The broker sends no state on connect — only
         future change events — so without a read here a reconnect would leave every entity
         holding whatever it had before the gap, with nothing to correct it until the shower
-        was next used.
+        was next used. A reconnect therefore re-seeds everything.
+
+        ⚠️ **The first connect does not** (2026-10-16). The stream starts before the setup's
+        reads (`async_setup`), so there is no gap before it: what changed after a read was
+        sent is reported by the stream, provided the read went out once it was up. Every
+        live-state read records the connection it was sent under, and only a device read
+        before the first one is read again — its `gcs-state` or `hub-state` alone, the one
+        thing a few seconds can have moved. Until then each start read every device twice,
+        seconds apart, and the faucets too.
+
+        While the setup's own seed is still reading, nothing starts here: two reads racing
+        into the same state objects is what the reseed guard below exists to prevent, so
+        `async_setup` starts the catch-up itself once its seed is done.
         """
         if self.closed:
             # Delivered while the stream was stopping. A reseed started now would hold this
             # coordinator's sign-in and entry for a dozen round trips after the unload.
             return
+        self.stream_connects += 1
+        first = self.stream_connects == 1
+        if first:
+            self._first_connect_at = time.monotonic()
         # Durations measured across a disconnect are meaningless — we cannot know what the
         # outlets did while the stream was down, and the gap has been as long as 11.9 hours.
         # Dropping the timings means the time-left attributes start again from the next
         # report, rather than counting across the gap with a number we made up.
+        # A first connect long after setup's reads (its first start failed) follows a gap as
+        # much as a reconnect does; one that came with them does not.
+        seeded = self._seed_started_at
+        gap = not first or (
+            seeded is not None
+            and time.monotonic() - seeded > _FIRST_CONNECT_GRACE_SECONDS
+        )
         for valve in self.valves:
             valve.forget_timings()
-        # Nothing is replayed on connect for faucets either: each re-reads its state.
-        for faucet in self.faucets:
-            faucet.async_push_activity(False)
+            if gap:
+                valve.note_stream_gap()
+        # Nothing is replayed on connect for faucets either: each re-reads its state —
+        # except on the first connect, when its first read is under way or only just done.
+        if first and self._faucets_just_read():
+            for faucet in self.faucets:
+                faucet.async_note_stream_up()
+        else:
+            for faucet in self.faucets:
+                faucet.async_push_activity(False)
+        # The MQTT Connection sensors: nothing else tells them before a reseed ends, and the
+        # first connect may not reseed at all.
+        self.async_refresh_entities()
+        if not self._setup_seed_done:
+            return
         # **Held, so an unload can cancel it.** This was the one `async_create_task` in the
         # file with no reference kept, and it is the longest-running: `_async_seed_state`
         # can be a dozen REST round trips. A reload inside that window left it awaiting HTTP
@@ -2958,8 +4237,11 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # (a push into entities that no longer exist), which is exactly the hazard
         # `Valve._background_tasks` was built for.
         if self._reseed_task is not None and not self._reseed_task.done():
-            # A second connect while the first reseed is still running: let it finish rather
-            # than starting a rival that would race it over the same state objects.
+            # A second connect while the first reseed is still running: no rival, which
+            # would race it over the same state objects — but what it had read before this
+            # gap cannot vouch for it, so it reads everything again once it is through. It
+            # used to end there, and a change in the gap waited for the next reconnect.
+            self._reseed_again = True
             return
         self._reseed_task = self.hass.async_create_task(
             self._async_reseed_after_connect()
@@ -2967,11 +4249,17 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @callback
     def _handle_disconnected(self) -> None:
-        """A dropped stream: faucets catch up now and poll at their unhurried pace."""
+        """A dropped stream: say so, and let the faucets catch up and poll at their pace.
+
+        ⚠️ **The MQTT Connection sensors are told here** (2026-10-16). Nothing else notified
+        them of a drop, so they read connected through every outage — the one time they
+        are for. Every entity re-renders, without the stream claiming a successful update.
+        """
         if self.closed:
             return
         for faucet in self.faucets:
             faucet.async_push_activity(False)
+        self.async_update_listeners()
 
     async def async_save_faucet(self, faucet: FaucetCoordinator) -> None:
         """Persist one faucet's state into the entry's faucet store."""
@@ -2979,17 +4267,33 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._faucet_store.async_save(self._faucet_data)
 
     async def _async_reseed_after_connect(self) -> None:
-        try:
-            await self._async_seed_state()
-        except (AuthError, KohlerError) as err:
-            # The stream is up regardless; pushes will still arrive. Do not fail the entry
-            # over a re-seed, and do not retry here — the next connect will try again.
-            _LOGGER.warning("Kohler re-seed after MQTT connect failed: %s", err)
-            if credential_is_dead(err):
-                # A rejected credential is the one failure the next connect cannot fix,
-                # and this path would otherwise absorb it silently.
-                self._handle_auth_error(err)
-            return
+        """Read what the stream's connect cannot vouch for; see `_handle_connected`.
+
+        Again, whole, for each connect that came while it read.
+        """
+        self._reseed_again = False
+        while True:
+            try:
+                if self.stream_connects == 1 and not self._first_connect_late():
+                    await self._async_read_missed_live_state()
+                else:
+                    await self._async_seed_state()
+            except (AuthError, KohlerError) as err:
+                # The stream is up regardless; pushes will still arrive. Do not fail the
+                # entry over a re-seed, and do not retry here — the next connect will try
+                # again, unless one already has.
+                _LOGGER.warning("Kohler re-seed after MQTT connect failed: %s", err)
+                if credential_is_dead(err):
+                    # A rejected credential is the one failure the next connect cannot
+                    # fix, and this path would otherwise absorb it silently.
+                    self._handle_auth_error(err)
+                    return
+                if not self._reseed_again:
+                    return
+            else:
+                if not self._reseed_again:
+                    break
+            self._reseed_again = False
         self._persist_refresh_token()
         self.async_set_updated_data(self._snapshot())
 
@@ -3007,7 +4311,7 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # read, a connect that started a fresh reseed — all untracked by the time the valves
         # had been stopped, all holding this coordinator's sign-in and entry after the
         # unload. Every way in from the stream checks this flag now, and so does
-        # `Valve._track`.
+        # `Valve._track` — and so does `async_setup`, which this can interrupt.
         self.closed = True
         # Before the stream: it writes to the config entry and pushes state into entities,
         # neither of which is safe against an entry that is going away.
@@ -3027,6 +4331,10 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._faucet_first_refresh is not None:
             self._faucet_first_refresh.cancel()
             self._faucet_first_refresh = None
+        # A registration still under way from setup; the stream's own stop covers the rest.
+        if self._stream_start is not None:
+            self._stream_start.cancel()
+            self._stream_start = None
         # **The stream before the valves**, the reverse of the order this used: stopped
         # first, the valves could be handed work by whatever the stream delivered while it
         # stopped. Now nothing can reach them once it has, and `stop()` cancels anything
@@ -3034,6 +4342,14 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self.stream is not None:
             await self.stream.async_stop()
             self.stream = None
+        else:
+            # The captures open before the sign-in, and the stream closes them on its way
+            # out — but a setup that failed before there was a stream (Kohler unreachable at
+            # sign-in, Home Assistant stopping) left them open, and each retry opened
+            # another raw capture file (2026-10-16). Blocking close — off the loop.
+            for capture in (self.raw_log, self.report_log):
+                if capture is not None:
+                    await self.hass.async_add_executor_job(capture.close)
         # And a reseed that slipped in the same way, before the flag reached the handler.
         if self._reseed_task is not None:
             self._reseed_task.cancel()
@@ -3044,6 +4360,18 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ride on, so it is released here. Blocking close — off the loop.
         if self.warmup_log is not None:
             await self.hass.async_add_executor_job(self.warmup_log.close)
+        # ⚠️ **Last, a sign-in refresh still in flight is let finish** (2026-10-16). It runs
+        # shielded and outlives this coordinator, storing the token B2C rotates — but a
+        # reload builds the next coordinator from the entry as it stands when this returns,
+        # and that one's first refresh then redeems the token this one has just spent:
+        # rejected, and the owner was asked to sign in again for nothing. Waiting here puts
+        # the rotated token in the entry first. Bounded, so a token endpoint that hangs
+        # cannot hold up an unload or a shutdown; its failure is its own caller's to report.
+        refresh = self.auth._refresh_task
+        if refresh is not None and not refresh.done():
+            with suppress(Exception):
+                async with asyncio.timeout(_REFRESH_WAIT_SECONDS):
+                    await asyncio.shield(refresh)
 
     # ------------------------------------------------------------------ #
     # Push
@@ -3052,6 +4380,13 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Apply an MQTT message and notify the entities of the device it was for."""
         if self.closed:
             # Delivered while the stream was stopping; see `async_shutdown_stream`.
+            return
+        if self._early_envelopes is not None:
+            # The stream starts before the account read (`async_setup`), so it can deliver
+            # before any device exists to take a message. Held, and handed on once the
+            # devices exist, rather than dropped: an event such as a faucet's leak alert is
+            # not something a later read brings back.
+            self._early_envelopes.append(envelope)
             return
         changed: set[str] = set()
         # Valves and controllers alike: the one account-level stream carries every
@@ -3068,8 +4403,8 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if controller is not None:
             if controller.state.apply_envelope(envelope):
                 changed.add(controller.device_id)
-                if envelope.code in _HUB_STATE_CODES:
-                    controller.push_serial += 1
+                if envelope.code in _HUB_PUSH_FIELDS:
+                    controller.push_serials[envelope.code] += 1
             self._remember_message(envelope)
             # Trigger A: a controller report of a zone ON, with the valve silent. Every
             # valve's watch hears every controller: which controller fronts which valve
@@ -3101,8 +4436,15 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         custom-shower watcher's listener — is still called; and every other notification
         (a reseed, a cloud check, a usage or firmware read, midnight) leaves it None, which
         re-renders everything as before.
+
+        ⚠️ **Except after a failed refresh, when this re-renders everything too** (fixed
+        2026-10-16). The failure left every entity on the account unavailable, and
+        `async_set_updated_data` below marks the whole account available again — but only
+        the entities of the device that spoke were told, so the rest stayed unavailable
+        until their own device next sent something — 42 of 42 in the reproduction.
         """
-        self.devices_changed = frozenset(device_ids)
+        recovering = not self.last_update_success
+        self.devices_changed = None if recovering else frozenset(device_ids)
         try:
             self.async_set_updated_data(self._snapshot())
         finally:
@@ -3151,16 +4493,17 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # calls per start** (gcs-state, gcsadvancestate, presets, hub-state, favorites).
             #
             # What the first refresh is actually *for* is populating `coordinator.data`
-            # before the platforms are forwarded — `async_setup` never calls
-            # `async_set_updated_data`, so `data` is None until this returns. That needs the
-            # snapshot, not the network.
+            # before the platforms are forwarded — `async_setup` does not call
+            # `async_set_updated_data` itself, so unless the stream has already connected
+            # and done so, `data` is None until this returns. That needs the snapshot, not
+            # the network.
             #
-            # **Why this is safe, and not merely cheap.** `async_setup` ends by starting the
-            # stream, and `_handle_connected` schedules a full re-seed of its own the moment
-            # the connection is up. Anything that changed in the gap between the setup read
-            # and the stream coming up is caught by *that* read, which happens after the
-            # connection exists rather than before it. This one would be redundant with it,
-            # earlier and strictly worse placed.
+            # **Why this is safe, and not merely cheap.** `async_setup` starts the stream
+            # before it reads anything, and a device whose live state was read before the
+            # stream came up is read again once it has (`_handle_connected`). Anything that
+            # changed after the setup read is therefore either reported by the stream or
+            # caught by *that* read, which happens after the connection exists rather than
+            # before it. This one would be redundant with both, and worse placed.
             #
             # ⚠️ **Only the first one.** A manual `homeassistant.update_entity` is the only
             # other way in — with `SCAN_INTERVAL = None` there is no clock — and that one
@@ -3192,7 +4535,7 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_seed_state(self) -> None:
         """Read current state over REST into the state objects.
 
-        Runs at setup, on every MQTT connect, and on a manual `update_entity`. Failures for
+        Runs at setup, on every MQTT reconnect, and on a manual `update_entity`. Failures for
         one device do not blank the other.
         """
         # **In parallel.** Each device's reads are independent, and the only ordering that
@@ -3201,28 +4544,60 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # serially this was ~14 round trips end to end on a two-valve, two-controller
         # account: several seconds of waiting on every restart and reload.
         #
-        # `return_exceptions=True` keeps one device's failure from blanking the others; each
-        # coroutine already catches `KohlerError` per read, so anything else reaching here is
-        # unexpected and is logged rather than allowed to cancel its siblings.
-        #
-        # **Except a sign-in failure, which is raised once every device has finished.** The
-        # token layer under every read raises `AuthError`, which is not a `KohlerError`, and
-        # until 2026-10-08 this logged it like any other failure — so the reauth handling in
-        # every caller (setup, the reseed on connect, a manual refresh) could never run, and
-        # a revoked credential showed only as a warning.
-        #
         # Each valve's fault log is read beside its seed rather than inside it: it depends
         # on nothing the seed reads, and a failure keeps what was known — see
         # `Valve.async_refresh_faults`.
-        results = await asyncio.gather(
+        await self._async_read_devices(
             *(valve.async_seed() for valve in self.valves),
             *(valve.async_refresh_faults() for valve in self.valves),
             *(
                 self._async_seed_controller(controller)
                 for controller in self.controllers
             ),
-            return_exceptions=True,
         )
+
+    async def _async_read_missed_live_state(self) -> None:
+        """Read the live state the stream's first connect cannot vouch for.
+
+        Each device whose `gcs-state` or `hub-state` read went out before the stream was up
+        — or has not succeeded at all — and only that read: settings, presets and the rest
+        do not move in the seconds between setup and the first connect, and a reconnect
+        re-reads them all. See `_handle_connected`.
+
+        ⚠️ **Except a device whose setup left something unread** (2026-10-16): it gets its
+        whole seed, as the reseed that used to follow every connect gave it. One failed
+        `gcsadvancestate` or `gcs-preset` at startup otherwise left outlet settings refused
+        and the preset list empty until the next reconnect — days, on a stable stream — and
+        a failed `hub-configuration` left a controller's accessories missing as long.
+        """
+        connection = self.stream_connects
+        reads: list[Coroutine[Any, Any, None]] = []
+        for valve in self.valves:
+            if valve.seed_incomplete:
+                reads.append(valve.async_seed())
+            elif valve.state_read_on != connection:
+                reads.append(valve.async_read_live_state())
+        for controller in self.controllers:
+            if not controller.capabilities.known:
+                reads.append(self._async_seed_controller(controller))
+            elif controller.state_read_on != connection:
+                reads.append(self._async_read_hub_state(controller))
+        await self._async_read_devices(*reads)
+
+    async def _async_read_devices(self, *reads: Coroutine[Any, Any, None]) -> None:
+        """Run per-device reads side by side, and report how they went.
+
+        `return_exceptions=True` keeps one device's failure from blanking the others; each
+        read already catches `KohlerError` itself, so anything else reaching here is
+        unexpected and is logged rather than allowed to cancel its siblings.
+
+        **Except a sign-in failure, which is raised once every device has finished.** The
+        token layer under every read raises `AuthError`, which is not a `KohlerError`, and
+        until 2026-10-08 the seed logged it like any other failure — so the reauth handling
+        in every caller (setup, the reseed on connect, a manual refresh) could never run,
+        and a revoked credential showed only as a warning.
+        """
+        results = await asyncio.gather(*reads, return_exceptions=True)
         auth_error: AuthError | None = None
         for result in results:
             if isinstance(result, AuthError):
@@ -3271,22 +4646,7 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.debug(
                     "Could not read HUB configuration for %s: %s", device_id, err
                 )
-            try:
-                pushes = controller.push_serial
-                payload = await self.client.async_get_hub_state(device_id)
-                if controller.push_serial != pushes:
-                    # The controller reported while `hub-state` was being read, so the
-                    # reply is older than what is applied — the valve's reason, in
-                    # `Valve._async_seed_topology_and_state`.
-                    _LOGGER.debug(
-                        "%s pushed its state while hub-state was being read; keeping "
-                        "the push",
-                        controller.name,
-                    )
-                else:
-                    controller.state.apply_rest_state(payload)
-            except KohlerError as err:
-                _LOGGER.debug("Could not seed HUB state for %s: %s", device_id, err)
+            await self._async_read_hub_state(controller)
 
         async def experiences() -> None:
             # The firmware's fixed experience catalogue, once. A failure leaves it empty
@@ -3300,16 +4660,6 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.debug(
                     "Could not read HUB experiences for %s: %s", device_id, err
                 )
-
-        async def active_errors() -> None:
-            # Active faults, for the Problem sensor. `{}` on failure by contract.
-            errors = await self.client.async_get_hub_active_errors(device_id)
-            details = errors.get("errorDetails")
-            controller.active_errors = [
-                entry
-                for entry in (details if isinstance(details, list) else [])
-                if isinstance(entry, dict) and str(entry.get("errorCode") or "0") != "0"
-            ]
 
         async def saved_favorites() -> None:
             try:
@@ -3336,16 +4686,73 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "Could not read HUB favorites for %s: %s", device_id, err
                     )
 
-        results = await asyncio.gather(
-            configuration_then_state(),
-            experiences(),
-            active_errors(),
-            saved_favorites(),
-            return_exceptions=True,
+        _raise_first(
+            await asyncio.gather(
+                configuration_then_state(),
+                experiences(),
+                self._async_refresh_active_errors(controller),
+                saved_favorites(),
+                return_exceptions=True,
+            )
         )
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result
+
+    async def _async_read_hub_state(self, controller: Controller) -> None:
+        """Read `hub-state` and apply what no message has overtaken.
+
+        The controller's half of `Valve.apply_rest_reply`, by the same rule: a message
+        that lands while the read is in flight is newer than the reply, and keeps what it
+        carried (`_HUB_PUSH_FIELDS`) — **only** what it carried (2026-10-16). Any of four
+        message codes used to drop the whole reply, so a `MUSIC_STS` during a reconnect's
+        read left the zones as they were before the stream went down. A `KohlerError` is
+        logged and changes nothing.
+        """
+        serials = Counter(controller.push_serials)
+        connection = self.stream_connects
+        try:
+            payload = await self.client.async_get_hub_state(controller.device_id)
+        except KohlerError as err:
+            _LOGGER.debug(
+                "Could not seed HUB state for %s: %s", controller.device_id, err
+            )
+            return
+        moved = [
+            code
+            for code in _HUB_PUSH_FIELDS
+            if controller.push_serials[code] != serials[code]
+        ]
+        if moved:
+            _LOGGER.debug(
+                "Keeping what %s reported in %s over a hub-state reply that is older",
+                controller.name,
+                ", ".join(moved),
+            )
+        fields = [name for code in moved for name in _HUB_PUSH_FIELDS[code][0]]
+        components = [key for code in moved for key in _HUB_PUSH_FIELDS[code][1]]
+        with _keeping(controller.state, fields, components):
+            controller.state.apply_rest_state(payload)
+        controller.state_read_on = connection
+
+    async def _async_refresh_active_errors(self, controller: Controller) -> None:
+        """Read the controller's active faults, for its Problem sensor.
+
+        ⚠️ **A failed read changes nothing** (2026-10-16). The client answers `{}` for a read
+        it could not make, and this used to take that for "no faults": every hiccup at
+        Kohler cleared a fault the controller was reporting, and showed it healthy. A read
+        that answers carries `errorDetails` — empty when nothing is active — so only a list
+        is taken as the answer. A sign-in failure is raised, for the caller to report.
+        """
+        payload = await self.client.async_get_hub_active_errors(controller.device_id)
+        details = payload.get("errorDetails") if isinstance(payload, dict) else None
+        if not isinstance(details, list):
+            _LOGGER.debug(
+                "No active-error list for %s; keeping what was known", controller.name
+            )
+            return
+        controller.active_errors = [
+            entry
+            for entry in details
+            if isinstance(entry, dict) and str(entry.get("errorCode") or "0") != "0"
+        ]
 
     @callback
     def _async_link_controller_page(self, controller: Controller) -> None:
@@ -3381,27 +4788,33 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         nothing — which is exactly the case in which the config flow would have asked.
 
         The model decides how many outlet entities the controller gets, which is why this
-        runs inside the setup seed, before the platforms are built, and never again:
-        `capabilities.known` gates applying it, and a plumber's visit needs a reload anyway.
+        runs inside the setup seed, before the platforms are built — and once only, gated
+        by `capabilities.known`, since a plumber's visit needs a reload anyway.
+
+        ⚠️ **Unless that read fails at setup** (2026-10-16). It is then made again on each
+        reseed until it answers, by which time the entities exist, built from the entry's
+        layout — so the layout it finds is noted like a valve's, which reloads the entry
+        once if it differs and starts the next setup from it. See `_async_note_topology`.
         """
         detected = topology_from_hub_configuration(configuration)
         if not detected:
             return
         model = model_for_topology(*detected)
         current = controller.model
-        if (model.outlets_valve1, model.outlets_valve2) == (
+        changed = (model.outlets_valve1, model.outlets_valve2) != (
             current.outlets_valve1,
             current.outlets_valve2,
-        ):
-            return
-        # Name, not id — same reasoning as the valve's topology message above.
-        _LOGGER.info(
-            "%s reports %s; using that for this controller instead of the entry's %s",
-            controller.name,
-            describe_topology(detected),
-            current.sku,
         )
-        controller.state.model = model
+        if changed:
+            # Name, not id — same reasoning as the valve's topology message above.
+            _LOGGER.info(
+                "%s reports %s; using that for this controller instead of the entry's %s",
+                controller.name,
+                describe_topology(detected),
+                current.sku,
+            )
+            controller.state.model = model
+        self._async_note_topology(controller, changed=changed)
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -3415,6 +4828,25 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._store_refresh_token(self.auth.refresh_token)
 
     @callback
+    def _stored_refresh_token(self) -> str | None:
+        """The entry's refresh token, for `KohlerAuth` to fall back on; None once closed.
+
+        A reload can land while the old coordinator's refresh is redeeming the token this
+        one was built with. The old one then stores the rotated token, and this one's own
+        attempt is refused as a token already redeemed — so it reads the entry again and
+        takes that one up (`KohlerAuth._adopt_newer_refresh_token`). Once closed it answers
+        nothing: an unloaded coordinator must never redeem the token its successor holds.
+        """
+        if self.closed:
+            return None
+        token = self.entry.data.get(CONF_REFRESH_TOKEN)
+        # Seen in the entry, and about to be redeemed: if this coordinator closes while that
+        # retry is in flight, `_store_refresh_token` must still store what it rotates to, or
+        # the entry keeps the token just spent and the next start asks to sign in again.
+        if token:
+            self._entry_token = token
+        return token
+
     def _store_refresh_token(self, token: str | None) -> None:
         """Persist one refresh token, if it is new.
 
@@ -3518,11 +4950,17 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         status. The raw capture beside this holds every payload in full; duplicating it here
         would make the journal unreadable for the one thing it is for.
         """
+        # When it arrived, not when it is handled: a message that came before the account
+        # read is held and handled seconds later (`_early_envelopes`), and stamping the
+        # replay put it out of order against the journal's own records (2026-10-16).
+        age = max(0.0, time.monotonic() - envelope.received_monotonic)
         record: dict[str, Any] = {
             # The same stamp shape the journal and the raw capture use, so the three sort
             # together on one clock.
-            "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            "at": time.monotonic(),
+            "ts": (datetime.now(UTC) - timedelta(seconds=age))
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "at": envelope.received_monotonic,
             "sku": envelope.sku,
             "code": envelope.code,
             # Which device, so `Valve._message_window` can leave other valves' traffic
@@ -3615,7 +5053,7 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await controller.hub.async_control_experience(title, category, on)
 
     # ------------------------------------------------------------------ #
-    # Firmware, and the duration cross-check
+    # Firmware and faults, twice a day
     # ------------------------------------------------------------------ #
     @callback
     def _async_firmware_tick(self, _now: Any) -> None:
@@ -3629,7 +5067,45 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._firmware_task is not None and not self._firmware_task.done()
         ):
             return
-        self._firmware_task = self.hass.async_create_task(self.async_refresh_firmware())
+        self._firmware_task = self.hass.async_create_task(self._async_twice_daily())
+
+    async def _async_twice_daily(self) -> None:
+        """The twice-daily reads: firmware, and every device's faults beside it."""
+        _raise_first(
+            await asyncio.gather(
+                self.async_refresh_firmware(),
+                self.async_refresh_faults(),
+                return_exceptions=True,
+            )
+        )
+
+    async def async_refresh_faults(self) -> None:
+        """Read every valve's fault log and every controller's active errors again.
+
+        ⚠️ **Twice a day, as well as on every seed** (2026-10-16). Nothing pushes a fault,
+        and on a stable stream a seed happens only at setup and on a manual refresh — so a
+        fault that cleared kept its Problem sensor on for days, and a new one went unseen
+        just as long. This rides on the firmware check's clock rather than adding one.
+
+        A read that fails keeps what was known (see `Valve.async_refresh_faults` and
+        `_async_refresh_active_errors`); a dead sign-in still asks to sign in again.
+        """
+        results = await asyncio.gather(
+            *(valve.async_refresh_faults() for valve in self.valves),
+            *(
+                self._async_refresh_active_errors(controller)
+                for controller in self.controllers
+            ),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, AuthError):
+                _LOGGER.debug("Could not read active faults: %s", result)
+                if credential_is_dead(result):
+                    self._handle_auth_error(result)
+            elif isinstance(result, Exception):
+                _LOGGER.warning("Reading a Kohler device's faults failed: %s", result)
+        self.async_refresh_entities()
 
     async def async_refresh_firmware(self) -> None:
         """Read installed-vs-latest firmware for every valve, gateway and controller.

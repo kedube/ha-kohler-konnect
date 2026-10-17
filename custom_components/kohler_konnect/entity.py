@@ -241,7 +241,8 @@ class _KohlerDeviceEntity(CoordinatorEntity[KohlerKonnectCoordinator]):
     its state write — until 2026-10-16 every message from any valve or controller wrote
     the state of every entity on the account. A notification that is not about one device
     (a reseed, a cloud check, a usage or firmware read, midnight) leaves it None, and
-    everything re-renders as before.
+    everything re-renders as before — and so does the first message after a failed
+    refresh, which makes every entity on the account available again.
 
     `_device_id` is always the Kohler device's own — the valve's for a zone sub-device's
     entities too, since a zone has no messages of its own. Faucet entities sit on their own

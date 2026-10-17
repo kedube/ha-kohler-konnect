@@ -107,7 +107,9 @@ Records
                     closes before auto-restore could act, so this record never contains our
                     own write.
   restore*          what auto-restore did: scheduled, deferred (water running — it writes
-                    once the water has stopped), skipped, done, or failed.
+                    once the water has stopped), resumed (owed when Home Assistant stopped
+                    or reloaded, and taken up again by the next seed), skipped, done, or
+                    failed.
 
 Reading them
 ------------
@@ -191,6 +193,8 @@ class DebugJournal:
         self._pending: deque[str] = deque(maxlen=_PENDING_MAX)
         # Whether a file has ever been opened. See `prepare`.
         self._opened = False
+        # Set by `close()`, which is final. See there.
+        self._closed = False
 
     @property
     def enabled(self) -> bool:
@@ -228,10 +232,14 @@ class DebugJournal:
         shows the journal is switched on and working. Switched off, it writes what was
         queued while it was on and releases the file instead.
 
-        Blocking file I/O: call it from an executor, not the event loop.
+        Blocking file I/O: call it from an executor, not the event loop. Does nothing after
+        `close()`.
         """
         with self._lock:
             self._wants_open = False
+            if self._closed:
+                self._pending.clear()
+                return
             if not self.enabled:
                 # Here rather than in `note()`, which noticed the switch but runs on the
                 # loop. The records queued before it was switched off still belong.
@@ -241,8 +249,8 @@ class DebugJournal:
                 return
             if self._handle is None and not self._pending and self._opened:
                 # Only the first call opens an empty file. Every note schedules one of
-                # these, so one can run after `close()` at unload, with its record already
-                # written there — and must not leave a fresh, unclosed file behind it.
+                # these, and one that finds its record already written — by an earlier
+                # one — has nothing to open a fresh file for.
                 return
             if self._handle is None:
                 try:
@@ -257,7 +265,10 @@ class DebugJournal:
         """Queue one decision or transition for :meth:`prepare`. Cheap no-op when off.
 
         Never touches the file or the lock: it runs on the event loop. See `wants_open`.
+        Also a no-op after `close()`.
         """
+        if self._closed:
+            return
         if not self.enabled:
             if self._handle is not None:
                 # Switched off with a file open. Closing is file I/O; prepare() does it.
@@ -393,11 +404,14 @@ class DebugJournal:
         experiment — matching them up afterwards by timestamp is the bookkeeping this
         avoids.
 
-        Blocking file I/O — call it from an executor, not the event loop.
+        Blocking file I/O — call it from an executor, not the event loop. None after
+        `close()`, too.
         """
-        if not self.enabled:
+        if not self.enabled or self._closed:
             return None
         with self._lock:
+            if self._closed:
+                return None
             # Queued before the roll, so they belong to the file it closes.
             self._drain_locked(roll_full=True)
             self._close_locked()
@@ -411,14 +425,23 @@ class DebugJournal:
             return self._path
 
     def close(self) -> None:
-        """Write what is queued into the open file, then close it. For unload.
+        """Write what is queued into the open file, then close it. For unload. **Final.**
 
         Records queued with no file open — or with the file full and waiting for a roll —
         are dropped rather than a file opened only to be closed. Holds the lock, so it waits
         out a `prepare()` already writing rather than racing it. Blocking file I/O: call it
         from an executor, as the coordinator does.
+
+        ⚠️ **Nothing reopens a file through this object afterwards** (2026-10-16), as with
+        `ReportLog.close`: `note()`, `prepare()` and `roll()` all do nothing once it has run.
+        Before, a decision noted after unload queued a record and raised `wants_open`, and the
+        `prepare()` that followed opened a file nothing would ever close — as did a setup's
+        first `prepare()` that lost the race with the unload's `close()`. A reload builds a
+        new journal, which opens its own.
         """
         with self._lock:
+            self._closed = True
+            self._wants_open = False
             self._drain_locked(roll_full=False)
             self._close_locked()
             self._pending.clear()

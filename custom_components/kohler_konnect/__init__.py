@@ -11,11 +11,11 @@ number of each, every one its own device:
   measured dispenses, presets, leak alerts.
 
 One MQTT connection over Azure IoT Hub carries every device's messages. Shower state is
-push-only — REST is read on events: once at setup and again on every MQTT (re)connect,
-because the broker replays nothing on connect. Faucets poll as well, on their own
-coordinator, relaxing once the stream has proven it reports them. All protocol handling
-lives in the bundled ``konnect`` package, which has no Home Assistant imports and can be
-tested offline.
+push-only — REST is read on events: once at setup, while the stream connects, and again on
+every MQTT reconnect, because the broker replays nothing on connect. Faucets poll as well,
+on their own coordinator, relaxing once the stream has proven it reports them. All
+protocol handling lives in the bundled ``konnect`` package, which has no Home Assistant
+imports and can be tested offline.
 
 This replaced two integrations, ``kohler_anthem`` (showers) and ``kohler_sensate``
 (faucets), which signed in, connected and read usage separately for the same account.
@@ -33,6 +33,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
@@ -207,7 +208,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _async_stop(_event: Event) -> None:
         # Home Assistant does not unload entries when it stops, so without this the stream
-        # kept dispatching into entities through the whole shutdown.
+        # kept dispatching into entities through the whole shutdown. It can fire while the
+        # setup below is still running, which then stops starting things and gives up —
+        # see `KohlerKonnectCoordinator._raise_if_closed`.
         await coordinator.async_shutdown_stream()
 
     entry.async_on_unload(hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, _async_stop))
@@ -216,13 +219,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # it returns once they have, so the platforms below still build from them.
     await coordinator.async_setup()
     await coordinator.async_config_entry_first_refresh()
+    if coordinator.closed:
+        # Home Assistant began stopping after `async_setup` had finished — it checks for
+        # itself before that. Nothing is left running; building entities now would only
+        # hang them on a coordinator that has shut down.
+        raise ConfigEntryNotReady("Home Assistant is stopping")
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     # Dropped again by `async_unload_entry`; this covers a setup that fails from here on,
     # which would otherwise leave the dead coordinator for services to find.
     entry.async_on_unload(lambda: _async_forget_coordinator(hass, entry, coordinator))
-    # From here on entities exist, built from each valve's layout as it stands — a layout
-    # read later that differs reloads the entry; see `_async_note_valve_topology`.
+    # From here on entities exist, built from each valve's and controller's layout as it
+    # stands — a layout read later that differs reloads the entry; see
+    # `_async_note_topology`.
     coordinator.entities_built = True
     _async_ensure_parent_valve_devices(hass, entry, coordinator)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -278,8 +287,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         coordinator: KohlerKonnectCoordinator = hass.data[DOMAIN][entry.entry_id]
-        _async_forget_coordinator(hass, entry, coordinator)
+        # **Shut down first, then forget** (2026-10-16). Shutting down waits for a token
+        # refresh in flight, which stores the rotated token in the entry — and that write
+        # fires `_async_update_listener`. With the coordinator already forgotten, the
+        # listener read "no coordinator" as "reload": an unload set the entry up again, a
+        # reload ran twice, and a removal raised. Still known, the write is just a token
+        # change, which reloads nothing.
         await coordinator.async_shutdown_stream()
+        _async_forget_coordinator(hass, entry, coordinator)
     return unload_ok
 
 

@@ -48,13 +48,15 @@ def _model():
 
 
 # =========================================================================== #
-# 1. A rolling week is not a meter
+# 1. A rolling week is a net total, not a meter
 # =========================================================================== #
-def test_a_rolling_week_has_no_state_class_for_statistics_to_misread():
-    """As `TOTAL` with no `last_reset`, every day leaving the window was negative water.
+def test_a_rolling_week_keeps_its_state_class_as_a_net_total():
+    """`TOTAL` with no `last_reset`, as through 1.02 (restored 2026-10-16).
 
-    The recorder added each drop to the statistics sum, and the Energy dashboard offered
-    the sensor as a water source. The faucets' week shares the base, so it is fixed too.
+    1.03 removed the state class, and Home Assistant stopped tracking the statistics owners
+    already had, with a `state_class_removed` repair. A rolling window is a net total: its
+    change can be negative, so `Water Used Today` is the meter. The faucets' week shares
+    the base.
     """
     from custom_components.kohler_konnect import sensor as module
     from custom_components.kohler_konnect.faucet.sensor import (
@@ -64,8 +66,12 @@ def test_a_rolling_week_has_no_state_class_for_statistics_to_misread():
 
     valve = make_valve(_model(), [31, 11, 1])
     coordinator = make_coordinator([valve])
-    assert module.ValveWeeklyWaterSensor(coordinator, valve).state_class is None
-    assert FaucetWeeklyWaterSensor.__new__(FaucetWeeklyWaterSensor).state_class is None
+    for week in (
+        module.ValveWeeklyWaterSensor(coordinator, valve),
+        FaucetWeeklyWaterSensor.__new__(FaucetWeeklyWaterSensor),
+    ):
+        assert week.state_class is SensorStateClass.TOTAL, type(week).__name__
+        assert week.last_reset is None, type(week).__name__
     # The period totals keep theirs: each says when its period started.
     for sensor in (
         module.ValveDailyWaterSensor(coordinator, valve),

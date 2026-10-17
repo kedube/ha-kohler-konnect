@@ -9,7 +9,9 @@ account has a faucet. The other two are the valve's, both writing it through
   what every automation built in the UI turns into — an outlet action, then a temperature
   action — and that the valve cannot take two commands back to back: the second is built from
   a report that predates the first, and closes what the first opened. The words sent here come
-  from the form and from nothing else; see `konnect.valve_hex.encode_shower`.
+  from the form and from nothing the valve reported; see `konnect.valve_hex.encode_shower`. (Flow
+  is restated against each zone's own ceiling, from its outlet configuration, as every other
+  write's is.)
 * ``send_valve_hex`` — the escape hatch, a raw command word for anything neither the entities
   nor the form can express.
 
@@ -65,6 +67,7 @@ from .konnect.valve_hex import (
     encode_shower,
     unit_to_celsius,
 )
+from .number import _celsius_ceiling
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -290,7 +293,7 @@ _SECTION_NAMES = {
 
 
 def _temperature_bounds(unit: str) -> tuple[float, float, str]:
-    """The form's range in the account's unit: 59-118 °F.
+    """The form's range in the account's unit: 59-118 °F, 15-47 °C.
 
     The zone slider's range less its Cold stop. The floor is `ZONE_TEMPERATURE_MIN_F`, the
     minimum every outlet carries; the top is `UI_TEMPERATURE_MAX_F`, the highest the app lets
@@ -298,12 +301,16 @@ def _temperature_bounds(unit: str) -> tuple[float, float, str]:
     clamps to its own scald limit anyway. **Cold is deliberately not reachable from here**:
     a YAML caller typing 0 should get an error, not a cold shower. `send_valve_hex` and the
     zone slider's Cold stop are the ways to ask for it.
+
+    In °C the top is 47, not the 48 that rounding 118 °F's 47.7 °C gave until 2026-10-16,
+    which accepted a value past the limit it stands for — the slider's own top, from
+    `number._celsius_ceiling`.
     """
     if unit.lower().startswith("f"):
         return float(ZONE_TEMPERATURE_MIN_F), float(UI_TEMPERATURE_MAX_F), "°F"
     return (
         float(round(unit_to_celsius(ZONE_TEMPERATURE_MIN_F, "Fahrenheit"))),
-        float(round(unit_to_celsius(UI_TEMPERATURE_MAX_F, "Fahrenheit"))),
+        _celsius_ceiling(UI_TEMPERATURE_MAX_F),
         "°C",
     )
 
@@ -425,8 +432,12 @@ def _resolve_valve(hass: HomeAssistant, device_id: str | None) -> Valve:
     worse than saying so.
     """
     entries: dict[str, KohlerKonnectCoordinator] = hass.data.get(DOMAIN, {})
-    valves = [valve for coordinator in entries.values() for valve in coordinator.valves]
-    if not valves:
+    found = [
+        (coordinator, valve)
+        for coordinator in entries.values()
+        for valve in coordinator.valves
+    ]
+    if not found:
         raise HomeAssistantError(
             "No Anthem valve on this account — solowritesystem is a valve endpoint, and an "
             "Anthem Plus controller is driven through favorites instead"
@@ -438,23 +449,37 @@ def _resolve_valve(hass: HomeAssistant, device_id: str | None) -> Valve:
         wanted = {
             identifier for domain, identifier in device.identifiers if domain == DOMAIN
         }
-        for valve in valves:
+        for coordinator, valve in found:
             if any(
                 ident == valve.device_id or ident.startswith(f"{valve.device_id}_zone_")
                 for ident in wanted
             ):
-                return valve
+                return _open(coordinator, valve)
         raise ServiceValidationError(
             f"{device.name_by_user or device.name} is not an Anthem valve; choose the "
             "valve device, not the controller"
         )
-    if len(valves) > 1:
+    if len(found) > 1:
         raise ServiceValidationError(
             "More than one Anthem valve is set up ("
-            + ", ".join(valve.name for valve in valves)
+            + ", ".join(valve.name for _, valve in found)
             + "); say which one with the Valve field (device_id)"
         )
-    return valves[0]
+    return _open(*found[0])
+
+
+def _open(coordinator: KohlerKonnectCoordinator, valve: Valve) -> Valve:
+    """``valve``, unless its entry is unloading.
+
+    It stays listed until its shutdown is through, which can take seconds, and a command
+    sent through it then outlived the unload (2026-10-16). Still counted when picking the
+    only valve, though: left out, a call meant for it went to another account's.
+    """
+    if coordinator.closed:
+        raise HomeAssistantError(
+            f"{valve.name} is being reloaded; try again in a moment"
+        )
+    return valve
 
 
 async def _async_send_valve_hex(call: ServiceCall) -> ServiceResponse:
@@ -472,7 +497,8 @@ async def _async_custom_shower(call: ServiceCall) -> ServiceResponse:
     Builds both words from the form and hands them to the coordinator as one write. Each
     temperature is checked against `_temperature_bounds`, in the account's unit, so a YAML
     caller cannot send the valve full cold by typing 0. Zone 2's temperature follows zone
-    1's when it is not given.
+    1's when it is not given. Flow, unset for full flow, is a percent of each zone's own
+    ceiling.
     """
     valve = _resolve_valve(call.hass, call.data.get(ATTR_DEVICE_ID))
     unit = valve.temperature_unit
@@ -491,13 +517,23 @@ async def _async_custom_shower(call: ServiceCall) -> ServiceResponse:
         for zone, keys in _ZONE_OUTLET_FIELDS.items()
     }
     flow = call.data.get(ATTR_FLOW)
+    percent = DEFAULT_FLOW_PERCENT if flow is None else float(flow)
+    temperatures = {1: unit_to_celsius(zone1, unit), 2: unit_to_celsius(zone2, unit)}
     try:
+        # **Flow is a percent of each zone's own ceiling**, as on the Flow numbers and in
+        # every other write, restated for the codec by `Valve._wire_flow`. It was encoded
+        # against the codec's 200 until 2026-10-16, so on a zone whose ceiling is another
+        # byte the same 50 % meant a different flow here than on the slider, and "full
+        # flow" asked a zone for more than it allows. `encode_shower` takes one flow for
+        # both words, so zone 2's word comes from a second pass at zone 2's own — the
+        # same validation, the same masks.
         word1, word2 = encode_shower(
-            valve.model,
-            {1: unit_to_celsius(zone1, unit), 2: unit_to_celsius(zone2, unit)},
-            DEFAULT_FLOW_PERCENT if flow is None else float(flow),
-            zone_flags,
+            valve.model, temperatures, valve._wire_flow(1, percent), zone_flags
         )
+        if valve.model.uses_valve2:
+            _, word2 = encode_shower(
+                valve.model, temperatures, valve._wire_flow(2, percent), zone_flags
+            )
     except ValveHexError as err:
         raise ServiceValidationError(str(err)) from err
     keep_on = bool(call.data.get(ATTR_KEEP_ON, False))

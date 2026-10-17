@@ -18,9 +18,19 @@ and its own description of that behaviour had drifted apart, and a comment canno
 
 from __future__ import annotations
 
-from .const import WARMUP_DISABLED
+from .const import WARMUP_DISABLED, WARMUP_MODES_CURRENT
 
-__all__ = ["journal_event", "restore_target", "should_restore_warmup"]
+__all__ = ["journal_event", "restorable", "restore_target", "should_restore_warmup"]
+
+
+def restorable(mode: str | None) -> bool:
+    """Whether auto-restore can put ``mode`` back: an enabled mode this integration writes.
+
+    Only the two with no start delay. The delayed-start pair are decodable, not writable —
+    nothing defines what their delay is (`WARMUP_MODES_LEGACY`) — so `async_set_warmup`
+    refuses them, as it refuses a mode nobody has seen before.
+    """
+    return mode in WARMUP_MODES_CURRENT and mode != WARMUP_DISABLED
 
 
 def should_restore_warmup(
@@ -31,12 +41,15 @@ def should_restore_warmup(
     self_write_mode: str | None,
     self_write_age: float | None,
     grace_seconds: float,
+    enabled_seen_since_write: bool = True,
 ) -> bool:
     """Whether a warmup mode change is a disable this integration should undo.
 
     ``before`` / ``after`` are the modes either side of one MQTT announcement. ``enabled`` is
     the auto-restore switch. ``self_write_mode`` and ``self_write_age`` describe the most
-    recent warmup write *we* made — the mode written, and how many seconds ago.
+    recent warmup write *we* made — the mode written, and how many seconds ago — and
+    ``enabled_seen_since_write`` says whether the valve has been seen in an enabled mode
+    since that write.
 
     True only for a genuine, externally-caused transition into disabled:
 
@@ -46,26 +59,35 @@ def should_restore_warmup(
       fresh event would fire a restore per reboot. Neither is the *first* mode we ever see:
       arriving to find warmup already off is not something being disabled, and turning it on
       would be this integration enabling a feature nobody asked it to.
+    * **Only a mode we can put back** (2026-10-16): one :func:`restorable` accepts. A
+      delayed-start mode taken away used to be decided for, and then refused by the write —
+      a `restore_failed` on every disable, each one counted toward giving up.
     * **A disable we caused is not a fault.** Choosing `Off` on the dropdown writes
       ``warmUpDisabled``, and the valve echoes it back ~3.4 s later. Without this check that
       echo would be read as the device misbehaving and `Off` could never be selected.
       Scoped to the *mode* written, not merely to having written recently: our own switch to
       an enabled mode says nothing about a disable that follows it.
+    * **…and our `Off` stays ours until something enables warm-up again** (2026-10-16). The
+      grace covers the echo, but an `Off` chosen while the stream was down, whose read-back
+      failed or lagged, is first seen by the reconnect's reseed — which can be long after
+      the grace. With nothing seen enabled since the write, the disable is still ours.
     * **Anything that is not a disable** is somebody setting a mode, which is not our business.
     """
     if not enabled:
         return False
     # The branches below stay separate deliberately: each is a distinct reason a restore
-    # is refused, and collapsing the last two into one boolean would lose which one fired
+    # is refused, and collapsing the last ones into one boolean would lose which one fired
     # when reading this against the journal.
     if after != WARMUP_DISABLED:
         return False
     if before is None or before == WARMUP_DISABLED:
         return False
+    if not restorable(before):
+        return False
     if (  # noqa: SIM103
         self_write_mode == WARMUP_DISABLED
         and self_write_age is not None
-        and self_write_age <= grace_seconds
+        and (self_write_age <= grace_seconds or not enabled_seen_since_write)
     ):
         return False
     return True
@@ -82,6 +104,13 @@ def restore_target(taken_away: str | None, remembered: str | None) -> str | None
     it comes from the same announcement being acted on, while ``remembered`` survives across
     restarts and may describe a mode that has since been changed.
 
+    **Only a mode this integration writes is returned** (2026-10-16; see :func:`restorable`).
+    A delayed-start mode taken away gets nothing back rather than ``remembered``: that is
+    older than the mode taken away, and can be the other set of outlets — exactly the
+    guess the "taken away wins" rule exists to avoid. (In practice there would be nothing to
+    fall back on anyway: seeing the valve in a delayed-start mode is what replaced the
+    remembered one.)
+
     This exists as its own function because the bug it prevents was precisely the two
     disagreeing. On 2026-08-20 the coordinator asked ``should_restore_warmup`` — which
     refuses unless ``before`` is a known enabled mode, so it had *proved* one existed — and
@@ -94,10 +123,9 @@ def restore_target(taken_away: str | None, remembered: str | None) -> str | None
     repository's ``tests/`` — is
     that **whenever ``should_restore_warmup`` returns True, this returns a mode.**
     """
-    for mode in (taken_away, remembered):
-        if mode and mode != WARMUP_DISABLED:
-            return mode
-    return None
+    if taken_away and taken_away != WARMUP_DISABLED:
+        return taken_away if restorable(taken_away) else None
+    return remembered if restorable(remembered) else None
 
 
 def journal_event(

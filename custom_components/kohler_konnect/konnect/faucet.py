@@ -277,6 +277,13 @@ class FaucetDevice:
         self.device_id = device_id
         #: Sent with every command. The app always sends the device's own SKU.
         self.sku = sku
+        #: The presets the faucet's own list held when it last answered, by id; None until
+        #: it ever has. Kept across restarts by the faucet's coordinator, so a faucet whose
+        #: presets were deleted in the app does not have them back from the account-wide
+        #: stand-in after the next one; see `async_get_presets`.
+        self.faucet_preset_ids: frozenset[str] | None = None
+        # Whether it has been read since setup, so there are presets to keep.
+        self._listed = False
 
     async def _async_command(self, path: str, **fields: Any) -> Any:
         body = {
@@ -303,24 +310,61 @@ class FaucetDevice:
         """Turn the water on or off."""
         return await self._async_command(FAUCET_ONOFF, action="ON" if on else "OFF")
 
+    @property
+    def faucet_list_read(self) -> bool:
+        """Whether the faucet's own preset list has ever answered, before a restart too."""
+        return self.faucet_preset_ids is not None
+
     async def async_get_presets(self) -> tuple[list[FaucetPreset], str]:
         """The faucet's Konnect presets, and which list they came from.
 
         The faucet's own list (``faucet-experience``) is what the app's faucet screen
-        reads. The account-wide ``customer-experience`` list stands in only if that fails
-        or is not shaped as expected. An empty list is an answer — no presets — and is
-        kept: the stand-in cost an account-wide read on every refresh, and its legacy
-        ``sensateExperiences`` field could bring back presets deleted in the app.
+        reads. The account-wide ``customer-experience`` list stands in only where the
+        faucet's own cannot be used at all: Kohler refuses the request (a 4xx, such as a
+        404) or answers in a shape this cannot read — and only until the faucet's list has
+        been read since setup. An empty list is an answer — no presets — and is kept: the
+        stand-in cost an account-wide read on every refresh, and its legacy
+        ``sensateExperiences`` field can bring back presets deleted in the app.
+
+        Anything else raises, so the caller keeps the presets it read last. Until
+        2026-10-16 any failure — a network error, a timeout, a 5xx — swapped in the stand-in
+        for one refresh, which could hold a deleted 8 L preset in place of the 1.2 L one
+        chosen; "Dispense preset" then fell back to the first preset and poured that.
+
+        Once the faucet's list has ever been read — before a restart too, which
+        `faucet_preset_ids` remembers — a 404 means it has none left: the route exists, and
+        Kohler answers an empty collection with a 404 elsewhere — the controller's saved
+        favorites do exactly that. Any other refusal, or an unreadable reply, raises once
+        the list has been read since setup, and stands in before: after a restart there is
+        nothing read last to keep, and remembering that the list once answered must not
+        leave the presets empty for good if Kohler changes it. **The stand-in then shows only
+        the presets the faucet's list last held** (2026-10-16): its legacy field still
+        carries ones deleted in the app, and one refused read after a restart brought an
+        8 L preset back for "Dispense preset" to pour.
         """
         try:
-            presets = parse_faucet_experiences(
-                await self._client.async_get_faucet_presets(self.device_id),
-                self.device_id,
-            )
+            payload = await self._client.async_get_faucet_presets(self.device_id)
         except KohlerError as err:
+            if not err.rejected:
+                raise  # no answer, a server error or throttling: nothing to go on
+            if err.status == 404 and self.faucet_list_read:
+                self._listed = True  # an answer: none
+                self.faucet_preset_ids = frozenset()
+                return [], "faucet-experience"
+            if self._listed:
+                raise
             _LOGGER.debug("Faucet preset list unavailable: %s", err)
             presets = None
+        else:
+            presets = parse_faucet_experiences(payload, self.device_id)
+            if presets is None and self._listed:
+                raise KohlerError("Kohler's faucet preset list is unreadable", payload)
         if presets is not None:
+            self._listed = True
+            self.faucet_preset_ids = frozenset(p.preset_id for p in presets)
             return presets, "faucet-experience"
         payload = await self._client.async_get_customer_experience()
-        return parse_presets(payload, self.device_id), "customer-experience"
+        stand_in = parse_presets(payload, self.device_id)
+        if (known := self.faucet_preset_ids) is not None:
+            stand_in = [p for p in stand_in if p.preset_id in known]
+        return stand_in, "customer-experience"

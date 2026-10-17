@@ -45,8 +45,9 @@ Nothing is created on disk until the first message actually arrives while enable
 leaving the feature installed but off costs one branch per message.
 
 Thread safety: paho calls `write()` on its own network thread, never the event loop, so the
-file I/O here is already off-loop. The lock guards against a `close()` from the loop racing
-a write from that thread.
+file I/O here is already off-loop. The lock guards against a `close()` racing a write from
+that thread — the unload's, from a worker thread (`KonnectMqttStream._close_captures`), or
+`write()`'s own when capture is switched off.
 """
 
 from __future__ import annotations

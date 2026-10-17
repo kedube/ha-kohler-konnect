@@ -21,8 +21,9 @@
       },
       "reauth_confirm": {
         "title": "Reconnectez-vous",
-        "description": "La session enregistrée pour {username} a expiré. Saisissez de nouveau le mot de passe pour vous reconnecter.",
+        "description": "La session enregistrée pour {username} a expiré. Saisissez de nouveau le mot de passe pour vous reconnecter. Si l'adresse e-mail de votre compte Kohler a changé depuis, saisissez la nouvelle.",
         "data": {
+          "username": "E-mail",
           "password": "Mot de passe"
         }
       }
@@ -263,6 +264,10 @@
     "faucet_api_changed": {
       "title": "Kohler continue de refuser les requêtes pour {name}",
       "description": "Le cloud Kohler a refusé plusieurs requêtes d'affilée, ce qui signifie généralement que Kohler a modifié son API. Vérifiez si une mise à jour de cette intégration est disponible. Sinon, ouvrez un ticket et joignez les diagnostics de l'intégration.\n\nDernière erreur : {error}"
+    },
+    "faucet_auto_off_failed": {
+      "title": "L'eau de {name} coule peut-être encore",
+      "description": "L'eau ouverte depuis Home Assistant sur {name} a atteint sa limite de sécurité, mais Home Assistant n'a pas pu la fermer : le cloud Kohler n'a pas accepté la commande, ou le robinet n'a pas signalé depuis que l'eau est coupée.\n\nHome Assistant continue d'essayer — après 1, 2, 5 et 10 minutes, puis toutes les 15 minutes — jusqu'à ce que l'eau soit connue comme coupée, y compris après un redémarrage. Si elle coule encore, fermez-la au robinet.\n\nCe message disparaît dès que l'eau est connue comme coupée.\n\nDernière erreur : {error}"
     },
     "replaced_integration": {
       "title": "Supprimez les anciennes intégrations Kohler",

@@ -39,7 +39,8 @@ to catch it fires constantly on healthy quiet, and any threshold high enough to 
 misses it. So neither trigger below decides anything from silence. **Silence only decides
 when to ask.** The answer always comes from `connectionState`, which is ground truth — with
 one exception that runs the other way: a valve message is proof of reachability, so a valve
-reported offline that speaks again is marked reachable without asking (since 2026-10-16).
+reported offline that speaks again is marked reachable without asking, and a `Disconnected`
+from a read sent before it spoke does not undo that (both since 2026-10-16).
 
 ## The two triggers
 
@@ -152,8 +153,10 @@ class CloudConnectionWatch:
         # The last unfamiliar `connectionState` logged, so each new one is said once.
         self._unfamiliar: str | None = None
         # Why `_connected` reads True when Kohler's last answer said otherwise: set when a
-        # valve message overrules a `Disconnected`, cleared by the next answer that carries
-        # `connectionState`. See `note_gcs_message`.
+        # valve message overrules a `Disconnected` — one already given, or one from a read
+        # sent before the message — and cleared by the next answer that carries
+        # `connectionState`, unless that is another such out-of-date `Disconnected`. See
+        # `note_gcs_message` and `note_rest_payload`.
         self._overruled_because: str | None = None
         # Present only if Kohler returns it for the valve. `hub-state` carries it; whether
         # `gcs-state` does is an open question, so this surfaces the answer the first time a
@@ -184,6 +187,8 @@ class CloudConnectionWatch:
         The one thing that moves it without a read is the valve itself speaking after it was
         reported offline: that message came through Kohler's cloud, so it is reachable. See
         `note_gcs_message`; `reachable_because` in :attr:`attributes` says when that is why.
+        For the same reason a read sent before the valve last spoke cannot turn it off — see
+        `note_rest_payload`'s ``requested_at``.
         """
         return self._connected
 
@@ -429,6 +434,7 @@ class CloudConnectionWatch:
         *are* meant to apply state still do.
         """
         device = self._valve.gcs_device
+        requested_at = time.monotonic()
         try:
             payload = await self._coordinator.client.async_get_gcs_state(
                 device.device_id
@@ -440,10 +446,15 @@ class CloudConnectionWatch:
             self._coordinator.async_refresh_entities()
             return
 
-        self.note_rest_payload(payload, trigger)
+        self.note_rest_payload(payload, trigger, requested_at=requested_at)
 
     def note_rest_payload(
-        self, payload: Any, trigger: str, *, notify: bool = True
+        self,
+        payload: Any,
+        trigger: str,
+        *,
+        notify: bool = True,
+        requested_at: float | None = None,
     ) -> None:
         """Take the answer out of a ``gcs-state`` payload somebody else already fetched.
 
@@ -462,6 +473,11 @@ class CloudConnectionWatch:
 
         ``notify`` is False for the setup seed, which pushes its own snapshot immediately
         afterwards and must not notify listeners before the platforms exist.
+
+        ``requested_at`` is the `time.monotonic()` at which the GET was sent, from callers
+        that know it. A valve message received after that is newer evidence than the reply,
+        so a ``Disconnected`` in the reply is out of date and does not turn the sensor off;
+        see the note in the body. None — the default — judges the reply as before.
 
         A body that is not a JSON object is read as one with no ``connectionState``: the
         seed that calls this catches only `KohlerError`, so the `AttributeError` a list or a
@@ -491,10 +507,40 @@ class CloudConnectionWatch:
                 self._coordinator.async_refresh_entities()
             return
 
+        value = str(reported).strip().lower()
+        if (
+            value == DISCONNECTED
+            and requested_at is not None
+            and (heard_at := self._last_gcs_at) is not None
+            and heard_at > requested_at
+        ):
+            # ⚠️ **The valve has spoken since this read was sent, so the answer is out of
+            # date** (2026-10-16). `gcs-state` is a cloud document that trails the device,
+            # and a `Disconnected` read in flight while the valve came back — or answered
+            # from before it did — turned the sensor off again straight after
+            # `note_gcs_message` had turned it on, and kept it off until the next check, up
+            # to three hours away. The message is the newer evidence and, having come
+            # through Kohler's cloud, proof the valve is reachable. Kohler's word is still
+            # shown verbatim, with the reason the sensor disagrees, as there.
+            heard_wall = time.time() - (time.monotonic() - heard_at)
+            self._connected = True
+            self._overruled_because = (
+                f"the valve sent a message at {_utc_iso(heard_wall)}, after this "
+                "read was sent, so Kohler's answer was out of date"
+            )
+            _LOGGER.debug(
+                "Cloud check (%s): Kohler reported the valve %s, but it has spoken since "
+                "the read was sent; keeping it reachable",
+                trigger,
+                reported,
+            )
+            if notify:
+                self._coordinator.async_refresh_entities()
+            return
+
         # A fresh answer from Kohler, so any overruling by a valve message is history.
         self._overruled_because = None
         was = self._connected
-        value = str(reported).strip().lower()
         if value not in (CONNECTED, DISCONNECTED) and value != self._unfamiliar:
             self._unfamiliar = value
             _LOGGER.info(

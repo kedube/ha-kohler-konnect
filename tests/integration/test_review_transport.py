@@ -622,20 +622,27 @@ async def test_unusable_iot_hub_settings_at_startup_are_retried(
 
 
 @pytest.mark.parametrize(
-    "reply",
+    ("reply", "dead"),
     [
-        pytest.param(ClientError("connection reset"), id="unreachable"),
-        pytest.param(EXPIRED_GRANT, id="rejected"),
+        pytest.param(ClientError("connection reset"), False, id="unreachable"),
+        pytest.param(EXPIRED_GRANT, True, id="rejected"),
     ],
 )
-async def test_the_fault_log_is_empty_rather_than_failing_when_the_token_does(
-    hass: HomeAssistant, kohler: FakeKohler, reply: object
+async def test_a_sign_in_failure_reading_the_fault_log_is_raised_not_answered_empty(
+    hass: HomeAssistant, kohler: FakeKohler, reply: object, dead: bool
 ) -> None:
-    """Read only while a diagnostics report is built, which must not fail over it."""
+    """Both callers — the diagnostics report and the seed's fault-log read — catch it.
+
+    Answered with `{}`, as release 1.03 did, it looked like any failed read: neither
+    could say that the sign-in was what failed. (Changed 2026-10-16; this test asserted
+    the `{}` until then.)
+    """
     session = async_get_clientsession(hass)
     client = KohlerClient(session, KohlerAuth(session, "refresh-0"))
     kohler.token_queue.append(reply)
-    assert await client.async_get_gcs_diagnostics(VALVE_ID) == {}
+    with pytest.raises(AuthError) as err:
+        await client.async_get_gcs_diagnostics(VALVE_ID)
+    assert credential_is_dead(err.value) is dead
 
 
 # --------------------------------------------------------------------------- #
@@ -682,7 +689,11 @@ async def test_a_mistyped_password_when_signing_in_again_asks_for_it_again(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reauth_confirm"
     assert result["errors"] == {"base": "invalid_auth"}
-    assert list(result["data_schema"].schema) == [CONF_PASSWORD]
+    # The reauth form, its email filled in with the entry's own — since 2026-10-16 it can
+    # be changed, for an account whose email has; `test_review2_transport.py` has that.
+    email, password = result["data_schema"].schema
+    assert (email, password) == (CONF_USERNAME, CONF_PASSWORD)
+    assert email.default() == USERNAME
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_PASSWORD: PASSWORD}

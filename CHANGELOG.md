@@ -11,6 +11,158 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Fixed — safety**
+
+- **The faucet's water safety limit never gives up.** In 1.03 it stopped after ten failed
+  attempts and forgot the limit, so water could keep running once Kohler's cloud came back.
+  It now retries after 1, 2, 5 and 10 minutes, then every 15 minutes, across restarts and
+  reloads, until the water is known to be off; an off command Kohler accepts must be
+  confirmed by a reading — the `Water` switch's own off too, which used to end the limit
+  the moment Kohler took it, faucet running or not; and after the third failed try a repair
+  says the water may still be running. A reading taken before Kohler's copy of the faucet
+  has caught up with Home Assistant's on command can still say "off", or "running" from a
+  run that ended just before it. Once the water has shown as running, such a reading now
+  counts only a minute after the command, or straight after the `Water` switch turns the
+  water off, and the live stream's word at once. That applies
+  to the deadline's own check too: with a 1-minute limit and the cloud 45 s behind, a stale
+  "off" used to drop the limit with the water running.
+- **The faucet's limit no longer cuts off someone using the faucet by hand**: it is dropped
+  when water Home Assistant turned on never shows as running, or stopped while Home
+  Assistant was restarting or the stream was down. It is armed before the on command is
+  sent, so a reload during that command keeps it. Setting the limit to `0` drops one left
+  standing from before, and clears it from storage. Turning the limit back on later can no
+  longer bring the old deadline back and cut off whoever is using the faucet by then.
+- **A Stop can no longer be undone by a late valve report** (1.03). For about 5 s after a
+  command, a report that arrives in between can close an outlet or keep a pause, but never
+  reopen one. Nor by a stale read: one sent seconds after the valve reported keeps what the
+  valve said, and a report whose zone 2 word is garbled still delivers zone 1's Stop. That
+  rule goes by when a report arrived: one held at startup no longer keeps a zone stopped at
+  the wall since shown running. It also keeps only what the report carried. A Stop that
+  fails during a warm-up, just as the warm-up ends, no longer leaves every warm-up outlet
+  open for the next command.
+- **A Stop goes first.** Valve commands asked for before it and not yet sent are dropped
+  ("superseded by a Stop").
+- **A slow read-back can no longer loosen the scald limit** (1.03). A read that has not
+  caught up never replaces a value written from Home Assistant, and each outlet setting has
+  its own "may not have been applied" repair, so verifying one no longer clears another.
+  Nothing is written if any outlet's record would be refused. A setting the valve still
+  hasn't confirmed is checked before another is sent, and if the valve reports something
+  else — it was changed in the app, say — changing any other outlet setting is refused until
+  that one is set again, rather than re-sending a looser scald limit over it. That check, the
+  read-back and a reconnect's read now go by the valve's own outlet announcements over the
+  cloud's copy, which can lag them by half a minute. Before, a lagging read put back the
+  higher limit the app had just lowered, and the next write sent it to every outlet. A change
+  the valve announces soon after one made here is taken as the app's, unless it shows the old
+  value (a late echo), and the next reading checks that guess. Two settings in dispute no
+  longer lock every outlet setting: setting either one again sends the other as the valve
+  reports it. While the MQTT connection is down, an outlet setting reads the valve's settings
+  first. For half a minute after the connection comes back, outlet settings are refused, so
+  the cloud's copy can catch up with anything changed in the app meanwhile. A first
+  connection that comes long after startup, because the first attempt failed, re-reads the
+  outlet settings instead of trusting ones the app may have changed meanwhile.
+- **Changes during a warm-up no longer turn it into a shower on every warm-up outlet.** They
+  keep the outlets of the shower Home Assistant started; if the warm-up was started
+  elsewhere they are refused until it ends. Stop always goes through. A zone stopped or
+  paused at the wall meanwhile stays that way, and a command that fails during the warm-up
+  doesn't lift the refusal. A warm-up mode read back from the cloud no longer clears the
+  valve's own "warming up".
+- **A cancelled switch or select command** — a script stopped, an automation restarted — no
+  longer leaves the entity showing a position the valve never reached.
+- **An unreadable zone-2 outlet count no longer turns a two-zone valve into a one-zone
+  one**, which since 1.03 deleted its zone devices and left zone 2 out of reach. The
+  confirmed model is kept, or setup asks.
+- **The default shower is never rewritten from a preset holding a bad valve word**, which
+  could remove zone 2 from it.
+- **A faucet's "Dispense preset" no longer pours a deleted preset's amount** after a single
+  failed read of its presets.
+
+**Fixed — regressions in 1.03**
+
+- **`Water Used This Week` keeps long-term statistics again.** 1.03 removed its state
+  class to stop a rolling window's daily change ever reading as negative use, and Home
+  Assistant then reported that it "no longer has a state class". If you saw that, leave it:
+  after updating it clears itself and the old statistics carry on (nothing was recorded
+  while 1.03 ran). Use `Water Used Today` for the Energy dashboard.
+- **A read after a reconnect no longer throws away newer updates** — a stopped shower
+  showing open, a warm-up change lost — and no longer ends the protection of a command
+  just sent.
+- **Entities on every device recover** after a failed refresh, not only the next device to
+  send a message.
+- **Home Assistant stopping during setup** no longer leaves the MQTT connection running.
+- **A read that failed at startup is tried again when the MQTT connection comes up**, as
+  1.03 did: outlet settings, the Favorite list and a controller's accessories no longer
+  stay unavailable until the next reconnect.
+- **Unloading or reloading during a token refresh** no longer sets the entry up again,
+  reloads it twice, or logs an error on removal. While an entry unloads, actions
+  (`send_valve_hex`, `custom_shower`, `dispense`) no longer reach its devices. An action
+  that names no device is no longer sent to another account's only valve or faucet instead.
+  A `custom_shower` keep-on watcher no longer outlives the unload.
+- **A reconnect during the read that follows a reconnect** now reads again once that read
+  ends, rather than skipping its own catch-up.
+
+**Fixed**
+
+- **`Water Used Today`** no longer counts an evening's water twice after a restart on
+  accounts whose daily totals Kohler files by UTC date; east of UTC, water used between
+  local and UTC midnight is counted on the right day.
+- **`Water Used This Year`** reads unknown while Kohler's monthly history cannot be read,
+  rather than a partial year that statistics would record as a large drop and then a jump;
+  a month that has ended no longer dips at the turn of the month.
+- **Celsius sliders stop at 47 °C under a 47.7 °C scald limit**, never above it, and never
+  offer a value below an outlet's minimum.
+- **Adding an account no longer leads straight to a sign-in prompt**, and a reload during a
+  token refresh no longer forces one.
+- **Re-authentication** keeps its own form, with an Email field: a changed Kohler email is
+  accepted when it is the same account (and carried into the entry's title, unless you
+  renamed it), and entries damaged by the reauth bug fixed in 1.03 can sign in again. A
+  sign-in error Kohler sends as a bare number is read as its code, so a blocked sign-in no
+  longer reads as a wrong password.
+- **The MQTT connection** can no longer stop reconnecting for good after a badly timed
+  reconnect, and unloading no longer waits up to a minute behind a stuck connection; a
+  reconnect waits for an abandoned attempt to end, so it can't knock its replacement off.
+  It never starts a second connection beside one still trying, and logs a warning every two
+  minutes while it waits, so a lookup that hangs no longer leaves the stream down silently.
+  The `MQTT Connection` sensor now shows a gap while it lasts.
+- **Problem sensors:** a valve's fault log is read twice a day as well as at startup, and a
+  controller whose error read fails keeps the errors already known instead of reading OK.
+  Diagnostics report an unreadable fault log as an error, not as "no faults".
+- **`Cloud Connection`** is no longer turned off by a `Disconnected` answer older than the
+  valve's latest message.
+- **Warmup Auto-Restore** finishes a restore that was waiting for a shower to end, even
+  across a restart; keeps an Off chosen in Home Assistant even when it learns of it late;
+  and leaves the old delayed-start modes alone (with one warning) instead of failing to
+  restore them.
+- **Controllers:** a degraded configuration reply no longer hides Music, Light and Steam
+  until a reload; a layout learned after setup reloads the entry once, as valves do; a
+  favorite switch sent as one message shows the new favorite; an outlet sent as `"1.0"`
+  reads as on.
+- **Malformed replies** — `NaN` or `Infinity` in a number, a sign-in reply that is not an
+  object, an error code sent as a number — no longer break setup, a later command or a
+  sensor.
+- **Capture files** opened before a sign-in that fails are closed, rather than a new one
+  left open on every retry.
+- **Faucets:** a re-read a message asked for that fails is retried after a pause, and alone,
+  rather than at every poll with every other read. So is a first read of the configuration
+  or the presets that failed. A configuration Kohler wouldn't serve used to be read again,
+  with both preset lists, every 5 s while the water ran. A re-read failing for days no
+  longer stops the faucet updating. A faucet whose presets were all deleted stays without
+  after a restart, rather than taking the account's old list. Any other refusal after a
+  restart still falls back to that list instead of leaving the presets empty, but only with
+  the presets the faucet's own list last held.
+- **Outlet-setting repair notices** clear when Home Assistant restarts, along with what they
+  were about. One said no other setting could be changed, which was no longer true.
+- **`custom_shower`** encodes flow against each zone's own ceiling, like every other
+  command (the same on every valve seen so far).
+
+**Changed — efficiency**
+
+- **Each device is read once at startup**, not twice: the MQTT connection now starts
+  alongside the startup reads, which also takes a round trip off setup.
+- **A faucet remembers that instant updates work for it**, so after a restart it polls
+  every 5 minutes instead of every 30 s until it is next used (about 12 reads an hour
+  rather than 120), and the startup no longer mistakes a change made before the stream was
+  up for one it missed.
+
 ## 1.03 — 2026-10-16
 
 **Fixed — safety**

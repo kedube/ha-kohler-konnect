@@ -357,7 +357,10 @@ def test_an_undecodable_valve_word_keeps_the_last_good_state_but_proves_life():
 
 
 def test_an_undecodable_second_word_keeps_zone_two_as_it_was():
-    """One garbled word must not close a zone that is still running."""
+    """One garbled word must not close a zone that is still running.
+
+    The good word beside it is still its own zone's answer. See `GcsState._apply_solo`.
+    """
     state = GcsState(DOUBLE)
     state.apply_envelope(solo("0184C800", "1184C802"))
     state.apply_envelope(solo("0184C801", "garbage!"))
@@ -770,8 +773,10 @@ def test_light_groups_and_experiences_skip_entries_that_are_not_objects():
         # The accessory messages' spelling, accepted as a fallback.
         ([{"favoriteid": "3", "status": "ON"}], ("3", None)),
         ([{"id": "9", "name": "Hair Wash", "status": "OFF"}], (None, None)),
-        # A trailing attribute cannot resurrect the favorite just turned off.
-        ([{"id": "9", "status": "OFF"}, {"id": "2", "status": "ON"}], (None, None)),
+        # A trailing attribute cannot resurrect the favorite just turned off...
+        ([{"id": "9", "status": "OFF"}, {"id": "9", "status": "ON"}], (None, None)),
+        # ...but a switch sent as one message lands on the new favorite (2026-10-16).
+        ([{"id": "9", "status": "OFF"}, {"id": "2", "status": "ON"}], ("2", None)),
         # "0" is nothing driving the system.
         ([{"id": "0", "name": "None", "status": "ON"}], (None, None)),
         (["x", {"name": "no id"}], (None, None)),

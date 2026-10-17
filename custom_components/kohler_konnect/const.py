@@ -527,6 +527,13 @@ CONF_WARMUP_AUTO_RESTORE = "warmup_auto_restore"
 # guessing "all outlets" would silently change a fixture set to "selected outlets".
 CONF_LAST_WARMUP_MODE = "last_warmup_mode"
 
+# The mode a scheduled restore is going to write, persisted from the moment it is scheduled
+# until it is written or no longer wanted. A restore waits a minute, and for as long as the
+# water runs, and a restart or reload in that time used to lose it: the next seed saw warm-up
+# already off with nothing before it, which is not a disable, so it stayed off. The seed
+# finishes it instead — see `WarmupManager.note_seeded_mode`. Absent or None: nothing owed.
+CONF_WARMUP_RESTORE_PENDING = "warmup_restore_pending"
+
 
 # Options the coordinator reads live from `entry.options` on every access instead of caching,
 # so they already take effect the moment they are saved and a reload would be pure cost.
@@ -537,8 +544,9 @@ CONF_LAST_WARMUP_MODE = "last_warmup_mode"
 #
 # The per-valve Warmup Auto-Restore switch and remembered warm-up mode are written while
 # running — the second during setup itself — and both live under `CONF_VALVES`, so ignoring
-# that key covers them. Until 2026-08-21 they were flat keys missing from this list, and
-# touching either control reloaded the whole entry.
+# that key covers them, and the pending restore (`CONF_WARMUP_RESTORE_PENDING`) beside them.
+# Until 2026-08-21 they were flat keys missing from this list, and touching either control
+# reloaded the whole entry.
 RELOAD_IGNORED_OPTION_KEYS = frozenset({CONF_REPORT_LOG_FILE, CONF_VALVES})
 
 # One minute, as asked for. Long enough that a re-sync burst has finished writing before we
@@ -574,6 +582,13 @@ WARMUP_AUTO_RESTORE_GIVING_UP = (
     "Something on the system is actively rewriting it, and retrying is not fixing that — "
     "stopping until the mode stays enabled or Home Assistant restarts. See "
     "docs/protocol/gcs_valve.md section 5."
+)
+
+WARMUP_AUTO_RESTORE_NOT_WRITABLE = (
+    "Warmup Auto-Restore cannot put the Anthem valve's warmup mode back to %s: that is not "
+    "one of the modes this integration writes (a delayed-start mode, or one it does not "
+    "know), so it has been left off. Choose a mode on the Warmup dropdown and auto-restore "
+    "will put that one back from then on."
 )
 
 # ---------------------------------------------------------------------------
@@ -706,7 +721,8 @@ RETRY_AFTER_MAX = timedelta(minutes=15)
 REJECTIONS_BEFORE_ISSUE = 3
 ISSUE_FAUCET_NOT_FOUND = "faucet_not_found"
 ISSUE_FAUCET_API_CHANGED = "faucet_api_changed"
-# Cleared leak events, the leak alert and the safety deadline, for every faucet of an entry.
+# Cleared leak events, the leak alert, the safety limit and whether instant updates have
+# proved themselves, for every faucet of an entry.
 FAUCET_STORAGE_VERSION = 1
 FAUCET_STORAGE_KEY = DOMAIN + ".{entry_id}.faucets"
 # Cap on remembered cleared events; old ones have long left Kohler's history.

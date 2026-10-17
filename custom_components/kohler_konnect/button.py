@@ -83,11 +83,24 @@ class ValveRestartButton(KohlerValveEntity, ButtonEntity):
 
 
 class _NewCaptureMixin:
-    """Roll the raw MQTT capture file. Shared so both device variants behave identically."""
+    """Roll the raw MQTT capture file. Shared so both device variants behave identically.
+
+    Mixed in ahead of the device base so `_update_device_ids` below wins the MRO.
+    """
 
     _attr_name = "Start new MQTT capture"
     _attr_icon = "mdi:file-restore-outline"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def _update_device_ids(self) -> frozenset[str] | None:
+        """Every message, whichever device sent it: the capture is the whole account's.
+
+        It lives on one device only to be findable, and its attributes describe the one
+        capture file every device's messages go into — so a message from any of them can
+        change them. Scoped to its host device it missed the others' (2026-10-16).
+        """
+        return None
 
     async def async_press(self) -> None:
         raw_log = self.coordinator.raw_log

@@ -967,9 +967,13 @@ def test_a_controller_reports_the_split_through_configured_outlets_not_parts():
         "zonetwo": {"configuredoutlets": 3},
     }
     assert topology_from_hub_configuration(configuration) == (3, 3)
-    assert topology_from_hub_configuration({"zoneone": {"configuredoutlets": 2}}) == (
-        2,
-        0,
+    assert topology_from_hub_configuration(
+        {"zoneone": {"configuredoutlets": 2}, "zonetwo": {"configuredoutlets": "0"}}
+    ) == (2, 0)
+    # Zone 2 left out is no answer, not "single zone" (2026-10-16): read as 0, a garbled
+    # reply shrank a two-zone controller to one.
+    assert (
+        topology_from_hub_configuration({"zoneone": {"configuredoutlets": 2}}) is None
     )
     assert topology_from_hub_configuration({"zoneone": None}) is None
     assert topology_from_hub_configuration(None) is None
@@ -1045,8 +1049,14 @@ def test_capabilities_come_from_parts_and_unread_is_distinct_from_empty():
         True,
     )
     assert caps.describe() == "water, light"
-    empty = HubCapabilities.from_configuration(None)
+    # A controller reporting every part it names as not connected is read, and empty.
+    empty = HubCapabilities.from_configuration(
+        {"parts": {"valve1": "NotConnected", "amplifier": None}}
+    )
     assert empty.known and empty.describe() == "no accessories detected"
+    # A reply that names no parts at all is unread (2026-10-16): latched as "empty", it
+    # hid Music, Light and Steam until a reload.
+    assert HubCapabilities.from_configuration(None).known is False
     assert HubCapabilities().known is False
 
 

@@ -15,6 +15,7 @@ hex sensor, where a zero reads as data rather than as a broken entity.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
@@ -380,8 +381,10 @@ class ValveWeeklyWaterSensor(_ValveWater, DailyWaterUsage):
     this endpoint (see `water.DailyWaterUsage`), and a rolling week answers "how much have we
     used lately" without depending on which day Kohler would have called the start.
 
-    No state class, so no long-term statistics and no place in the Energy dashboard: a
-    window that drops a day at a time is not a meter. See `DailyWaterUsage.state_class`.
+    `TOTAL` with no `last_reset`: a net total, whose long-term statistics follow the window
+    up and down — the change is negative on a day a heavy day leaves it. So it is no
+    consumption meter; `Water Used Today` is the one for the Energy dashboard. See
+    `water.DailyWaterUsage`.
     """
 
     _attr_name = "Water Used This Week"
@@ -805,6 +808,8 @@ class ControllerZoneTemperatureSensor(KohlerControllerEntity, SensorEntity):
         if zone is None or zone.temperature is None:
             return None
         try:
-            return float(zone.temperature)
+            value = float(zone.temperature)
         except (TypeError, ValueError):
             return None
+        # `float("NaN")` parses, and Home Assistant refuses a non-finite sensor value.
+        return value if math.isfinite(value) else None

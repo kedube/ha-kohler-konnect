@@ -132,10 +132,18 @@ def test_a_fault_announced_without_a_valve_word_still_reaches_the_problem_sensor
     assert (state.valve1, state.valve2) == before
 
 
-def test_a_good_second_word_is_applied_even_when_the_first_is_garbled():
+def test_a_good_second_word_is_applied_when_the_first_is_garbled():
+    """Each word is its own zone's answer; a garbled one keeps only its own zone.
+
+    A pair-or-nothing rule was tried and undone on 2026-10-16; see `GcsState._apply_solo`
+    and `tests/test_review2_protocol.py`.
+    """
     state = GcsState(DOUBLE)
     state.apply_envelope(
-        gcs(MSG_GCS_SOLO_STATUS, {"primaryValve1": "0184C801", "secondaryValve1": ""})
+        gcs(
+            MSG_GCS_SOLO_STATUS,
+            {"primaryValve1": "0184C801", "secondaryValve1": "1184C800"},
+        )
     )
     state.apply_envelope(
         gcs(
@@ -182,8 +190,9 @@ def test_controller_configuration_of_the_wrong_shape_detects_nothing(configurati
 
 
 def test_a_wrong_shaped_zone_two_counts_as_absent():
+    # And absent is no answer, not "single zone" (2026-10-16): see `konnect/topology.py`.
     configuration = {"zoneone": {"configuredoutlets": 2}, "zonetwo": "3"}
-    assert topology_from_hub_configuration(configuration) == (2, 0)
+    assert topology_from_hub_configuration(configuration) is None
 
 
 @pytest.mark.parametrize(

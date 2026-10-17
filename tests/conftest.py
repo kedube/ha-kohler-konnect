@@ -264,6 +264,7 @@ def make_coordinator(valves, controllers=(), *, zone_grouping=None, faucets=()):
         entry=SimpleNamespace(data={}, options={}, entry_id="test"),
         last_update_success=True,
         async_add_listener=lambda *a, **k: lambda: None,
+        closed=False,
     )
 
 

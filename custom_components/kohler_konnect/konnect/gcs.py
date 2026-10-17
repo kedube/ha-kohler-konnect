@@ -76,6 +76,15 @@ class PresetTimerPlan:
         The slot holds valve words but no name under any key this reads. **Also left
         alone**: the rewrite would send ``name: ""``, which is exactly how ``writepreset``
         deletes a slot — and the coordinator runs this on preset 1 at every setup.
+    ``unsafe``
+        A stored valve word that is not the unused word failed ``check_preset_word``:
+        malformed — an 8-character command word where a 6-character preset word belongs,
+        say — or hotter than the Konnect app can store. **Left alone too** (2026-10-16):
+        the record is replaced whole, so the rewrite could only echo that word to the valve
+        or send ``000000`` in its place, and ``000000`` takes that valve out of the preset
+        for good — a dropped ``valve2`` word removed zone 2 from the default shower. Either
+        is a bigger change to the owner's shower than the timer this exists to fix.
+        ``valves`` holds only the words that passed.
     ``already``
         The stored timer already matches the target. Nothing to write.
     ``rewrite``
@@ -135,6 +144,7 @@ def plan_preset_timer(
         return PresetTimerPlan("absent")
 
     valves: dict[int, str] = {}
+    unsafe = False
     details = record.get("valveDetails")
     for detail in details if isinstance(details, list) else ():
         if not isinstance(detail, dict):
@@ -144,21 +154,22 @@ def plan_preset_timer(
         if not index.lower().startswith("valve") or not word or set(word) == {"0"}:
             continue
         # **Validate before echoing.** This word came from the cloud and is about to be
-        # written back verbatim, because `writepreset` replaces the record whole. A
-        # malformed or scalding word is dropped rather than passed through — dropping it
-        # sends the unused-valve word for that valve, which is what `_valve_fields` already
-        # sends for a valve the preset does not use, so the failure mode is a preset that
-        # stops driving one valve rather than one that runs it too hot. The ceiling admits
-        # every value the Konnect app can store; see `PRESET_ECHO_MAX_TENTHS`.
+        # written back verbatim, because `writepreset` replaces the record whole. The
+        # ceiling admits every value the Konnect app can store; see
+        # `PRESET_ECHO_MAX_TENTHS`. A word that fails stops the whole rewrite (the plan's
+        # `unsafe`): it used to be dropped while the rewrite went ahead, which sent the
+        # unused-valve word in its place and so deleted that valve from the preset.
         try:
             word = check_preset_word(word)
         except ValveHexError:
             _LOGGER.warning(
-                "Ignoring preset %s %s: the stored word %r is malformed or out of range",
+                "Leaving preset %s's timer alone: its stored %s word %r is malformed or "
+                "out of range, and rewriting the preset would replace it",
                 preset_id,
                 index,
                 word,
             )
+            unsafe = True
             continue
         try:
             valves[int(index[5:])] = word
@@ -171,6 +182,8 @@ def plan_preset_timer(
     name = str(
         record.get("title") or record.get("logicalName") or record.get("name") or ""
     ).strip()
+    if unsafe:
+        return PresetTimerPlan("unsafe", name, valves=valves)
     if not name and not valves:
         return PresetTimerPlan("empty")
     if not name:
@@ -185,6 +198,88 @@ def plan_preset_timer(
     if previous == target_seconds:
         return PresetTimerPlan("already", name, volume, valves, previous)
     return PresetTimerPlan("rewrite", name, volume, valves, previous)
+
+
+def validate_outlet_record(
+    limits: OutletLimits,
+    *,
+    maximum_run_time: int | None = None,
+    maximum_temperature_tenths: int | None = None,
+    default_temperature_tenths: int | None = None,
+) -> dict[str, Any]:
+    """The record `GcsDevice.async_write_outlet_config` sends, or `KohlerError` if it would not.
+
+    ``limits`` is the outlet's current record, and the named fields override it — wire units
+    throughout, as `OutletLimits` holds them. Every refusal of that write is made here.
+
+    **A function of its own so a caller can check every outlet before writing any**
+    (2026-10-16). `writeoutletconfig` takes one outlet per call, and a refusal used to
+    surface only when the chain reached the outlet concerned — a corrupt flow ceiling on
+    outlet 3 left outlets 1 and 2 already written. `Valve.async_write_outlet_setting` runs
+    this over every cached outlet before its first POST, so nothing is written unless every
+    outlet would be.
+    """
+    run_time = limits.maximum_run_time if maximum_run_time is None else maximum_run_time
+    maximum = (
+        limits.maximum_temperature_tenths
+        if maximum_temperature_tenths is None
+        else maximum_temperature_tenths
+    )
+    default = (
+        limits.default_temperature_tenths
+        if default_temperature_tenths is None
+        else default_temperature_tenths
+    )
+    record = {
+        "outLetId": limits.outlet_id,
+        "outLetType": limits.outlet_type,
+        "outLetFlags": limits.outlet_flags,
+        "minimumOutletTemperature": limits.minimum_temperature_tenths,
+        "defaultOutletTemperature": default,
+        "maximumOutletTemperature": maximum,
+        "minimumFlowrate": limits.minimum_flow_byte,
+        "defaultFlowrate": limits.default_flow_byte,
+        "maximumFlowrate": limits.maximum_flow_byte,
+        "maximumRuntime": run_time,
+    }
+    # **Refuse rather than guess.** Every field here is part of the record being
+    # replaced; a None is something this integration has not read, and inventing it
+    # would change a setting the caller never asked to touch. The two app defaults
+    # `async_write_outlet_config` adds are the exception, and only because they are what
+    # the app itself writes.
+    missing = sorted(key for key, value in record.items() if value is None)
+    if missing:
+        raise KohlerError(
+            f"Refusing to write outlet {limits.outlet_id}: {', '.join(missing)} "
+            "has not been read from the valve, and this endpoint replaces the whole "
+            "record. Reload the integration to re-read the outlet configuration."
+        )
+    # **Absolute ranges, before the relative check below.** Most of these values are
+    # echoed from a read rather than chosen, which is the trust boundary
+    # `check_preset_word` closes for preset words: a corrupt read or a caller's slip
+    # must not become the valve's scald limit or flow envelope. The temperature ceiling
+    # is the app's own for this write — it clamps at 488 tenths (gcs_valve.md §2.1) —
+    # and flow is the valve's byte range. Only `default > maximum` was checked until
+    # 2026-10-16, so a 102.3 °C scald limit passed as long as the default sat below it.
+    for key, low, high, unit in (
+        ("minimumOutletTemperature", 0, TEMPERATURE_MAX_TENTHS, "tenths of °C"),
+        ("defaultOutletTemperature", 0, TEMPERATURE_MAX_TENTHS, "tenths of °C"),
+        ("maximumOutletTemperature", 0, TEMPERATURE_MAX_TENTHS, "tenths of °C"),
+        ("minimumFlowrate", FLOW_BYTE_MIN, FLOW_BYTE_MAX, "flow bytes"),
+        ("defaultFlowrate", FLOW_BYTE_MIN, FLOW_BYTE_MAX, "flow bytes"),
+        ("maximumFlowrate", FLOW_BYTE_MIN, FLOW_BYTE_MAX, "flow bytes"),
+    ):
+        if not low <= record[key] <= high:
+            raise KohlerError(
+                f"Refusing to write outlet {limits.outlet_id}: {key} {record[key]} is "
+                f"outside {low}-{high} {unit}, the range this write accepts."
+            )
+    if default > maximum:
+        raise KohlerError(
+            f"Default temperature {default / 10:.1f} °C is above the scald limit "
+            f"{maximum / 10:.1f} °C for outlet {limits.outlet_id}."
+        )
+    return record
 
 
 class GcsDevice:
@@ -425,7 +520,8 @@ class GcsDevice:
 
         * **Omitting a key.** Gson drops unmatched keys, the API returns 201, and the field
           takes whatever the server defaults to. A record with an unknown field cannot be
-          written at all — that is what the `None` check below refuses.
+          written at all — that is what the `None` check in `validate_outlet_record`
+          refuses.
         * **The write keys are not the read keys.** `maximumRuntime`, `maximumFlowrate`,
           `minimumFlowrate`, `defaultFlowrate` — lowercase `t`/`r` on the write side,
           capitalised on the MQTT read side. Four of twelve fields would vanish.
@@ -433,71 +529,20 @@ class GcsDevice:
           reports display units, which is why `OutletLimits` normalises on the way in and
           this sends what it holds without converting again.
 
+        Every refusal — an unread field, a value outside the ranges this write accepts, a
+        default above the scald limit — is `validate_outlet_record`'s, so a caller writing
+        several outlets can make the same checks on all of them before the first is sent.
+
         A 201 means *accepted for delivery*, never *applied* — the response carries no echo
         and the app performs no read-back. Callers must verify by reading the value back,
         and must allow time: an immediate `gcsadvancestate` read still shows the old value.
         """
-        run_time = (
-            limits.maximum_run_time if maximum_run_time is None else maximum_run_time
+        record = validate_outlet_record(
+            limits,
+            maximum_run_time=maximum_run_time,
+            maximum_temperature_tenths=maximum_temperature_tenths,
+            default_temperature_tenths=default_temperature_tenths,
         )
-        maximum = (
-            limits.maximum_temperature_tenths
-            if maximum_temperature_tenths is None
-            else maximum_temperature_tenths
-        )
-        default = (
-            limits.default_temperature_tenths
-            if default_temperature_tenths is None
-            else default_temperature_tenths
-        )
-        record = {
-            "outLetId": limits.outlet_id,
-            "outLetType": limits.outlet_type,
-            "outLetFlags": limits.outlet_flags,
-            "minimumOutletTemperature": limits.minimum_temperature_tenths,
-            "defaultOutletTemperature": default,
-            "maximumOutletTemperature": maximum,
-            "minimumFlowrate": limits.minimum_flow_byte,
-            "defaultFlowrate": limits.default_flow_byte,
-            "maximumFlowrate": limits.maximum_flow_byte,
-            "maximumRuntime": run_time,
-        }
-        # **Refuse rather than guess.** Every field here is part of the record being
-        # replaced; a None is something this integration has not read, and inventing it
-        # would change a setting the caller never asked to touch. The two app defaults
-        # below are the exception, and only because they are what the app itself writes.
-        missing = sorted(key for key, value in record.items() if value is None)
-        if missing:
-            raise KohlerError(
-                f"Refusing to write outlet {limits.outlet_id}: {', '.join(missing)} "
-                "has not been read from the valve, and this endpoint replaces the whole "
-                "record. Reload the integration to re-read the outlet configuration."
-            )
-        # **Absolute ranges, before the relative check below.** Most of these values are
-        # echoed from a read rather than chosen, which is the trust boundary
-        # `check_preset_word` closes for preset words: a corrupt read or a caller's slip
-        # must not become the valve's scald limit or flow envelope. The temperature ceiling
-        # is the app's own for this write — it clamps at 488 tenths (gcs_valve.md §2.1) —
-        # and flow is the valve's byte range. Only `default > maximum` was checked until
-        # 2026-10-16, so a 102.3 °C scald limit passed as long as the default sat below it.
-        for key, low, high, unit in (
-            ("minimumOutletTemperature", 0, TEMPERATURE_MAX_TENTHS, "tenths of °C"),
-            ("defaultOutletTemperature", 0, TEMPERATURE_MAX_TENTHS, "tenths of °C"),
-            ("maximumOutletTemperature", 0, TEMPERATURE_MAX_TENTHS, "tenths of °C"),
-            ("minimumFlowrate", FLOW_BYTE_MIN, FLOW_BYTE_MAX, "flow bytes"),
-            ("defaultFlowrate", FLOW_BYTE_MIN, FLOW_BYTE_MAX, "flow bytes"),
-            ("maximumFlowrate", FLOW_BYTE_MIN, FLOW_BYTE_MAX, "flow bytes"),
-        ):
-            if not low <= record[key] <= high:
-                raise KohlerError(
-                    f"Refusing to write outlet {limits.outlet_id}: {key} {record[key]} is "
-                    f"outside {low}-{high} {unit}, the range this write accepts."
-                )
-        if default > maximum:
-            raise KohlerError(
-                f"Default temperature {default / 10:.1f} °C is above the scald limit "
-                f"{maximum / 10:.1f} °C for outlet {limits.outlet_id}."
-            )
         payload = {
             "deviceId": self.device_id,
             "sku": SKU_GCS,

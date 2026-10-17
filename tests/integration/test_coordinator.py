@@ -562,9 +562,12 @@ async def test_setup_seeds_the_valve_over_rest_before_any_message(
     assert sorted(valve.gcs_state.presets) == [1, 2, 20]
     assert valve.firmware == "2.2"
     assert valve.created_time == "2024-03-11T14:22:31Z"
-    # Read at setup and again once the stream connects — and not a third time by the
-    # first refresh in between, which used to repeat every read.
-    assert kohler.reads(f"/gcs-state/{LEFT}") == 2
+    # Read once at setup. The stream connects meanwhile, and only if it came up after the
+    # state read went out is that one read again — never the whole seed, and never by the
+    # first refresh in between, which used to repeat every read. Both orders are pinned
+    # down in `test_review2_lifecycle`.
+    assert kohler.reads(f"/gcsadvancestate/{LEFT}") == 1
+    assert kohler.reads(f"/gcs-state/{LEFT}") in (1, 2)
 
 
 async def test_setup_seeds_each_controller_from_its_own_reads(
@@ -670,12 +673,26 @@ async def test_one_device_failing_unexpectedly_does_not_blank_the_others(
     """Each device seeds alongside the others; a bug in one must not cancel its siblings."""
     kohler.add_controller()
     kohler.hub_states[MAIN] = hub_state(1, status="ON")
-    with patch.object(Valve, "async_seed", AsyncMock(side_effect=RuntimeError("bug"))):
+    seed = Valve.async_seed
+    calls = 0
+
+    async def fails_at_setup(self: Valve) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("bug")
+        await seed(self)
+
+    with patch.object(Valve, "async_seed", fails_at_setup):
         coordinator = await start(hass, shower_entry)
     assert shower_entry.state is ConfigEntryState.LOADED
-    assert coordinator.valves[0].gcs_state.valve1 is None
     assert coordinator.controllers[0].water_is_running is True
     assert "Seeding a Kohler device failed: bug" in caplog.text
+    # The seed never reached the valve; the stream's first connect seeds it whole, as it
+    # does any device whose setup left a read unanswered, and that reads its state.
+    assert calls == 2
+    assert kohler.reads(f"/gcs-state/{LEFT}") == 1
+    assert coordinator.valves[0].gcs_state.valve1 is not None
 
 
 async def test_an_empty_controller_configuration_does_not_cost_the_rest_of_its_seed(
@@ -895,6 +912,10 @@ async def test_a_reconnect_reseeds_what_changed_while_the_stream_was_down(
     valve = coordinator.valves[0]
     await push(hass, solo_message(LEFT, "0184C801"))
     assert valve.zone_flowing_for(1) is not None
+    # The stream's gap: the last report is a minute old when the reseed reads, so the
+    # cloud document has had time to catch up with it (a read sent within seconds of a
+    # report can answer from before it, and does not replace its words).
+    valve._reported_at = {field: at - 60 for field, at in valve._reported_at.items()}
 
     kohler.valve_states[LEFT] = valve_state(valve_zone(2))
     reads = kohler.reads(f"/gcs-state/{LEFT}")
@@ -919,16 +940,22 @@ async def test_a_controller_that_moved_address_has_its_page_link_follow(
     assert device.configuration_url == "http://192.168.1.77/"
 
 
-async def test_a_second_connect_while_reseeding_does_not_start_a_rival(
+async def test_a_second_connect_while_reseeding_reads_again_after_it_not_beside_it(
     hass: HomeAssistant, shower_entry: MockConfigEntry, kohler: ShowerKohler
 ) -> None:
-    """Two reseeds would race each other over the same state objects."""
+    """Two reseeds at once would race each other over the same state objects.
+
+    But what the first had read before the second gap cannot vouch for it: it reads
+    everything again once it is through. It used to end there (2026-10-16).
+    """
     coordinator = await start(hass, shower_entry)
     reads = kohler.reads(f"/gcs-state/{LEFT}")
     coordinator._handle_connected()
+    first = coordinator._reseed_task
     coordinator._handle_connected()
+    assert coordinator._reseed_task is first, "a rival reseed was started"
     await hass.async_block_till_done()
-    assert kohler.reads(f"/gcs-state/{LEFT}") == reads + 1
+    assert kohler.reads(f"/gcs-state/{LEFT}") == reads + 2
 
 
 @pytest.mark.parametrize(
@@ -1066,8 +1093,11 @@ async def test_a_failed_setup_retries_an_outage_and_asks_about_a_dead_sign_in(
     await hass.async_block_till_done()
     assert shower_entry.state is expected
     assert (SOURCE_REAUTH in prompts(hass)) is asks
-    # Nothing got as far as connecting.
-    assert FakeMqttClient.instances == []
+    # The stream starts once the sign-in has worked, beside the reads; whatever got as
+    # far as connecting is stopped again.
+    assert all(client.stopped for client in FakeMqttClient.instances)
+    if arrange in (_sign_in_unreachable, _sign_in_rejected):
+        assert FakeMqttClient.instances == []
 
 
 async def test_a_setup_that_fails_after_the_stream_started_leaves_nothing_running(
@@ -1436,9 +1466,12 @@ async def test_an_experience_is_started_on_the_endpoint_for_its_category(
 # =========================================================================== #
 
 
-def issue(hass: HomeAssistant, device_id: str = LEFT) -> ir.IssueEntry | None:
+def issue(
+    hass: HomeAssistant, setting: str = "maximum_run_time", device_id: str = LEFT
+) -> ir.IssueEntry | None:
+    """The repair for one setting of one valve — one each since 2026-10-16."""
     return ir.async_get(hass).async_get_issue(
-        DOMAIN, f"outlet_write_unverified_{device_issue_key(device_id)}"
+        DOMAIN, f"outlet_write_unverified_{setting}_{device_issue_key(device_id)}"
     )
 
 
@@ -1501,7 +1534,7 @@ async def test_a_write_that_cannot_be_read_back_is_flagged_naming_the_setting(
     kohler.fail_api(f"/gcsadvancestate/{LEFT}", (500, {"message": "oops"}))
     await coordinator.valves[0].async_write_outlet_setting(**setting)
     await hass.async_block_till_done()
-    flagged = issue(hass)
+    flagged = issue(hass, *setting)
     assert flagged.translation_placeholders["setting"] == label
     assert flagged.translation_placeholders["detail"].startswith(
         "Reading the value back from Anthem Valve failed"

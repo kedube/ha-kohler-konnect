@@ -59,8 +59,9 @@ from .const import (
 )
 
 #: This module handles credentials, so nothing here ever logs a token, a password or a
-#: username — see `client._redact_payload` for the same rule applied to payloads. The one
-#: use is reporting that persisting a rotated token failed, which names no secret.
+#: username — see `client._redact_payload` for the same rule applied to payloads. Its few
+#: messages — a rotated token that could not be persisted, a refused one swapped for a
+#: newer — name no secret.
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -188,10 +189,29 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def _raise_for_b2c_error(text: str) -> None:
-    """Translate a B2C error code embedded in a response into an exception."""
-    match = _B2C_ERROR_CODE.search(text or "")
-    if not match:
+def _b2c_error_code(value: object) -> object:
+    """A reply's `errorCode`, with B2C's prefix if it was sent as a bare number.
+
+    Passed over, every code so sent read as a wrong password — a lockout too (2026-10-16).
+    """
+    if (isinstance(value, int) and not isinstance(value, bool)) or (
+        isinstance(value, str) and value.strip().isdigit()
+    ):
+        return f"AADB2C{int(value)}"
+    return value
+
+
+def _raise_for_b2c_error(*texts: object) -> None:
+    """Translate a B2C error code embedded in a response into an exception.
+
+    Each of ``texts`` is whatever the response carried, read as text, searched in turn: an
+    `errorCode` sent as a number (`90053`) raised `TypeError` from the search until
+    2026-10-16, and adding the account failed with "Unknown error".
+    """
+    for text in texts:
+        if match := _B2C_ERROR_CODE.search(str(text or "")):
+            break
+    else:
         return
     code = match.group(0)
     if code == ERROR_BAD_CREDENTIALS:
@@ -217,10 +237,18 @@ class KohlerAuth:
         self,
         session: aiohttp.ClientSession,
         refresh_token: str | None = None,
+        *,
+        refresh_token_source: Callable[[], str | None] | None = None,
     ) -> None:
         self._session = session
         self._tokens: TokenSet | None = None
         self._refresh_token = refresh_token
+        # Where a newer refresh token can turn up than the one this object holds — for the
+        # integration, its config entry. Read only when B2C refuses the held one as an
+        # invalid grant; see `_adopt_newer_refresh_token`. It answers None wherever taking
+        # a token up would be wrong: a coordinator already unloaded would otherwise redeem
+        # the token its successor is holding, and strand that one instead.
+        self._refresh_token_source = refresh_token_source
         # Serialises refreshes. B2C invalidates a refresh token the moment it is redeemed,
         # so two concurrent refreshes race to redeem the same one and the loser's failure
         # is indistinguishable from a dead credential. See `async_get_access_token`.
@@ -369,8 +397,16 @@ class KohlerAuth:
             # returned. Chained so the original decode failure survives in the traceback —
             # the body that would not parse is the useful evidence here.
             raise AuthError("Unexpected response from Kohler during sign-in.") from err
+        if not isinstance(payload, dict):
+            # JSON, but not the object this step answers with: `null`, a list, a bare
+            # string. Until 2026-10-16 the `.get` below raised `AttributeError`, which the
+            # setup flow does not catch, and adding the account failed with "Unknown error"
+            # instead of saying Kohler could not be reached. Read like a page that does not
+            # parse, B2C code first.
+            _raise_for_b2c_error(body)
+            raise AuthError("Unexpected response from Kohler during sign-in.")
         if str(payload.get("status")) != "200":
-            _raise_for_b2c_error(payload.get("errorCode") or body)
+            _raise_for_b2c_error(_b2c_error_code(payload.get("errorCode")), body)
             raise InvalidCredentials(
                 payload.get("message") or "Kohler rejected those credentials."
             )
@@ -442,8 +478,13 @@ class KohlerAuth:
             }
         )
 
-    async def _async_token_request(self, data: dict[str, str]) -> TokenSet:
-        """POST to the token endpoint and store the resulting TokenSet."""
+    async def _async_token_request(
+        self, data: dict[str, str], *, adopt_newer: bool = True
+    ) -> TokenSet:
+        """POST to the token endpoint and store the resulting TokenSet.
+
+        ``adopt_newer`` allows the one retry described at `_adopt_newer_refresh_token`.
+        """
         try:
             async with self._session.post(
                 B2C_TOKEN_URL,
@@ -477,6 +518,14 @@ class KohlerAuth:
             # `KohlerError.rejected`.
             if status >= 500 or status in (408, 429) or error in _OUTAGE_ERRORS:
                 raise AuthUnavailable(f"Kohler token request failed: {detail}")
+            if (
+                error == "invalid_grant"
+                and adopt_newer
+                and (newer := self._adopt_newer_refresh_token(data)) is not None
+            ):
+                return await self._async_token_request(
+                    {**data, "refresh_token": newer}, adopt_newer=False
+                )
             _raise_for_b2c_error(str(detail))
             raise AuthError(f"Kohler token request failed: {detail}")
 
@@ -514,6 +563,45 @@ class KohlerAuth:
             except Exception:  # pragma: no cover - defensive
                 _LOGGER.exception("Could not persist the rotated Kohler refresh token")
         return self._tokens
+
+    def _adopt_newer_refresh_token(self, data: dict[str, str]) -> str | None:
+        """Take up a newer refresh token from `refresh_token_source`, if it has one.
+
+        For a refresh B2C refused as ``invalid_grant`` — its answer for a token already
+        redeemed, as for one expired or revoked — and only when the source holds a token
+        other than the one refused. That is a reload with a refresh in flight: the
+        coordinator being unloaded lets its refresh finish, shielded, while the new one,
+        built from the entry's token before that refresh had replaced it, sends the same
+        token again. Until 2026-10-16 the loser's refusal read as a dead credential, and
+        the owner was asked to sign in again right after a reload. The winner stores what
+        it was issued, so the loser finds that and tries once more with it.
+
+        Taken up before the retry, so whatever comes back — a rotation, an outage, another
+        refusal — is weighed against the newer token, not the refused one. Never more than
+        once per refresh, and never the token just refused: `_async_token_request` passes
+        ``adopt_newer=False`` to the retry.
+        """
+        refused = data.get("refresh_token")
+        if (
+            data.get("grant_type") != "refresh_token"
+            or not refused
+            or self._refresh_token_source is None
+        ):
+            return None
+        try:
+            newer = self._refresh_token_source()
+        except Exception:
+            _LOGGER.exception("Could not read the stored Kohler refresh token")
+            return None
+        if not newer or newer == refused:
+            return None
+        _LOGGER.info(
+            "Kohler refused the refresh token held here; retrying once with the newer "
+            "one stored since"
+        )
+        self._tokens = None
+        self._refresh_token = newer
+        return newer
 
     def invalidate_access_token(self, rejected: str | None = None) -> None:
         """Mark the current access token as unusable, without touching the refresh token.

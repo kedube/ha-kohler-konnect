@@ -39,11 +39,13 @@ from homeassistant.exceptions import HomeAssistantError
 from .const import (
     CONF_LAST_WARMUP_MODE,
     CONF_WARMUP_AUTO_RESTORE,
+    CONF_WARMUP_RESTORE_PENDING,
     VALVE_OFFLINE,
     WARMUP_AUTO_RESTORE_DELAY_SECONDS,
     WARMUP_AUTO_RESTORE_GIVING_UP,
     WARMUP_AUTO_RESTORE_MAX_CONSECUTIVE,
     WARMUP_AUTO_RESTORE_NO_TARGET,
+    WARMUP_AUTO_RESTORE_NOT_WRITABLE,
     WARMUP_AUTO_RESTORE_SETTLED_SECONDS,
     WARMUP_CONTEXT_AFTER_SECONDS,
     WARMUP_CONTEXT_BEFORE_SECONDS,
@@ -57,7 +59,12 @@ from .konnect import (
     KohlerError,
     credential_is_dead,
 )
-from .konnect.warmup import journal_event, restore_target, should_restore_warmup
+from .konnect.warmup import (
+    journal_event,
+    restorable,
+    restore_target,
+    should_restore_warmup,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle; only needed for the annotation
     from .coordinator import Valve
@@ -94,6 +101,14 @@ class WarmupManager:
         # The mode the most recent disable took away. A pending restore reads it when its
         # wait ends, so a disable folded into it can still change what goes back.
         self._warmup_taken_away: str | None = None
+        # When the valve was last seen in an enabled mode — announced over MQTT, or found by
+        # a seed — which is what our own `Off` is judged against: until something enables
+        # warm-up again, a disable seen after that `Off` is still ours. See
+        # `_enabled_seen_since_write`.
+        self._enabled_seen_at: float | None = None
+        # Latch, so a mode auto-restore cannot write is explained once rather than on every
+        # hub sign-in.
+        self._warmup_not_writable_reported = False
 
     def _reset_restore_count(self) -> None:
         """End a fight: zero the counter that stops endless restores."""
@@ -134,9 +149,12 @@ class WarmupManager:
         discovery still cannot have is a `before_window` (the wire context happened while
         there was no wire), so `source: "rest"` stays on the record and the `restoring`
         field says what was decided.
+
+        It is also where a restore owed from before a restart or reload is finished; see
+        `_resume_pending_restore`.
         """
+        write_age, ours = self._warmup_write_status(after)
         if before is not None and after != before:
-            write_age, ours = self._warmup_write_status(after)
             restoring = should_restore_warmup(
                 before,
                 after,
@@ -144,6 +162,7 @@ class WarmupManager:
                 self_write_mode=self._warmup_self_write_mode,
                 self_write_age=write_age,
                 grace_seconds=WARMUP_SELF_WRITE_GRACE_SECONDS,
+                enabled_seen_since_write=self._enabled_seen_since_write(),
             )
             self._warmup_journal(
                 "mode",
@@ -153,6 +172,8 @@ class WarmupManager:
                 source="rest",
                 restoring=restoring,
             )
+            if after == WARMUP_DISABLED:
+                self._note_unwritable_disable(before, ours=ours)
             if restoring:
                 self._schedule_warmup_restore(before)
         # The third way to learn a mode, and the one `_remember_warmup_mode`'s docstring
@@ -167,6 +188,56 @@ class WarmupManager:
         # `_async_restore_warmup`.
         if after is not None and after != WARMUP_DISABLED:
             self._remember_warmup_mode(after)
+            # Seen enabled — unless this read could be from before our own `Off`: the cloud
+            # document trails the device by seconds (~3 s measured on 2026-08-20), and
+            # within the echo's grace it can still show the mode that `Off` replaced.
+            if not (
+                self._warmup_self_write_mode == WARMUP_DISABLED
+                and write_age is not None
+                and write_age <= WARMUP_SELF_WRITE_GRACE_SECONDS
+            ):
+                self._enabled_seen_at = time.monotonic()
+        self._resume_pending_restore(after)
+
+    def _resume_pending_restore(self, after: str | None) -> None:
+        """Finish a restore that was owed when Home Assistant stopped or the entry reloaded.
+
+        ⚠️ **A restore lives in a task, and a restart or reload cancels it** — inside its
+        minute's wait, or while it waits out a running shower. Until 2026-10-16 that was the
+        end of it: the next seed found warm-up off with nothing before it (`before` None), and
+        arriving to find warm-up off is not a disable, so it stayed off. So a restore records
+        its target in the per-valve options while it is owed (`CONF_WARMUP_RESTORE_PENDING`,
+        kept through `_set_pending_restore`), and the seed takes it up again — provided the
+        mode is still off and auto-restore still on. Anything else means it is no longer
+        wanted, and the record goes. A seed that read no mode at all decides nothing.
+
+        It then runs as any restore does — the delay, every check again, the wait for the
+        water — so a seed of unknown age costs nothing by the time it writes.
+        """
+        pending = self._valve.option(CONF_WARMUP_RESTORE_PENDING)
+        if pending is None or after is None:
+            return
+        if after != WARMUP_DISABLED or not self.auto_restore or not restorable(pending):
+            self._set_pending_restore(None)
+            return
+        if (
+            self._warmup_restore_task is not None
+            and not self._warmup_restore_task.done()
+        ):
+            # Already being done, by the restore that recorded it.
+            return
+        self._warmup_journal("restore_resumed", target=pending, source="rest")
+        self._schedule_warmup_restore(pending)
+
+    def _set_pending_restore(self, target: str | None) -> None:
+        """Record the mode a restore owes — or, with None, that none is owed.
+
+        Written only on a change: each write is a config-entry update. Never cleared by a
+        restore task being cancelled — that is the unload this record exists to outlive —
+        only by the restore being done, or no longer wanted.
+        """
+        if self._valve.option(CONF_WARMUP_RESTORE_PENDING) != target:
+            self._valve.set_option(CONF_WARMUP_RESTORE_PENDING, target)
 
     async def async_set_warmup(self, mode: str) -> None:
         """Set the valve's warmup mode. **This does not run water now.**
@@ -201,6 +272,10 @@ class WarmupManager:
         # is still in flight, and a disable we caused must be recognisable by then.
         self._warmup_self_write_at = time.monotonic()
         self._warmup_self_write_mode = mode
+        # Whatever restore was owed is settled by this write: it is either that restore's
+        # own, or the owner choosing a mode here — `Off` included, which a restore finished
+        # after a restart must not then overwrite.
+        self._set_pending_restore(None)
         with self._valve.coordinator.command_errors(VALVE_OFFLINE):
             await self._valve.gcs.async_set_warmup(mode)
 
@@ -247,8 +322,22 @@ class WarmupManager:
 
         The source is `gcs-state`'s `warmUpState.warmUp` — the same field the Konnect app
         reads, and the same read that seeds this at setup and on every MQTT reconnect. It
-        carries the mode axis; `warmUpState.state` beside it carries whether a warm-up is
-        running, and `apply_rest_state` takes both.
+        carries the mode axis, and the mode is all this applies.
+
+        **The mode, and nothing else in the reply** (2026-10-16). This read exists to
+        confirm a mode write, and it used to apply the whole of `gcs-state` — zone words
+        included — whenever no push had landed during it, putting back whatever the cloud
+        document still said about outlets the valve had since changed. And any push voided
+        it, an ordinary status report included; now only one carrying the warm-up mode
+        does (`_push_serials["warmup_mode"]`).
+
+        🚨 **Not the running flag beside it** (`warmUpState.state`). The document trails the
+        valve by seconds, and a read-back a few seconds into the warm-up its own write set
+        off said "not in progress" over the valve's report that it was — which switched
+        off the guard that keeps a change made during a warm-up from turning it into a
+        shower on every warm-up outlet (`Valve._warming_up`). The valve reports the flag
+        with every status message (`warmUpStatus`), so nothing is lost by leaving it to
+        them.
 
         ⚠️ **REST reads here are partly cached** — `amplifierSettings.monoVolume` famously
         did not follow a live change. So this is authoritative about
@@ -259,7 +348,9 @@ class WarmupManager:
         "Off" and "we could not tell" are different answers and only one of them is safe to
         show on a control.
         """
-        pushes = self._valve._push_serial
+        pushes = self._valve._push_serials
+        mode_pushes = pushes["warmup_mode"]
+        requested_at = time.monotonic()
         try:
             payload = await self._valve.client.async_get_gcs_state(
                 self._valve.gcs_device.device_id
@@ -272,25 +363,32 @@ class WarmupManager:
         if self._valve.cloud_watch is not None:
             # CLOUD CONNECTION WATCH — the fourth free read. A warmup write reads this back
             # up to three times; each one carries `connectionState` and would otherwise
-            # discard it.
-            self._valve.cloud_watch.note_rest_payload(payload, "warmup read-back")
-        if self._valve._push_serial != pushes:
-            # The valve pushed its state while this read was in flight, so the reply is the
-            # older of the two — the same rule as the seed in `coordinator.py` (2026-10-16).
-            # Applying it would put back the zone words and the mode the push replaced, so
-            # this read has no opinion; the caller's next read, or the push itself, answers.
+            # discard it. `requested_at` lets a valve message that lands during the read
+            # outrank a `Disconnected` in it.
+            self._valve.cloud_watch.note_rest_payload(
+                payload, "warmup read-back", requested_at=requested_at
+            )
+        state = payload.get("state") if isinstance(payload, dict) else None
+        warm = state.get("warmUpState") if isinstance(state, dict) else None
+        if not isinstance(warm, dict):
+            # No warm-up fields, so nothing to apply and no opinion on the write.
             return None
-        self._valve.gcs_state.apply_rest_state(payload)
+        if pushes["warmup_mode"] != mode_pushes:
+            # The valve pushed its warm-up mode while this read was in flight, so the reply
+            # is the older of the two — the same rule as the seed in `coordinator.py`
+            # (2026-10-16). Applying it would put back the mode the push replaced, so this
+            # read has no opinion; the caller's next read, or the push itself, answers.
+            return None
+        gcs_state = self._valve.gcs_state
+        mode = warm.get("warmUp")
+        if mode:
+            gcs_state.warmup_mode = str(mode)
         # Same notification path as an MQTT update, so the dropdown lands on the confirmed
         # value and drops its optimistic guess exactly as it would on a device push.
         self._valve.coordinator.async_refresh_entities()
         # What *this read* said, not the mode cached before it: a read with no warmup field
         # has no opinion, and must not be taken for the valve disagreeing with a write.
-        state = payload.get("state") if isinstance(payload, dict) else None
-        warm = state.get("warmUpState") if isinstance(state, dict) else None
-        if not isinstance(warm, dict) or not warm.get("warmUp"):
-            return None
-        return self._valve.gcs_state.warmup_mode
+        return gcs_state.warmup_mode if mode else None
 
     @property
     def auto_restore(self) -> bool:
@@ -388,6 +486,9 @@ class WarmupManager:
         restore has had the settle window to prove it stuck. Within it, the enabled mode is
         most likely that restore's own confirmation or echo, and resetting on it kept the
         counter at one: a fight never reached the limit and restored once a minute for ever.
+
+        And it settles any restore still owed: warm-up is on, so there is nothing to put back.
+        A disable after this schedules its own.
         """
         if mode == WARMUP_DISABLED:
             return
@@ -399,6 +500,7 @@ class WarmupManager:
             self._reset_restore_count()
         if mode != self._valve.option(CONF_LAST_WARMUP_MODE):
             self._valve.set_option(CONF_LAST_WARMUP_MODE, mode)
+        self._set_pending_restore(None)
 
     def _warmup_write_status(self, after: str | None) -> tuple[float | None, bool]:
         """How long ago we last wrote a warmup mode, and whether ``after`` was that write.
@@ -406,7 +508,8 @@ class WarmupManager:
         The pair every warmup observation needs, whichever channel it arrived on:
         ``write_age`` feeds ``should_restore_warmup``'s self-write grace, and ``ours`` is
         the journal's answer to "did we do this?" — true only when the observed mode matches
-        the mode we wrote and the write is recent enough to be the cause.
+        the mode we wrote and the write is recent enough to be the cause. For our own `Off`,
+        recent enough means nothing has enabled warm-up since; see `_our_off_stands`.
         """
         write_age = (
             None
@@ -416,9 +519,71 @@ class WarmupManager:
         ours = (
             self._warmup_self_write_mode == after
             and write_age is not None
-            and write_age <= WARMUP_SELF_WRITE_GRACE_SECONDS
+            and (
+                write_age <= WARMUP_SELF_WRITE_GRACE_SECONDS
+                or (after == WARMUP_DISABLED and self._our_off_stands())
+            )
         )
         return write_age, ours
+
+    def _enabled_seen_since_write(self) -> bool:
+        """Whether the valve has been seen in an enabled mode since our last warm-up write.
+
+        "Seen" means the valve announcing one over MQTT, or a seed finding one beyond the
+        echo's grace — never a read-back, which can still show the mode our write replaced.
+        True when we have written nothing, so that it never excuses anything on its own.
+        """
+        written = self._warmup_self_write_at
+        if written is None:
+            return True
+        seen = self._enabled_seen_at
+        return seen is not None and seen > written
+
+    def _our_off_stands(self) -> bool:
+        """Whether our last warm-up write was `Off`, and nothing has enabled warm-up since.
+
+        ⚠️ **Our `Off` is ours until something turns warm-up back on**, not just for the
+        echo's thirty-second grace (2026-10-16). Chosen while the stream was down, with a
+        read-back that failed or lagged, the `Off` is first seen by the reconnect's reseed —
+        which can be long after the grace — and that reseed read it as somebody else
+        disabling warm-up, scheduled a restore after the write, and so got past the check in
+        `_async_restore_warmup` that only covers an `Off` written during the wait: the
+        owner's `Off` was overwritten a minute later.
+        """
+        return (
+            self._warmup_self_write_mode == WARMUP_DISABLED
+            and not self._enabled_seen_since_write()
+        )
+
+    def _note_unwritable_disable(self, before: str | None, *, ours: bool) -> None:
+        """Say why a disable out of a mode this integration does not write is left alone.
+
+        `should_restore_warmup` refuses such a disable (2026-10-16): the delayed-start modes
+        are decodable, not writable, and a restore of one used to be decided for and then
+        refused by `async_set_warmup` — a `restore_failed` on every hub sign-in, each counted
+        toward giving up. Nothing is written instead, and the owner is told once.
+
+        A restore already waiting is told too: the most recent disable took away this mode,
+        so what that restore would write is no longer what was taken away.
+        """
+        if before is None or before == WARMUP_DISABLED or restorable(before):
+            return
+        if (
+            self._warmup_restore_task is not None
+            and not self._warmup_restore_task.done()
+        ):
+            self._warmup_taken_away = before
+            self._set_pending_restore(None)
+        if not self.auto_restore or ours:
+            return
+        self._warmup_journal(
+            "restore_skipped",
+            reason="the mode taken away is not one this integration writes",
+            mode=before,
+        )
+        if not self._warmup_not_writable_reported:
+            self._warmup_not_writable_reported = True
+            _LOGGER.warning(WARMUP_AUTO_RESTORE_NOT_WRITABLE, before)
 
     def _schedule_warmup_restore(self, taken_away: str | None) -> None:
         """Spawn one restore task, or record why not.
@@ -433,9 +598,11 @@ class WarmupManager:
             and not self._warmup_restore_task.done()
         ):
             # Folded into the pending restore, but not forgotten: this disable took away a
-            # newer mode than the one that started the wait.
+            # newer mode than the one that started the wait — and that is what is owed now,
+            # should a restart or reload end the wait first.
             if taken_away is not None:
                 self._warmup_taken_away = taken_away
+                self._set_pending_restore(restore_target(taken_away, self.last_mode))
             self._warmup_journal(
                 "restore_skipped", reason="a restore is already pending"
             )
@@ -465,6 +632,12 @@ class WarmupManager:
         # Computed before the branch because **an announcement needs `ours` just as much as a
         # transition does** — see the note on the `announced` record below.
         write_age, ours = self._warmup_write_status(after)
+
+        if after != WARMUP_DISABLED:
+            # The valve's own word that warm-up is on — what our `Off` is judged against.
+            # A restatement counts as much as a change: after our `Off`, it says the `Off`
+            # did not take, or something has since turned warm-up back on.
+            self._enabled_seen_at = time.monotonic()
 
         if record == "announced":
             # The valve restating a mode it is already in.
@@ -509,6 +682,7 @@ class WarmupManager:
             self_write_mode=self._warmup_self_write_mode,
             self_write_age=write_age,
             grace_seconds=WARMUP_SELF_WRITE_GRACE_SECONDS,
+            enabled_seen_since_write=self._enabled_seen_since_write(),
         )
         now = time.monotonic()
         state = self._valve.gcs_state
@@ -528,6 +702,7 @@ class WarmupManager:
         # The after-window is worth having whether or not we restore — an unrestored disable
         # is the cleaner observation of the two, since nothing of ours is in the way.
         self._valve._track(self._async_journal_warmup_context(now))
+        self._note_unwritable_disable(before, ours=ours)
 
         if not restoring:
             return
@@ -543,10 +718,10 @@ class WarmupManager:
         the water to stop, then waits the delay again and asks all of it again.
 
         ``taken_away`` is the mode the disable moved *away* from, and it is the restore
-        target. ``should_restore_warmup`` refuses unless ``before`` is a known enabled mode,
-        so whenever a restore is scheduled that value is present and is the most current
-        answer available — more current than ``last_warmup_mode``, which is a persisted
-        memory that can be older or, before 2026-08-21, absent entirely.
+        target. ``should_restore_warmup`` refuses unless ``before`` is a known enabled mode
+        this integration writes, so whenever a restore is scheduled that value is present
+        and is the most current answer available — more current than ``last_warmup_mode``,
+        which is a persisted memory that can be older or, before 2026-08-21, absent entirely.
 
         ⚠️ **It used to restore to ``last_warmup_mode`` alone, and that had a seven-hour
         failure on 2026-08-20.** The valve was disabled out of
@@ -556,6 +731,10 @@ class WarmupManager:
         integration session, only read over REST at setup. The mode being taken away was in
         hand the whole time and was thrown away. Seeding from REST (see
         ``_async_seed_state``) closes the same gap from the other side.
+
+        From being scheduled until it writes, or is no longer wanted, the target is kept in
+        the per-valve options, so a restart or reload — which cancels this task — does not
+        lose it; see `_resume_pending_restore`. Cancellation itself leaves that record alone.
         """
         if taken_away is not None:
             self._warmup_taken_away = taken_away
@@ -567,6 +746,7 @@ class WarmupManager:
             self._warmup_journal(
                 "restore_skipped", reason="no enabled mode has ever been seen"
             )
+            self._set_pending_restore(None)
             return
 
         if (
@@ -602,9 +782,11 @@ class WarmupManager:
                 reason="gave up after %d restores that did not stick"
                 % WARMUP_AUTO_RESTORE_MAX_CONSECUTIVE,
             )
+            self._set_pending_restore(None)
             return
 
         scheduled_at = time.monotonic()
+        self._set_pending_restore(target)
         self._warmup_journal(
             "restore_scheduled",
             target=target,
@@ -618,6 +800,7 @@ class WarmupManager:
                 self._warmup_journal(
                     "restore_skipped", reason="switched off during the wait"
                 )
+                self._set_pending_restore(None)
                 return
             state = self._valve.gcs_state
             if state.warmup_mode != WARMUP_DISABLED:
@@ -631,6 +814,7 @@ class WarmupManager:
                     reason="re-enabled during the wait",
                     mode_now=state.warmup_mode,
                 )
+                self._set_pending_restore(None)
                 return
             # ⚠️ **`Off` chosen here during the wait is deliberate, and final.** The mode
             # still reads disabled, so the check above passes — and until 2026-10-16 the
@@ -649,6 +833,22 @@ class WarmupManager:
                 self._warmup_journal(
                     "restore_skipped", reason="Off chosen here during the wait"
                 )
+                self._set_pending_restore(None)
+                return
+            # …and so is one chosen before it, while nothing has turned warm-up back on
+            # since: the disable this restore would undo is that `Off`, seen late. See
+            # `_our_off_stands`; the decision to restore makes the same check, so this
+            # catches only what got past it.
+            if self._our_off_stands():
+                _LOGGER.info(
+                    "Warmup was set to Off from Home Assistant and nothing has enabled "
+                    "it since; leaving it off"
+                )
+                self._warmup_journal(
+                    "restore_skipped",
+                    reason="Off chosen here, and nothing has enabled warm-up since",
+                )
+                self._set_pending_restore(None)
                 return
             if not state.is_running:
                 break
@@ -675,11 +875,22 @@ class WarmupManager:
 
         # Chosen again now rather than before the wait: a disable folded into this one may
         # have taken away a newer mode, and `restore_target` trusts the mode taken away
-        # precisely because it is the most current answer.
+        # precisely because it is the most current answer. That includes one this
+        # integration does not write (see `_note_unwritable_disable`): then nothing goes
+        # back, rather than the older mode this restore was scheduled for.
         #
         # Nothing awaits between the running check above and the one `async_set_warmup`
         # makes, so a write refused for running water cannot reach the counter below.
-        target = restore_target(self._warmup_taken_away, self.last_mode) or target
+        latest = self._warmup_taken_away
+        if latest and latest != WARMUP_DISABLED and not restorable(latest):
+            self._warmup_journal(
+                "restore_skipped",
+                reason="the mode taken away last is not one this integration writes",
+                mode=latest,
+            )
+            self._set_pending_restore(None)
+            return
+        target = restore_target(latest, self.last_mode) or target
         self._warmup_restores += 1
         self._warmup_restored_at = time.monotonic()
         _LOGGER.warning(
@@ -697,6 +908,9 @@ class WarmupManager:
             # a write that was actually sent counts toward the give-up limit.
             _LOGGER.warning("Warmup auto-restore could not write: %s", err)
             self._warmup_journal("restore_failed", target=target, error=str(err))
+            # Not retried after a restart either. A write that was sent cleared the record
+            # already (`async_set_warmup`); this covers one refused before it was sent.
+            self._set_pending_restore(None)
             return
         self._warmup_journal(
             "restore_done",

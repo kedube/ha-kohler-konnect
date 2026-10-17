@@ -781,17 +781,20 @@ class KohlerClient:
         return payload if isinstance(payload, dict) else {}
 
     async def async_get_gcs_diagnostics(self, device_id: str) -> dict[str, Any]:
-        """The valve's fault log. ``{}`` on failure; read for diagnostics only.
+        """The valve's fault log, as Kohler sent it — ``errorDetails[]`` and all.
 
-        An auth failure is a failure too: this is read while someone builds a diagnostics
-        report, which should not fail over it — least of all when the sign-in is what is
-        being diagnosed. Nothing relies on it to prompt a reauth; other paths do that.
+        ``{}`` when the read failed, which has no ``errorDetails`` and so can never pass
+        for an empty log. **A sign-in failure is raised instead** — `AuthError`, or
+        `AuthUnavailable` when Kohler's sign-in is down. Both callers, the diagnostics
+        report and the valve's fault-log read on every seed, catch it themselves and need
+        to tell it apart from "no faults" and from "Kohler hiccuped". Release 1.03 answered
+        `{}` for it as well, and neither could.
         """
         try:
             payload = await self.async_request(
                 "GET", GCS_DIAGNOSTICS.format(device_id=device_id)
             )
-        except (AuthError, KohlerError) as err:
+        except KohlerError as err:
             _LOGGER.debug("Could not read gcs-diagnostics: %s", err)
             return {}
         return payload if isinstance(payload, dict) else {}

@@ -21,8 +21,9 @@
       },
       "reauth_confirm": {
         "title": "Log opnieuw in",
-        "description": "De opgeslagen sessie voor {username} is verlopen. Voer het wachtwoord opnieuw in om opnieuw verbinding te maken.",
+        "description": "De opgeslagen sessie voor {username} is verlopen. Voer het wachtwoord opnieuw in om opnieuw verbinding te maken. Is het e-mailadres van je Kohler-account sindsdien gewijzigd, voer dan het nieuwe in.",
         "data": {
+          "username": "E-mailadres",
           "password": "Wachtwoord"
         }
       }
@@ -263,6 +264,10 @@
     "faucet_api_changed": {
       "title": "Kohler blijft verzoeken voor {name} weigeren",
       "description": "De Kohler-cloud heeft meerdere verzoeken achter elkaar geweigerd. Dat betekent meestal dat Kohler zijn API heeft gewijzigd. Kijk of er een update voor deze integratie is. Zo niet, open dan een issue en voeg de diagnostische gegevens van de integratie toe.\n\nLaatste fout: {error}"
+    },
+    "faucet_auto_off_failed": {
+      "title": "Het water van {name} loopt mogelijk nog",
+      "description": "Water dat via Home Assistant bij {name} is aangezet, heeft de veiligheidslimiet bereikt, maar Home Assistant kon het niet uitzetten: de Kohler-cloud nam het commando niet aan, of de kraan heeft sindsdien niet gemeld dat het water uit is.\n\nHome Assistant blijft het proberen — na 1, 2, 5 en 10 minuten, daarna elke 15 minuten — tot bekend is dat het water uit is, ook na een herstart. Loopt het nog, zet het dan bij de kraan uit.\n\nDeze melding verdwijnt zodra bekend is dat het water uit is.\n\nLaatste fout: {error}"
     },
     "replaced_integration": {
       "title": "Verwijder de oude Kohler-integraties",

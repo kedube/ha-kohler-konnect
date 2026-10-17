@@ -127,12 +127,18 @@ class OptimisticOptionMixin:
         )
 
     async def _async_command(self, option: str, action: Awaitable[Any]) -> None:
-        """Show ``option`` at once, send ``action``, and hold it until the device agrees."""
+        """Show ``option`` at once, send ``action``, and hold it until the device agrees.
+
+        Any exit but success clears the guess, **cancellation included** — see
+        `switch.OptimisticSwitchMixin._async_switch`: a cancelled "Off" otherwise read Off
+        for as long as the favorite kept running.
+        """
         self._set_optimistic(option)
         try:
             await action
-        except Exception:
-            # The command failed, so stop showing a state the device never reached.
+        except BaseException:
+            # The command failed or was cancelled, so stop showing a state the device may
+            # never reach: its own report is the honest answer now.
             self._clear_optimistic()
             raise
         # The command was accepted. The device's own confirmation is still in flight — 1.5 s

@@ -118,9 +118,12 @@ def faucet_report(faucet: FaucetCoordinator) -> dict[str, Any]:
             "daily_buckets": len(usage_series(faucet.usage_daily)),
         },
         "dispensing": faucet.is_dispensing(),
+        # Messages and missed changes since setup. Verification is kept across restarts:
+        # "restored" says it was verified before the restart and nothing has come since.
         "instant_updates": {
             "messages": faucet.push_messages,
             "verified": faucet.push_verified,
+            "restored": faucet.push_restored,
             "missed_changes": faucet.push_missed,
         },
     }

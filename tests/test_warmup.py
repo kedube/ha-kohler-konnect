@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+from collections import Counter
 from types import SimpleNamespace
 from typing import Any
 
@@ -99,9 +100,13 @@ def _should(
     )
 
 
-@pytest.mark.parametrize("before", [ALL, SELECTED, WARMUP_ALL_OUTLETS])
+@pytest.mark.parametrize("before", [ALL, SELECTED])
 def test_a_disable_out_of_a_watched_enabled_mode_is_restored(before):
-    """The one case auto-restore exists for: an enabled mode taken away by someone else."""
+    """The one case auto-restore exists for: an enabled mode taken away by someone else.
+
+    One this integration writes, that is: a delayed-start mode is not put back (2026-10-16;
+    see `tests/test_review2_water.py`).
+    """
     assert _should(before, OFF)
 
 
@@ -566,19 +571,19 @@ class FakeValve:
 
         self.device_id = device_id
         self.tag = tag
-        # Bumped by `Valve.handle_envelope` for each push; read around a REST read-back.
-        self._push_serial = 0
+        # Bumped by `Valve.handle_envelope` for each field a push carries: the words and
+        # session fields of a status report, `warmup_mode` for the warm-up mode. Read
+        # around a REST read-back.
+        self._push_serials = Counter()
         self.gcs_device = SimpleNamespace(device_id=device_id)
         self.gcs_state = GcsState(get_valve_model("K-28210"))
         self.gcs_state.warmup_mode = cloud.mode
         self.gcs = cloud
         self.client = cloud
         self.cloud_payloads: list[tuple[Any, str]] = []
-        self.cloud_watch = SimpleNamespace(
-            note_rest_payload=lambda payload, why: self.cloud_payloads.append(
-                (payload, why)
-            )
-        )
+        # When each of those reads was sent, as `note_rest_payload`'s `requested_at`.
+        self.cloud_requested_at: list[float | None] = []
+        self.cloud_watch = SimpleNamespace(note_rest_payload=self._note_rest_payload)
         self.options: dict[str, Any] = {CONF_WARMUP_AUTO_RESTORE: auto_restore}
         if last_mode is not None:
             self.options[CONF_LAST_WARMUP_MODE] = last_mode
@@ -607,6 +612,12 @@ class FakeValve:
 
     def _refresh(self) -> None:
         self.refreshes += 1
+
+    def _note_rest_payload(
+        self, payload: Any, why: str, *, requested_at: float | None = None
+    ) -> None:
+        self.cloud_payloads.append((payload, why))
+        self.cloud_requested_at.append(requested_at)
 
     def _add_listener(self, update: Any) -> Any:
         self.listeners.append(update)
@@ -868,7 +879,7 @@ async def test_a_read_overtaken_by_a_push_is_not_applied(make):
     read = valve.cloud.async_get_gcs_state
 
     async def overtaken(device_id: str) -> dict[str, Any]:
-        valve._push_serial += 1
+        valve._push_serials["warmup_mode"] += 1
         return await read(device_id)
 
     valve.cloud.async_get_gcs_state = overtaken
@@ -1170,12 +1181,18 @@ async def test_a_pending_restore_puts_back_the_mode_most_recently_taken_away(
 
 @pytest.mark.asyncio
 async def test_a_legacy_mode_taken_away_is_not_written_back(make, clock):
-    """Restoring is still writing, and nothing knows what a delayed start's delay does."""
+    """Restoring is still writing, and nothing knows what a delayed start's delay does.
+
+    Not decided for and then refused, as until 2026-10-16 — a `restore_failed` on every
+    disable, each counted toward giving up — but not decided for at all.
+    """
     valve = make(WARMUP_ALL_OUTLETS)
     valve.announce(OFF)
     await clock.advance(DELAY)
     assert valve.cloud.writes == []
-    assert valve.warmup_log.last("restore_failed")["target"] == WARMUP_ALL_OUTLETS
+    assert valve.warmup_log.last("disabled")["restoring"] is False
+    assert "restore_failed" not in valve.warmup_log.events()
+    assert valve.warmup._warmup_restores == 0
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,9 @@ water stops rather than when a shower ends.
 
 from __future__ import annotations
 
+import math
 import re
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -23,6 +25,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import UnitOfVolume
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from .konnect.usage import is_metric, usage_series, usage_volume_gallons
@@ -40,8 +43,25 @@ def _usage_bucket_date(interval: object) -> date | None:
         return None
 
 
+def _finite(value: Any) -> float | None:
+    """A usage figure as a float, or None for anything that is not a finite number.
+
+    Python's JSON parser takes a bare `NaN` or `Infinity` as a float, so `isinstance`
+    alone let one through — and a single such bucket made every total built on it a
+    value Home Assistant refuses to record. A bool is not a volume either.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
 def _month_totals(
-    usage: dict[str, Any] | None, usage_daily: dict[str, Any] | None
+    usage: dict[str, Any] | None,
+    usage_daily: dict[str, Any] | None,
+    *,
+    peaks: dict[str, dict[str, float]] | None = None,
+    this_month: str | None = None,
 ) -> dict[str, dict[str, float]]:
     """Each calendar month's usage (`YYYY-MM` -> `volume` litres, `onDuration` seconds).
 
@@ -57,36 +77,112 @@ def _month_totals(
       dropping when a month ends.
     * A daily window that starts mid-month sums less than that month really used, which is
       why the larger figure wins rather than the daily one.
+
+    ``peaks`` is the caller's memory of the months that have ended, and ``this_month`` the
+    month in progress; given both, a month before ``this_month`` never reads lower than it
+    has before. See the note at the end.
     """
     totals: dict[str, dict[str, float]] = {}
     for entry in usage_series(usage):
         month = entry.get("intervalKey")
-        volume = entry.get("volume")
+        volume = _finite(entry.get("volume"))
         if not (isinstance(month, str) and _MONTH_KEY.fullmatch(month)):
             continue
-        if not isinstance(volume, (int, float)):
+        if volume is None:
             continue
-        totals[month] = {"volume": float(volume)}
-        duration = entry.get("onDuration")
-        if isinstance(duration, (int, float)):
-            totals[month]["onDuration"] = float(duration)
+        totals[month] = {"volume": volume}
+        duration = _finite(entry.get("onDuration"))
+        if duration is not None:
+            totals[month]["onDuration"] = duration
 
     daily: dict[str, dict[str, float]] = {}
     for entry in usage_series(usage_daily):
         bucket = _usage_bucket_date(entry.get("intervalKey"))
-        volume = entry.get("volume")
-        if bucket is None or not isinstance(volume, (int, float)):
+        volume = _finite(entry.get("volume"))
+        if bucket is None or volume is None:
             continue
         record = daily.setdefault(bucket.strftime("%Y-%m"), {"volume": 0.0})
-        record["volume"] += float(volume)
-        duration = entry.get("onDuration")
-        if isinstance(duration, (int, float)):
-            record["onDuration"] = record.get("onDuration", 0.0) + float(duration)
+        record["volume"] += volume
+        duration = _finite(entry.get("onDuration"))
+        if duration is not None:
+            record["onDuration"] = record.get("onDuration", 0.0) + duration
 
     for month, record in daily.items():
         if month not in totals or record["volume"] >= totals[month]["volume"]:
             totals[month] = record
+
+    # **A month that has ended never reads lower than it has** (2026-10-16). Both of its
+    # figures can sink after the month is over: about five days into the next month the
+    # daily window slides past its first days, and the monthly series can still hold the
+    # partial total from when it was read — the re-read after the new month's first shower
+    # can fail, or land after the daily one. Either way `Water Used This Year` fell, which
+    # statistics record as negative water, and counted it again once the monthly re-read
+    # caught up. So each month keeps the highest figure it has had since it ended: in
+    # memory, for this run. The month in progress is left out, because it is still moving
+    # and the daily window always spans all of it.
+    if peaks is not None and this_month is not None:
+        for month in set(totals) | set(peaks):
+            if month >= this_month:
+                continue
+            record, peak = totals.get(month), peaks.get(month)
+            if peak is not None and (
+                record is None or peak["volume"] > record["volume"]
+            ):
+                totals[month] = dict(peak)
+            elif record is not None:
+                peaks[month] = dict(record)
     return totals
+
+
+def _daily_spans_the_year(usage_daily: dict[str, Any] | None, this_month: str) -> bool:
+    """Whether the daily series alone holds every day of this year so far.
+
+    In January it always does: the 35-day window spans the whole month in progress, which
+    is what `Water Used This Month` relies on every day of the year. Later, only a bucket
+    dated January 1 or earlier proves the window reached back that far — a bucket is in
+    the series only if the window covered its day. Without one there is no telling.
+    """
+    if this_month.endswith("-01"):
+        return True
+    new_year = date(int(this_month[:4]), 1, 1)
+    for entry in usage_series(usage_daily):
+        bucket = _usage_bucket_date(entry.get("intervalKey"))
+        if bucket is not None and bucket <= new_year:
+            return True
+    return False
+
+
+@dataclass(frozen=True)
+class _Borrowed(ExtraStoredData):
+    """What `Water Used Today` reported out of tomorrow's UTC bucket, kept over a restart.
+
+    See `DailyWaterUsage._rendered` for why it is owed, and `async_added_to_hass` for when
+    it is taken back. Home Assistant's restore-state store keeps it: written when the entity
+    is removed for a reload, at shutdown, and every fifteen minutes in between.
+    """
+
+    day: date
+    litres: float
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"borrowed_day": self.day.isoformat(), "borrowed_litres": self.litres}
+
+    @classmethod
+    def from_dict(cls, data: Any) -> _Borrowed | None:
+        """The stored record, or None for anything that is not one."""
+        if not isinstance(data, dict):
+            return None
+        day = _usage_bucket_date(data.get("borrowed_day"))
+        litres = data.get("borrowed_litres")
+        if (
+            day is None
+            or isinstance(litres, bool)
+            or not isinstance(litres, (int, float))
+            or not math.isfinite(litres)
+            or litres < 0
+        ):
+            return None
+        return cls(day, float(litres))
 
 
 def _start_of_local_month(now: datetime) -> datetime:
@@ -138,11 +234,17 @@ class MonthlyWaterUsage(WaterUsage):
     """
 
     _attr_icon = "mdi:calendar-month"
-    # **Rendered once per usage update, not per MQTT message.** Keyed on the identity of both
-    # usage payloads plus the calendar month so post-shower `usage_daily` refreshes and month
-    # rollovers invalidate the cache automatically.
-    _cache_key: tuple[int, int, str] | None = None
+    # **Rendered once per usage update, not per MQTT message.** Keyed on both usage payloads
+    # plus the calendar month, so post-shower `usage_daily` refreshes and month rollovers
+    # invalidate the cache automatically. The payloads themselves are held and compared with
+    # `is`: until 2026-10-16 the key was their `id()`, which Python hands out again once an
+    # object is freed — so a new payload allocated where the last one had been could hit the
+    # cache and publish the old figure.
+    _cache_key: tuple[Any, Any, str] | None = None
     _cached: tuple[dict[str, Any] | None, dict[str, Any]] = (None, {})
+    #: Each ended month's highest figure this run — see `_month_totals`. Per entity, and
+    #: created on first use: these mixins never see `__init__`.
+    _month_peaks: dict[str, dict[str, float]] | None = None
 
     def _rendered(self) -> tuple[dict[str, Any] | None, dict[str, Any]]:
         """This month's entry and the attribute dict, built once per usage payload.
@@ -155,11 +257,20 @@ class MonthlyWaterUsage(WaterUsage):
         """
         usage, usage_daily = self._usage_series()
         month = dt_util.now().strftime("%Y-%m")
-        key = (id(usage), id(usage_daily), month)
-        if key == self._cache_key:
+        cached = self._cache_key
+        if (
+            cached is not None
+            and cached[0] is usage
+            and cached[1] is usage_daily
+            and cached[2] == month
+        ):
             return self._cached
 
-        totals = _month_totals(usage, usage_daily)
+        if self._month_peaks is None:
+            self._month_peaks = {}
+        totals = _month_totals(
+            usage, usage_daily, peaks=self._month_peaks, this_month=month
+        )
         current = totals.get(month)
         if current is None and usage_series(usage_daily):
             # The daily series spans every day of this month and has nothing in it, so
@@ -182,7 +293,7 @@ class MonthlyWaterUsage(WaterUsage):
                 # Seconds on the wire; minutes is what a shower is measured in.
                 attributes["running_minutes"] = round(float(duration) / 60, 1)
 
-        self._cache_key = key
+        self._cache_key = (usage, usage_daily, month)
         self._cached = (current, attributes)
         return self._cached
 
@@ -232,28 +343,59 @@ class YearlyWaterUsage(WaterUsage):
     `TOTAL` with a `last_reset` of local midnight on January 1, for the same reason as
     `Water Used This Month`: the figure starts again each year, and without `last_reset`
     long-term statistics counted that as a year of negative usage.
+
+    **Unknown, not partial, while the monthly series is missing** — see `_rendered`.
     """
 
     _attr_icon = "mdi:calendar-range"
-    _cache_key: tuple[int, int, str] | None = None
+    # Held payloads compared with `is`, for the reason on `MonthlyWaterUsage._cache_key`.
+    _cache_key: tuple[Any, Any, str] | None = None
     _cached: tuple[float | None, dict[str, Any]] = (None, {})
+    #: As on `MonthlyWaterUsage`: each ended month's highest figure this run.
+    _month_peaks: dict[str, dict[str, float]] | None = None
 
     def _rendered(self) -> tuple[float | None, dict[str, Any]]:
         usage, usage_daily = self._usage_series()
         this_month = dt_util.now().strftime("%Y-%m")
         this_year = this_month[:4]
-        key = (id(usage), id(usage_daily), this_month)
-        if key == self._cache_key:
+        cached = self._cache_key
+        if (
+            cached is not None
+            and cached[0] is usage
+            and cached[1] is usage_daily
+            and cached[2] == this_month
+        ):
             return self._cached
-
-        months = {
-            month: record["volume"]
-            for month, record in _month_totals(usage, usage_daily).items()
-            if month.startswith(f"{this_year}-") and month <= this_month
-        }
 
         total: float | None = None
         attributes: dict[str, Any] = {}
+        # ⚠️ **No monthly series, no year** — unless the daily one reaches back to January 1
+        # (2026-10-16). The monthly read can fail at startup while the daily one succeeds,
+        # and the year used to be summed from the daily window alone: 35 days of it. A year
+        # of 10 000 L read 1 560 L after such a restart, so statistics recorded −8 440 L,
+        # then +8 440 L once the monthly read recovered — and if it did not recover before
+        # January 1, the loss stood for good. Unknown is skipped by the recorder instead, so
+        # the sum carries on from the last real figure when the monthly series arrives; it
+        # is read again on later seeds and usage reads until it answers. The month sensor
+        # needs no such guard: its figure is the month in progress, which the daily window
+        # always spans.
+        if not usage_series(usage) and not _daily_spans_the_year(
+            usage_daily, this_month
+        ):
+            self._cache_key = (usage, usage_daily, this_month)
+            self._cached = (total, attributes)
+            return self._cached
+
+        if self._month_peaks is None:
+            self._month_peaks = {}
+        months = {
+            month: record["volume"]
+            for month, record in _month_totals(
+                usage, usage_daily, peaks=self._month_peaks, this_month=this_month
+            ).items()
+            if month.startswith(f"{this_year}-") and month <= this_month
+        }
+
         if months:
             ordered = sorted(months)
             litres = sum(months[key_] for key_ in ordered)
@@ -282,7 +424,7 @@ class YearlyWaterUsage(WaterUsage):
             total = 0.0
             attributes = {"year": this_year, "months_counted": 0, "per_month": {}}
 
-        self._cache_key = key
+        self._cache_key = (usage, usage_daily, this_month)
         self._cached = (total, attributes)
         return self._cached
 
@@ -300,7 +442,7 @@ class YearlyWaterUsage(WaterUsage):
         return self._rendered()[1]
 
 
-class DailyWaterUsage(WaterUsage):
+class DailyWaterUsage(WaterUsage, RestoreEntity):
     """Shared base for the day- and week-scoped water totals.
 
     Both read the same `Interval=DAY` series and differ only in how many trailing days they
@@ -315,30 +457,56 @@ class DailyWaterUsage(WaterUsage):
     series; the account's `waterUnits` decides only the display. Verified the day this was
     written: the daily entries for the current month summed to the same 465 L the `MONTH`
     series reported for it.
+
+    A `RestoreEntity` since 2026-10-16, for `Water Used Today`'s sake: what it borrowed
+    from tomorrow's bucket must outlive a restart (see `_rendered`; the week keeps nothing).
+    Valve and faucet sensors both get it from here.
     """
 
     #: Trailing days to sum, counting today.
     _days: int = 1
-    _cache_key: tuple[int, date, date] | None = None
+    # `TOTAL` for both, and not `TOTAL_INCREASING`: both fall — one at midnight, one as the
+    # window rolls — and calling that a meter reset would inject phantom water into
+    # long-term statistics. `Water Used Today` also sets `last_reset` to local midnight, so
+    # statistics record each day as a new period: it is the consumption meter, and the one
+    # for the Energy dashboard.
+    #
+    # **A rolling window is a net total**, with no start to give as `last_reset`: its
+    # long-term "change" is the window's own rise and fall, negative on a day a heavy day
+    # leaves it. So it is no consumption meter, though its statistics are right for what it
+    # is. 1.03 dropped its state class to keep those negative changes out, and Home
+    # Assistant stopped tracking the statistics owners already had for it, with a
+    # `state_class_removed` repair; at the owner's request it is `TOTAL` again the same day
+    # (2026-10-16), and the existing statistic carries on under its old id.
+    _attr_state_class = SensorStateClass.TOTAL
+    # Held payload compared with `is`, for the reason on `MonthlyWaterUsage._cache_key`.
+    _cache_key: tuple[Any, date, date] | None = None
     _cached: tuple[float | None, dict[str, Any]] = (None, {})
     #: `Water Used Today` only: the bucket it last read under the UTC fallback in
     #: `_rendered`, and the litres it reported from it. See there.
     _borrowed: tuple[date, float] | None = None
 
     @property
-    def state_class(self) -> SensorStateClass | None:
-        """`TOTAL` for `Water Used Today`; none at all for a rolling window.
+    def extra_restore_state_data(self) -> ExtraStoredData | None:
+        """What `Water Used Today` borrowed, for the restore-state store to keep."""
+        borrowed = self._borrowed if self._days == 1 else None
+        return None if borrowed is None else _Borrowed(*borrowed)
 
-        `TOTAL`, not `TOTAL_INCREASING`, for today: it falls at midnight, and calling that a
-        meter reset would inject phantom water into long-term statistics. It sets
-        `last_reset` to local midnight, so statistics record each day as a new period.
+    async def async_added_to_hass(self) -> None:
+        """Take back a borrow from before a restart or reload, while it is still owed.
 
-        **A rolling week has no state class**, since 2026-10-16. It falls whenever a day
-        leaves the window and has no start to give as `last_reset`, so as `TOTAL` the
-        recorder added every such drop to the statistics sum as negative water — and the
-        Energy dashboard offered it as a water source. It is a figure to read, not a meter.
+        Before the first state write — Home Assistant writes the state straight after this
+        — so the first figure already leaves out what yesterday reported. Owed while its
+        bucket is today's or still tomorrow's; once its day has passed, nothing is.
         """
-        return SensorStateClass.TOTAL if self._days == 1 else None
+        await super().async_added_to_hass()
+        if self._days != 1 or self._borrowed is not None:
+            return
+        last = await self.async_get_last_extra_data()
+        stored = None if last is None else _Borrowed.from_dict(last.as_dict())
+        if stored is not None and stored.day >= dt_util.now().date():
+            self._borrowed = (stored.day, stored.litres)
+            self._cache_key = None
 
     def _rendered(self) -> tuple[float | None, dict[str, Any]]:
         """Sum the trailing `_days` buckets, cached on the payload's identity.
@@ -349,8 +517,13 @@ class DailyWaterUsage(WaterUsage):
         usage = self._usage_series()[1]
         local_today = dt_util.now().date()
         utc_today = datetime.now(UTC).date()
-        key = (id(usage), local_today, utc_today)
-        if key == self._cache_key:
+        cached = self._cache_key
+        if (
+            cached is not None
+            and cached[0] is usage
+            and cached[1] == local_today
+            and cached[2] == utc_today
+        ):
             return self._cached
 
         # **Local dates, not UTC.** "Today" is the owner's today; the series keys its
@@ -371,15 +544,20 @@ class DailyWaterUsage(WaterUsage):
             bucket = _usage_bucket_date(interval)
             if bucket is None:
                 continue
-            volume = entry.get("volume")
-            if not isinstance(volume, (int, float)):
+            volume = _finite(entry.get("volume"))
+            if volume is None:
                 continue
-            volumes[bucket] = volumes.get(bucket, 0.0) + float(volume)
+            volumes[bucket] = volumes.get(bucket, 0.0) + volume
             count = entry.get("numberOfTimesValveSwitchedOn")
-            if isinstance(count, (int, float)) or (
-                isinstance(count, str) and count.isdigit()
-            ):
-                starts[bucket] = starts.get(bucket, 0) + int(count)
+            # Finite first, as every figure here: `int()` of a JSON `NaN` raises, which
+            # took the whole sensor's value with it.
+            starts_that_day = (
+                int(count)
+                if isinstance(count, str) and count.isdigit()
+                else _finite(count)
+            )
+            if starts_that_day is not None:
+                starts[bucket] = starts.get(bucket, 0) + int(starts_that_day)
 
         # Some accounts appear to expose the daily chart on UTC bucket labels. In US
         # evenings that can put local "today" under tomorrow's ISO date, which used to
@@ -390,8 +568,14 @@ class DailyWaterUsage(WaterUsage):
         # midnight the borrowed bucket *is* today, under a new `last_reset`, and Home
         # Assistant counts the first value of a new period in full — so the evening's water
         # went into long-term statistics twice. `_borrowed` remembers how much of that
-        # bucket today already reported, and tomorrow reads only the rest. Held in memory:
-        # a restart between the borrow and the next day's first reading forgets it.
+        # bucket today already reported, and tomorrow reads only the rest — for the whole
+        # of tomorrow, restarts included. 1.03 held it in memory only, and a restart or
+        # reload the next morning brought the whole bucket back under the same
+        # `last_reset`: the evening's water counted twice after all. Home Assistant's
+        # restore-state store keeps it now (`extra_restore_state_data`, read back in
+        # `async_added_to_hass`). It is saved at shutdown, kept across a reload, and
+        # written every fifteen minutes in between — so only a crash within a quarter of
+        # an hour of the borrow can still lose it.
         borrowed = self._borrowed if self._days == 1 else None
         if borrowed is not None and borrowed[0] < local_today:
             # Its day has come and gone; there is nothing left to subtract from.
@@ -469,7 +653,7 @@ class DailyWaterUsage(WaterUsage):
                 attributes["per_day"] = {}
                 attributes["window_days"] = self._days
 
-        self._cache_key = key
+        self._cache_key = (usage, local_today, utc_today)
         self._cached = (total, attributes)
         return self._cached
 
@@ -479,8 +663,8 @@ class DailyWaterUsage(WaterUsage):
 
     @property
     def last_reset(self) -> datetime | None:
-        """Local midnight for `Water Used Today`; None for the rolling week, which has no
-        state class for statistics to read it with."""
+        """Local midnight for `Water Used Today`; None for the rolling week, a net total
+        with no start to give."""
         return dt_util.start_of_local_day() if self._days == 1 else None
 
     @property

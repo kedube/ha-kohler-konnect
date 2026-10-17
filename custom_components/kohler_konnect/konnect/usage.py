@@ -9,6 +9,7 @@ faucet.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 #: Litres to US gallons. Both endpoints report litres regardless of the account's unit
@@ -38,9 +39,12 @@ def usage_volume_gallons(litres: float) -> float:
 
 
 def _number(value: Any) -> float | None:
+    # Finite only: Python's JSON parser takes a bare `NaN` or `Infinity` as a float, and one
+    # such bucket would make every water total built on it a value Home Assistant refuses.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value)
+    number = float(value)
+    return number if math.isfinite(number) else None
 
 
 def _faucet_entry(entry: dict[str, Any]) -> dict[str, Any]:

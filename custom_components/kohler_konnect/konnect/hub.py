@@ -80,17 +80,17 @@ def outlet_flags(
 def _slot_on(value: Any) -> bool:
     """One outlet-array slot: a number, or the same number as a string.
 
-    A string that is not a whole number, other than ``"true"``/``"on"``, reads as off —
-    the same as the padding beyond the zone's outlets, and the same as ``0``.
+    A numeric string reads as its whole part does, through the same `int(float())` as
+    :func:`_int_or_none`: ``"1.0"`` is on like ``"1"`` — plain `int` refused it, and an
+    open outlet read as off until 2026-10-16 — and ``"0.0"`` is off. Anything else other
+    than ``"true"``/``"on"`` reads as off, ``"nan"`` and ``"inf"`` included — the same as
+    the padding beyond the zone's outlets, and the same as ``0``.
     """
     if isinstance(value, str):
         text = value.strip().lower()
         if text in {"true", "on"}:
             return True
-        try:
-            return int(text) != 0
-        except ValueError:
-            return False
+        return bool(_int_or_none(text))
     return bool(value)
 
 
@@ -351,15 +351,19 @@ class HubCapabilities:
         platforms create accessory entities when capabilities are unknown, and the next
         seed reads again. Raising here — an `AttributeError` until 2026-10-16 — failed
         setup, since the caller catches only `KohlerError`.
+
+        **So does a reply with no ``parts`` in it** — none at all, ``null``, or an empty
+        object (2026-10-16). Every real configuration names its parts, ``NotConnected`` or
+        ``null`` included, so one naming none is a degraded reply — ``{}``, or the
+        ``{"configuration": null}`` the caller turns into ``{}`` — not a controller without
+        accessories. Those read as known and empty, and since the coordinator re-reads only
+        while ``known`` is False, Music, Light and Steam were never created until a manual
+        reload.
         """
-        if configuration is None:
-            configuration = {}
         if not isinstance(configuration, dict):
             return cls()
         parts = configuration.get("parts")
-        if parts is None:
-            parts = {}
-        elif not isinstance(parts, dict):
+        if not isinstance(parts, dict) or not parts:
             return cls()
 
         def connected(*names: str) -> bool:

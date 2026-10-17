@@ -492,7 +492,11 @@ def test_a_journal_note_never_opens_a_file_it_asks_for_prepare_instead(tmp_path)
 
 
 def test_switching_the_journal_off_drops_records_held_for_a_file(tmp_path):
-    """A record held for a prepare() that never comes must not surface in a later file."""
+    """A record held for a prepare() that never comes must not surface in a later file.
+
+    Nor may anything after `close()`, which is final since 2026-10-16: the late prepare()
+    and the note after it used to open a file that nothing would ever close.
+    """
     journal = make_journal(tmp_path / "j", forced=True)
     journal.note("mode", after="warmUpDisabled")
     journal.close()
@@ -500,8 +504,7 @@ def test_switching_the_journal_off_drops_records_held_for_a_file(tmp_path):
     journal.note("restore_done", mode="warmUpAllOutlets")
     journal.prepare()
 
-    (path,) = jsonl_files(tmp_path / "j")
-    assert [r["event"] for r in records(path)] == ["restore_done"]
+    assert jsonl_files(tmp_path / "j") == []
 
 
 def test_journal_records_carry_the_shared_clock_and_round_floats(tmp_path):

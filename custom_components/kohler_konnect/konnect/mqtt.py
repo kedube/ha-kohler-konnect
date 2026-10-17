@@ -30,6 +30,7 @@ import json
 import logging
 import re
 import ssl
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -67,6 +68,14 @@ STABLE_CONNECTION_SECONDS = 60
 # missing CONNACK each give up after the keepalive, and DNS can add its own wait.
 CONNECT_TIMEOUT_SECONDS = 120
 KEEPALIVE_SECONDS = 60
+# How long stopping a client waits for paho's network thread to end. Told to stop, it ends
+# within about a second — unless it is inside a connection attempt, which nothing can cut
+# short: DNS has no timeout of its own, TCP gives up after paho's 5 s and a TLS handshake
+# only after the keepalive. Until 2026-10-16 that wait was unbounded, and it held unload,
+# reload and Home Assistant's shutdown for up to a minute. Past this the thread is left to
+# finish by itself: the connection callbacks ignore a client this stream has let go of,
+# and every callback ignores everything once the stream is stopping.
+STOP_TIMEOUT_SECONDS = 5
 
 # Building an SSL context reads the system CA bundle from disk. That is blocking file I/O,
 # so it must never happen on an event loop — paho's `tls_set()` does exactly that
@@ -109,6 +118,12 @@ def _contained[**P](what: str) -> Callable[[Callable[P, None]], Callable[P, None
     return decorate
 
 
+def _log_stop_failure(stopping: asyncio.Future[None]) -> None:
+    """Log a client stop that raised; see `KonnectMqttStream._async_stop_network`."""
+    if not stopping.cancelled() and (err := stopping.exception()) is not None:
+        _LOGGER.warning("Kohler MQTT did not stop cleanly", exc_info=err)
+
+
 @dataclass(frozen=True)
 class Envelope:
     """One decoded status message."""
@@ -119,6 +134,14 @@ class Envelope:
     attributes: list[dict[str, Any]]
     received_at: float
     raw: dict[str, Any] = field(repr=False, default_factory=dict)
+    #: When it arrived on the monotonic clock, for comparing with other monotonic times: a
+    #: wall-clock age taken from `received_at` shifts with every clock step (2026-10-16).
+    received_monotonic: float = field(
+        # Looked up at each call, not bound at import, so a test's frozen clock reaches it.
+        default_factory=lambda: time.monotonic(),
+        repr=False,
+        compare=False,
+    )
 
     def attribute(self, code: str | None = None, **match: Any) -> dict[str, Any] | None:
         """First attribute matching ``code`` and any extra field equalities."""
@@ -186,6 +209,17 @@ class KonnectMqttStream:
         self._loop = loop
         self._ssl_context = ssl_context
         self._mqtt: mqtt.Client | None = None
+        # Guards which client is current — `_mqtt` — together with that client's state,
+        # `connected` and `_connected_at`. paho's thread tests "is this still my client?"
+        # and then records a connect or a drop, while the owning loop swaps the client out,
+        # and until 2026-10-16 the two could interleave: a CONNACK that passed the test
+        # just before the swap recorded `connected = True` just after it, for a client
+        # already let go. Nothing cleared that, so the next reconnect attempt took it for a
+        # healthy connection and gave up — no client, no retry, and a stream reporting
+        # itself connected. Held for those assignments only, never across a call into paho:
+        # `disconnect()` can call `_on_disconnect` on the calling thread, which would then
+        # wait for a lock its own thread holds.
+        self._client_lock = threading.Lock()
         self._closing = False
         self._reconnect_task: asyncio.Task[None] | None = None
         self._connect_watchdog: asyncio.TimerHandle | None = None
@@ -232,7 +266,10 @@ class KonnectMqttStream:
             raise
 
     async def async_stop(self) -> None:
-        """Disconnect and stop reconnecting."""
+        """Disconnect and stop reconnecting.
+
+        Waits for paho's network thread at most `STOP_TIMEOUT_SECONDS`; see there.
+        """
         self._closing = True
         if self._reconnect_task is not None:
             self._reconnect_task.cancel()
@@ -240,16 +277,23 @@ class KonnectMqttStream:
         if self._connect_watchdog is not None:
             self._connect_watchdog.cancel()
             self._connect_watchdog = None
-        client, self._mqtt = self._mqtt, None
+        with self._client_lock:
+            client, self._mqtt = self._mqtt, None
+            self.connected = False
+            self._connected_at = None
         if client is not None:
             client.disconnect()
-            await asyncio.to_thread(client.loop_stop)
-        self.connected = False
         # Closing a capture flushes and closes a file, which is blocking I/O, so it runs in
         # a worker thread rather than on the event loop. Only once paho's thread has
         # stopped, too: a message it was still handling would reopen the file just closed.
-        if self._raw_log is not None or self._report_log is not None:
-            await asyncio.to_thread(self._close_captures)
+        # So the same worker does both, in that order — and when stopping outlasts the
+        # wait, it still closes the captures, as soon as the thread has ended.
+        if (
+            client is not None
+            or self._raw_log is not None
+            or self._report_log is not None
+        ):
+            await self._async_stop_network(client, then=self._close_captures)
 
     def _close_captures(self) -> None:
         """Release the capture files. Blocking: run it in a worker thread."""
@@ -260,6 +304,43 @@ class KonnectMqttStream:
         # reload resumes the same file from the persisted name.
         if self._report_log is not None:
             self._report_log.close()
+
+    async def _async_stop_network(
+        self,
+        client: mqtt.Client | None,
+        *,
+        then: Callable[[], None] | None = None,
+        timeout: float | None = None,
+    ) -> asyncio.Future[None]:
+        """Stop `client`'s network thread and then run `then`, in one worker, in order.
+
+        Waits ``timeout`` seconds at most — `STOP_TIMEOUT_SECONDS` unless given — and warns
+        if that runs out. The worker carries on regardless, so `then` still runs once the
+        thread has ended, and never before. It runs even when stopping raises, so a paho
+        error cannot leave a capture open; a failure of either is logged rather than
+        raised, because nothing may be waiting for it any more. Returns the worker, for a
+        caller that must not go on before it is done.
+        """
+
+        def stop() -> None:
+            try:
+                if client is not None:
+                    client.loop_stop()
+            finally:
+                if then is not None:
+                    then()
+
+        stopping = asyncio.get_running_loop().run_in_executor(None, stop)
+        stopping.add_done_callback(_log_stop_failure)
+        if timeout is None:
+            timeout = STOP_TIMEOUT_SECONDS
+        done, _ = await asyncio.wait({stopping}, timeout=timeout)
+        if not done:
+            _LOGGER.warning(
+                "Kohler MQTT network thread did not stop within %ss; leaving it to finish",
+                timeout,
+            )
+        return stopping
 
     @property
     def warming_up(self) -> bool:
@@ -329,7 +410,8 @@ class KonnectMqttStream:
         client.on_disconnect = self._on_disconnect
         client.on_message = self._on_message
 
-        self._mqtt = client
+        with self._client_lock:
+            self._mqtt = client
         client.connect_async(host, MQTT_PORT, keepalive=KEEPALIVE_SECONDS)
         client.loop_start()
         if self._connect_watchdog is not None:
@@ -350,14 +432,20 @@ class KonnectMqttStream:
         # to CONNECTING, so a `disconnect()` made while an attempt is under way does not
         # stop the CONNACK that answers it. Nor is a client this stream has already
         # replaced its connection, whatever that client reports.
-        if self._closing or client is not self._mqtt:
+        #
+        # Tested and recorded in one step, under the lock the swap takes: see
+        # `_client_lock`. The subscription follows outside it — a call into paho.
+        with self._client_lock:
+            current = not self._closing and client is self._mqtt
+            if current and rc == 0:
+                self.connected = True
+                self._connected_at = time.monotonic()
+        if not current:
             return
         if rc != 0:
             _LOGGER.warning("Kohler MQTT connect refused: %s", mqtt.connack_string(rc))
             return
         client.subscribe(MQTT_SUBSCRIBE_TOPIC, qos=1)
-        self.connected = True
-        self._connected_at = time.monotonic()
         # The backoff is *not* reset here, only once a connection has lasted — see
         # `STABLE_CONNECTION_SECONDS` and `_on_disconnect`.
         # Credentials demonstrably work again; re-arm for the next outage.
@@ -382,15 +470,16 @@ class KonnectMqttStream:
     def _on_disconnect(
         self, client: mqtt.Client, _userdata: Any, rc: int, *_: Any
     ) -> None:
-        if client is not self._mqtt:
-            # A client already replaced or stopped, reporting its own teardown.
-            return
-        stable = (
-            self._connected_at is not None
-            and time.monotonic() - self._connected_at >= STABLE_CONNECTION_SECONDS
-        )
-        self.connected = False
-        self._connected_at = None
+        with self._client_lock:
+            if client is not self._mqtt:
+                # A client already replaced or stopped, reporting its own teardown.
+                return
+            stable = (
+                self._connected_at is not None
+                and time.monotonic() - self._connected_at >= STABLE_CONNECTION_SECONDS
+            )
+            self.connected = False
+            self._connected_at = None
         if self._closing:
             return
         if stable:
@@ -470,6 +559,7 @@ class KonnectMqttStream:
             attributes=[a for a in attributes if isinstance(a, dict)],
             received_at=time.time(),
             raw=payload,
+            received_monotonic=time.monotonic(),
         )
         self.last_message_at = envelope.received_at
         # Proof the channel delivers. Ends the warm-up for good, not just for this
@@ -588,17 +678,43 @@ class KonnectMqttStream:
             await asyncio.sleep(delay)
             if self._closing:
                 return
-            if self.connected:
-                # The current client came up during the wait after all — a first connect
-                # slower than the watchdog allowed. It is healthy; replacing it is not.
-                return
-            old, self._mqtt = self._mqtt, None
+            # Under `_client_lock`, so a CONNACK cannot land between the test and the swap:
+            # `connected` is then the current client's, and only ever true while it is.
+            with self._client_lock:
+                if self._mqtt is not None and self.connected:
+                    # The current client came up during the wait after all — a first
+                    # connect slower than the watchdog allowed. It is healthy; replacing it
+                    # is not.
+                    return
+                old, self._mqtt = self._mqtt, None
+                # Its state goes with it. A connect, drop or failure it reports from here on
+                # is not heard: those callbacks ignore a client that is no longer `_mqtt`.
+                self.connected = False
+                self._connected_at = None
             if old is not None:
                 try:
                     old.disconnect()
-                    await asyncio.to_thread(old.loop_stop)
                 except Exception:
                     _LOGGER.debug("Error tearing down old MQTT client", exc_info=True)
+                # **Waited out, unlike `async_stop`'s** (2026-10-16). An attempt stuck in a
+                # TLS handshake or a lookup can still finish after a wait gives up on it,
+                # and send its CONNECT with the same IoT Hub client id after the
+                # replacement is up — which kicks the replacement off. Going on after a
+                # bound did that, and every later cycle left one more such client behind,
+                # each blocking a worker. So the next client starts only once the old
+                # thread has ended; a wait that goes on is warned of every
+                # `CONNECT_TIMEOUT_SECONDS`, not silent. A stop while this waits cancels
+                # the loop.
+                stopping = await self._async_stop_network(
+                    old, timeout=CONNECT_TIMEOUT_SECONDS
+                )
+                while not stopping.done():
+                    await asyncio.wait({stopping}, timeout=CONNECT_TIMEOUT_SECONDS)
+                    if not stopping.done():
+                        _LOGGER.warning(
+                            "Kohler MQTT is still waiting for an abandoned connection "
+                            "attempt to end; it reconnects once that has"
+                        )
             try:
                 await self._async_connect()
                 return

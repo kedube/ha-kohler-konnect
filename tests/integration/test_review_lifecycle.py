@@ -356,7 +356,9 @@ async def test_a_valve_reseed_overtaken_by_a_push_keeps_the_push(
 ) -> None:
     """`gcs-state` trails the device: the shower stopped, the read still showed it open.
 
-    The reply's `connectionState` is not about the shower, and is still taken.
+    Its `Disconnected` is older than the valve's own message too, so that does not turn the
+    sensor off either: a message the valve sent after the read went out proves it reachable
+    (2026-10-16). Kohler's word is still recorded, with the reason it was overruled.
     """
     kohler.valve_states[LEFT] = valve_state(valve_zone(1))
     coordinator = await start(hass, shower_entry)
@@ -374,7 +376,10 @@ async def test_a_valve_reseed_overtaken_by_a_push_keeps_the_push(
 
     assert valve.gcs_state.outlets == [False, False, False]
     assert state(hass, "switch.anthem_valve_rainhead_1") == "off"
-    assert valve.cloud_watch.connected is False
+    assert valve.cloud_watch.connected is True
+    attributes = valve.cloud_watch.attributes
+    assert attributes["connection_state"] == "Disconnected"
+    assert "after this read was sent" in attributes["reachable_because"]
 
 
 async def test_a_valve_reseed_not_overtaken_is_applied(
@@ -458,7 +463,15 @@ async def test_a_valves_message_writes_only_that_valves_entities(
                 {"zone": "1", "status": "ON", "outlets": [1, 0, 0]},
             ),
         )
-    assert {owners[entity_id] for entity_id in written} == {MAIN}
+    # Except the capture button: it lives on the first valve, but describes the account's
+    # one capture, which every device's messages go into.
+    capture = er.async_get(hass).async_get_entity_id(
+        "button", DOMAIN, f"{LEFT}_new_mqtt_capture"
+    )
+    assert capture in written
+    assert {owners[entity_id] for entity_id in written if entity_id != capture} == {
+        MAIN
+    }
 
     # Not about one device: everything re-renders, as before.
     with state_writes() as written:
@@ -511,8 +524,9 @@ async def test_a_layout_found_after_the_entities_exist_reloads_once(
 ) -> None:
     """The settings read is retried until it answers, so it can answer late.
 
-    The entry says two zones; the valve has one, but its read fails at setup and on the
-    reseed after connecting, so the entities are built for two.
+    The entry says two zones; the valve has one, but its read fails at setup and again at
+    the stream's first connect, which retries a valve whose setup read never answered — so
+    the entities are built for two.
     """
     two_zones(hass, shower_entry)
     kohler.fail_api(f"/gcsadvancestate/{LEFT}", SERVER_ERROR, SERVER_ERROR)

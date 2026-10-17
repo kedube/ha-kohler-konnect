@@ -15,7 +15,9 @@ Turning one on re-sends the complete valve command with that outlet's bit set an
 other outlet in both zones preserved, at whatever the zone's temperature and flow numbers
 hold. The valve accepts no partial write. In a **paused** zone — whose outlets all read off
 — on opens only that outlet, and off drops it from the assignment the pause would resume
-to; see `Valve.async_set_zone_outlet`.
+to; see `Valve.async_set_zone_outlet`. During a **warm-up** the outlets preserved are the
+shower's being warmed up, not the warm-up's own, and a toggle is refused when that shower
+was started elsewhere; see `Valve._warmup_shower`.
 
 Switches are **optimistic**: the toggle moves immediately and holds until the device
 reports the same position — about a second later on real hardware, when the valve echoes
@@ -186,14 +188,22 @@ class OptimisticSwitchMixin:
         return self._device_is_on
 
     async def _async_switch(self, target: bool, action: Awaitable[Any]) -> None:
-        """Show ``target`` at once, send ``action``, and hold it until the device agrees."""
+        """Show ``target`` at once, send ``action``, and hold it until the device agrees.
+
+        🚨 **Any exit but success clears the guess, cancellation included** (2026-10-16).
+        Since the guess clears only when the device agrees, one left behind stands until it
+        does — and `CancelledError` is not an `Exception`, so a script stopped mid-action or
+        an automation in `mode: restart` re-triggering, cancelling a Stop in flight, left
+        "Shower on" reading off for as long as the water ran.
+        """
         self._cancel_optimistic_timer()
         self._optimistic = target
         self.async_write_ha_state()
         try:
             await action
-        except Exception:
-            # The command failed, so stop showing a position the device never reached.
+        except BaseException:
+            # The command failed or was cancelled, so stop showing a position the device
+            # may never reach: its own report is the honest answer now.
             self._clear_optimistic()
             raise
         self._cancel_optimistic_timer()

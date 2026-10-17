@@ -39,7 +39,6 @@ from custom_components.kohler_konnect.const import (
     FAUCET_SCAN_INTERVAL_IDLE,
     FAUCET_SCAN_INTERVAL_PUSH_ACTIVE,
 )
-from custom_components.kohler_konnect.faucet.coordinator import AUTO_OFF_RETRIES
 from custom_components.kohler_konnect.konnect.faucet import FaucetEvent
 
 from .conftest import (
@@ -160,6 +159,10 @@ async def test_water_stopped_during_a_restart_drops_the_safety_limit(
     kohler.state["status"] = "Off"
     assert await hass.config_entries.async_reload(setup_entry.entry_id)
     await hass.async_block_till_done()
+    # Ten seconds after the ON, an "off" may predate it; the first reading once the cloud
+    # has had a minute for it counts, and the faucet is read quickly until then.
+    for _ in range(11):
+        await _advance(hass, freezer, timedelta(seconds=5))
     assert faucet(hass, setup_entry)._auto_off_at is None
 
     # Minute 9: someone uses the faucet by hand, and is still using it at minute 10.
@@ -233,28 +236,32 @@ async def test_off_sent_when_nothing_was_learned_since_the_command(
     assert _actions(kohler) == ["ON", "OFF"]
 
 
-async def test_auto_off_retries_are_capped(
+async def test_auto_off_retries_back_off_and_are_warned_about_once(
     freezer: FrozenDateTimeFactory,
     hass: HomeAssistant,
     setup_entry: MockConfigEntry,
     kohler: SlowKohler,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A faucet that stays unreachable is not retried, and warned about, for ever."""
+    """A faucet that stays unreachable is tried less often, and warned about once.
+
+    Never given up on: until 2026-10-16 (second review) this test asserted the ten-retry
+    cap that dropped the limit and left the water running.
+    """
     caplog.set_level(logging.WARNING)
     await _water_on(hass)
     kohler.state["status"] = "On"
     kohler.fail_api("/onoff", *[kohler.network_error() for _ in range(50)])
 
     await _advance(hass, freezer, timedelta(minutes=10, seconds=1))
-    for _ in range(AUTO_OFF_RETRIES + 5):
+    for _ in range(30):
         await _advance(hass, freezer, timedelta(minutes=1))
-    # The ON, then the first OFF and each retry.
-    assert _calls(kohler, "/onoff") == 1 + 1 + AUTO_OFF_RETRIES
-    assert faucet(hass, setup_entry)._auto_off_at is None
+    # The ON, then tries at minutes 10, 11, 13, 18 and 28 — not one a minute.
+    assert _calls(kohler, "/onoff") == 1 + 5
+    assert faucet(hass, setup_entry)._auto_off_at is not None
     retrying = [r for r in caplog.records if "Trying again" in r.getMessage()]
     assert len(retrying) == 1
-    assert "Giving up" in caplog.text
+    assert "Giving up" not in caplog.text
 
 
 async def test_no_auto_off_retry_after_unload(

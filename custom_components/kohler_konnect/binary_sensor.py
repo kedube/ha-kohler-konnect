@@ -182,8 +182,8 @@ class ValveProblemSensor(KohlerValveEntity, BinarySensorEntity):
     Three sources, mirroring `ControllerProblemSensor`:
 
     * **Active faults** — the valve's own ``gcs-diagnostics`` log, read on each seed
-      (setup, reconnect, a manual ``update_entity``), keeping entries that are
-      ``isActive`` with a real ``errorCode``: what the Konnect app lists. Published as
+      (setup, reconnect, a manual ``update_entity``) and twice a day, keeping entries that
+      are ``isActive`` with a real ``errorCode``: what the Konnect app lists. Published as
       ``active_faults``. The only one of the three ever seen to report a fault: added
       2026-10-16, after the owner's diagnostics showed Shower Left logging an active
       ``Algorithm`` error ``37`` on ``Valve 1`` since April while this sensor read off. A
@@ -606,8 +606,10 @@ class ControllerProblemSensor(KohlerControllerEntity, BinarySensorEntity):
       are gated on ``parts``, so without this a fitted accessory that drops off simply
       vanishes rather than reading as a problem.
 
-    Active errors and the disconnected list are read on each seed (setup and reconnect),
-    the flags live. Never seen on the reference system, which has had no fault to show.
+    Active errors are read on each seed (setup and reconnect) and twice a day, and a read
+    that fails keeps the errors already known rather than clearing them; the disconnected
+    list is read on each seed, the flags live. Never seen on the reference system, which
+    has had no fault to show.
     """
 
     _attr_name = "Problem"

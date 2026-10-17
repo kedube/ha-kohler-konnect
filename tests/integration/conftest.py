@@ -501,8 +501,8 @@ async def setup_entry(
     await wait_for(
         hass, lambda: account(hass, config_entry).stream.connected, "the stream"
     )
-    # Connecting re-reads the faucet; let that re-read's 1 s cooldown pass, so the
-    # re-read after a test's first command is not held back by it.
+    # Let the cooldown of setup's own faucet read pass (the first connect no longer reads
+    # it again), so the re-read after a test's first command is not held back by it.
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
     await hass.async_block_till_done()
     yield config_entry

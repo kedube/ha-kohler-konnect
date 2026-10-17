@@ -21,8 +21,9 @@
       },
       "reauth_confirm": {
         "title": "Entre novamente",
-        "description": "A sessão salva para {username} expirou. Digite a senha novamente para reconectar.",
+        "description": "A sessão salva para {username} expirou. Digite a senha novamente para reconectar. Se o e-mail da sua conta Kohler mudou desde então, digite o novo.",
         "data": {
+          "username": "E-mail",
           "password": "Senha"
         }
       }
@@ -263,6 +264,10 @@
     "faucet_api_changed": {
       "title": "A Kohler continua recusando solicitações para {name}",
       "description": "A nuvem da Kohler recusou várias solicitações seguidas, o que geralmente significa que a Kohler mudou sua API. Verifique se há uma atualização desta integração. Se não houver, abra um chamado e anexe o diagnóstico da integração.\n\nÚltimo erro: {error}"
+    },
+    "faucet_auto_off_failed": {
+      "title": "A água de {name} pode ainda estar aberta",
+      "description": "A água aberta pelo Home Assistant em {name} atingiu o limite de segurança, mas o Home Assistant não conseguiu fechá-la: a nuvem da Kohler não aceitou o comando, ou a torneira não informou desde então que a água está fechada.\n\nO Home Assistant continua tentando — após 1, 2, 5 e 10 minutos, depois a cada 15 minutos — até saber que a água está fechada, inclusive após reinícios. Se ainda estiver aberta, feche-a na torneira.\n\nEsta mensagem some assim que se souber que a água está fechada.\n\nÚltimo erro: {error}"
     },
     "replaced_integration": {
       "title": "Remova as integrações antigas da Kohler",

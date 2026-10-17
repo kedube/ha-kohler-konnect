@@ -512,9 +512,9 @@ def _valve_report(valve: Valve) -> dict[str, Any]:
         # `currentSystemState` is reported above; `has_fault` folds in its `error` value,
         # which no capture has carried, so the first one shows in a report.
         "has_fault": gcs.has_fault,
-        # What the Problem sensor turns on for, from the seed's read of the fault log —
-        # code, area, valve and timestamp only. `fault_log`, read as the report is built,
-        # carries the whole log beside it.
+        # What the Problem sensor turns on for, from the last read of the fault log — each
+        # seed, and twice a day — code, area, valve and timestamp only. `fault_log`, read as
+        # the report is built, carries the whole log beside it.
         "active_faults": [dict(fault) for fault in valve.active_faults],
         "dispensed_volume": gcs.dispensed_volume,
         "about": _about_report(valve.about_parts),
@@ -726,9 +726,14 @@ async def _async_add_fault_logs(
     """Attach each valve's `gcs-diagnostics` fault log, read now.
 
     Read whole on demand: the seed keeps only the active entries (`active_faults`), and the
-    full log is only ever wanted at the moment someone is building a report. The client
-    answers `{}` for a failed request, so an unreachable endpoint costs an empty list
-    rather than the report.
+    full log is only ever wanted at the moment someone is building a report. A read that
+    fails costs that valve's log, never the report.
+
+    ⚠️ **A failed read is reported as one, not as an empty log** (2026-10-16). The client
+    answers `{}` for a request it could not make, and that came out as `fault_log: []` —
+    "no faults", the one reading a report must not invent. A log that answers carries
+    `errorDetails`, empty or not; anything else is `fault_log: None` with
+    `fault_log_error` saying so, as `Valve.async_refresh_faults` treats it.
 
     ⚠️ **A sign-in failure used to cost the whole report** (fixed 2026-10-16). The token
     layer under the read raises `AuthError` — `AuthUnavailable` when Kohler's sign-in is
@@ -745,14 +750,20 @@ async def _async_add_fault_logs(
         report: dict[str, Any]
         if failure is None:
             try:
-                report = {
-                    "fault_log": _fault_log(
-                        await valve.client.async_get_gcs_diagnostics(valve.device_id)
-                    )
-                }
+                log = await valve.client.async_get_gcs_diagnostics(valve.device_id)
             except AuthError as err:
                 # The type only: the message is the sign-in service's, not ours to copy.
                 failure = f"sign-in failed ({type(err).__name__})"
+            else:
+                details = log.get("errorDetails") if isinstance(log, Mapping) else None
+                report = (
+                    {"fault_log": _fault_log(log)}
+                    if isinstance(details, list)
+                    else {
+                        "fault_log": None,
+                        "fault_log_error": "the read failed or returned no log",
+                    }
+                )
         if failure is not None:
             report = {"fault_log": None, "fault_log_error": failure}
         payload["valves"][index].update(report)

@@ -21,8 +21,9 @@
       },
       "reauth_confirm": {
         "title": "Erneut anmelden",
-        "description": "Die gespeicherte Sitzung für {username} ist abgelaufen. Gib das Passwort erneut ein, um die Verbindung wiederherzustellen.",
+        "description": "Die gespeicherte Sitzung für {username} ist abgelaufen. Gib das Passwort erneut ein, um die Verbindung wiederherzustellen. Falls sich die E-Mail-Adresse deines Kohler-Kontos inzwischen geändert hat, gib die neue ein.",
         "data": {
+          "username": "E-Mail",
           "password": "Passwort"
         }
       }
@@ -263,6 +264,10 @@
     "faucet_api_changed": {
       "title": "Kohler lehnt Anfragen für {name} weiterhin ab",
       "description": "Die Kohler-Cloud hat mehrere Anfragen nacheinander abgelehnt. Das bedeutet meist, dass Kohler seine API geändert hat. Prüfe, ob es ein Update für diese Integration gibt. Falls nicht, eröffne ein Issue und hänge die Diagnosedaten der Integration an.\n\nLetzter Fehler: {error}"
+    },
+    "faucet_auto_off_failed": {
+      "title": "Das Wasser an {name} läuft möglicherweise noch",
+      "description": "Über Home Assistant an {name} eingeschaltetes Wasser hat das Sicherheitslimit erreicht, aber Home Assistant konnte es nicht ausschalten: Die Kohler-Cloud hat den Befehl nicht angenommen, oder die Armatur hat seitdem nicht gemeldet, dass das Wasser aus ist.\n\nHome Assistant versucht es weiter – nach 1, 2, 5 und 10 Minuten, dann alle 15 Minuten –, bis feststeht, dass das Wasser aus ist, auch über Neustarts hinweg. Falls es noch läuft, schalte es an der Armatur aus.\n\nDiese Meldung verschwindet, sobald feststeht, dass das Wasser aus ist.\n\nLetzter Fehler: {error}"
     },
     "replaced_integration": {
       "title": "Entferne die alten Kohler-Integrationen",

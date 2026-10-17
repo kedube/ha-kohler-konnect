@@ -21,8 +21,9 @@
       },
       "reauth_confirm": {
         "title": "Zaloguj się ponownie",
-        "description": "Zapisana sesja dla {username} wygasła. Wprowadź ponownie hasło, aby połączyć się ponownie.",
+        "description": "Zapisana sesja dla {username} wygasła. Wprowadź ponownie hasło, aby połączyć się ponownie. Jeśli adres e-mail Twojego konta Kohler od tego czasu się zmienił, wprowadź nowy.",
         "data": {
+          "username": "E-mail",
           "password": "Hasło"
         }
       }
@@ -263,6 +264,10 @@
     "faucet_api_changed": {
       "title": "Kohler nadal odrzuca żądania dotyczące urządzenia {name}",
       "description": "Chmura Kohler odrzuciła kilka żądań z rzędu, co zwykle oznacza, że Kohler zmienił swoje API. Sprawdź, czy jest dostępna aktualizacja tej integracji. Jeśli nie, zgłoś problem i dołącz diagnostykę integracji.\n\nOstatni błąd: {error}"
+    },
+    "faucet_auto_off_failed": {
+      "title": "Woda w {name} może nadal płynąć",
+      "description": "Woda włączona z Home Assistant w {name} osiągnęła limit bezpieczeństwa, ale Home Assistant nie zdołał jej wyłączyć: chmura Kohler nie przyjęła polecenia albo kran od tego czasu nie zgłosił, że woda jest zakręcona.\n\nHome Assistant próbuje dalej — po 1, 2, 5 i 10 minutach, a potem co 15 minut — dopóki nie będzie wiadomo, że woda jest zakręcona, także po ponownym uruchomieniu. Jeśli nadal płynie, zakręć ją przy kranie.\n\nTen komunikat zniknie, gdy tylko będzie wiadomo, że woda jest zakręcona.\n\nOstatni błąd: {error}"
     },
     "replaced_integration": {
       "title": "Usuń stare integracje Kohler",

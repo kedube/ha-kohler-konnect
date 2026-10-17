@@ -21,8 +21,9 @@
       },
       "reauth_confirm": {
         "title": "Accedi di nuovo",
-        "description": "La sessione salvata per {username} è scaduta. Inserisci di nuovo la password per riconnetterti.",
+        "description": "La sessione salvata per {username} è scaduta. Inserisci di nuovo la password per riconnetterti. Se nel frattempo l'indirizzo email del tuo account Kohler è cambiato, inserisci quello nuovo.",
         "data": {
+          "username": "Email",
           "password": "Password"
         }
       }
@@ -263,6 +264,10 @@
     "faucet_api_changed": {
       "title": "Kohler continua a rifiutare le richieste per {name}",
       "description": "Il cloud Kohler ha rifiutato diverse richieste di seguito: di solito significa che Kohler ha modificato la sua API. Verifica se è disponibile un aggiornamento di questa integrazione. In caso contrario, apri una segnalazione e allega la diagnostica dell'integrazione.\n\nUltimo errore: {error}"
+    },
+    "faucet_auto_off_failed": {
+      "title": "L'acqua di {name} potrebbe scorrere ancora",
+      "description": "L'acqua aperta da Home Assistant su {name} ha raggiunto il limite di sicurezza, ma Home Assistant non è riuscito a chiuderla: il cloud Kohler non ha accettato il comando, oppure il rubinetto da allora non ha segnalato l'acqua chiusa.\n\nHome Assistant continua a provare — dopo 1, 2, 5 e 10 minuti, poi ogni 15 minuti — finché non risulta che l'acqua è chiusa, anche dopo un riavvio. Se scorre ancora, chiudila al rubinetto.\n\nQuesto messaggio scompare non appena risulta che l'acqua è chiusa.\n\nUltimo errore: {error}"
     },
     "replaced_integration": {
       "title": "Rimuovi le vecchie integrazioni Kohler",

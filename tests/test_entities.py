@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import importlib
 import time
+from collections import Counter
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 from unittest.mock import patch
@@ -976,9 +977,9 @@ def test_check_preset_word_refuses_a_malformed_word(word):
 def test_preset_timer_plan_drops_a_scalding_stored_word():
     """`writepreset` replaces the record whole, so a stored word is echoed back verbatim.
 
-    Dropping it sends an empty field for that valve — exactly what an unused valve already
-    gets — so the failure mode is a preset that stops driving one valve, not one that runs
-    it too hot.
+    The scalding word is never echoed. Nor is the preset rewritten without it (2026-10-16):
+    that sent the unused-valve word in its place, deleting the valve from the preset, so the
+    plan is `unsafe` and nothing is written.
     """
     from custom_components.kohler_konnect.konnect.gcs import plan_preset_timer
 
@@ -998,6 +999,7 @@ def test_preset_timer_plan_drops_a_scalding_stored_word():
     plan = plan_preset_timer(payload, 1, 600)
     assert 1 not in plan.valves, "a 102.3 C word must not be echoed back"
     assert plan.valves[2] == "0589c8", "the sound word is preserved byte for byte"
+    assert plan.reason == "unsafe" and not plan.needed
 
 
 def test_preset_timer_plan_preserves_normal_words():
@@ -1859,8 +1861,15 @@ def test_topology_latches_when_the_read_agrees(valve_model):
     from custom_components.kohler_konnect.coordinator import Valve
 
     valve = make_valve(valve_model, [31, 11, 1])
-    # The real shape: `valve` names the slot, `noOfOutlets` is the count.
-    settings = {"valveSettings": [{"valve": "valve1", "noOfOutlets": 3}]}
+    # The real shape: `valve` names the slot, `noOfOutlets` is the count — and a
+    # single-zone valve lists its empty second slot as 0. Since 2026-10-16 a reply without
+    # that `valve2` entry is no answer: see `konnect/topology.py`.
+    settings = {
+        "valveSettings": [
+            {"valve": "valve1", "noOfOutlets": 3},
+            {"valve": "valve2", "noOfOutlets": 0},
+        ]
+    }
     assert Valve._apply_topology(valve, settings) is True
 
 
@@ -2198,8 +2207,9 @@ def _seed_valve(client):
     from custom_components.kohler_konnect import coordinator as module
 
     valve = object.__new__(module.Valve)
-    # `client` is a read-only property reading through the coordinator.
-    valve.coordinator = SimpleNamespace(client=client)
+    # `client` is a read-only property reading through the coordinator, which also counts
+    # the stream's connections for the state read to record.
+    valve.coordinator = SimpleNamespace(client=client, stream_connects=0)
     valve.gcs_device = SimpleNamespace(device_id="dev-1")
     valve.configuration = None
     valve.usage = {}
@@ -2208,10 +2218,24 @@ def _seed_valve(client):
     valve.about_parts = {}
     valve._seeded_presets = None
     valve._topology_checked = True
-    valve._push_serial = 0
+    valve._push_serials = Counter()
+    valve._reported_at = {}
+    valve.state_read_on = None
+    # Nothing written from here, so nothing for the state read to keep the words for.
+    valve._local_write_serial = 0
+    valve._words_serial = 0
+    valve._sent_words = None
     valve._outlet_write_lock = asyncio.Lock()
     valve._outlet_write_serial = 0
     valve._outlet_written_at = None
+    # Outlet fields written from here that no read has confirmed yet: none.
+    valve._outlet_unconfirmed = {}
+    valve._outlet_disputed = {}
+    valve._outlet_reported = {}
+    valve._outlet_announced_at = {}
+    valve._outlet_guessed = {}
+    valve._outlets_unsure_until = None
+    valve._settings_read = valve._presets_read = False
     valve.cloud_watch = None
     # The seed reads the running edge after applying REST state, as a real valve does.
     valve._was_running = False
@@ -3149,16 +3173,30 @@ def _write_valve(monkeypatch, *, fail_after=None, verify_as=None, verify_delay=N
             for i in range(3)
         },
     )
-    valve._note_local_write = lambda: None
+    # Counted for the custom-shower watcher, but not as a valve word (2026-10-16).
+    valve._local_write_serial = 0
     # Writes are taken one at a time, and counted so a late read-back can tell.
     valve._outlet_write_lock = asyncio.Lock()
     valve._outlet_write_serial = 0
+    # What was written, until a read-back shows it (2026-10-16).
+    valve._outlet_unconfirmed = {}
+    valve._outlet_disputed = {}
+    valve._outlet_written_at = None
+    # What the valve last reported per outlet, and what each setting replaced.
+    valve._outlet_reported = {}
+    valve._outlet_announced_at = {}
+    valve._outlet_superseded = {}
+    valve._outlet_guessed = {}
+    valve._outlets_unsure_until = None
     # Verification runs detached (0.18.2); capture the task so a test can await it.
     valve._background_tasks = set()
     valve._verify_tasks = {}
     issues: list[tuple[str, str]] = []
-    valve._raise_write_issue = lambda setting, detail: issues.append((setting, detail))
-    valve._clear_write_issue = lambda: None
+    # One issue per setting since 2026-10-16, named by its fields.
+    valve._raise_write_issue = lambda fields, setting, detail: issues.append(
+        (setting, detail)
+    )
+    valve._clear_write_issue = lambda fields: None
     valve.raised_issues = issues
 
     # The verification read returns whatever the caller asked it to.
@@ -3171,6 +3209,8 @@ def _write_valve(monkeypatch, *, fail_after=None, verify_as=None, verify_delay=N
         hass=SimpleNamespace(async_create_task=asyncio.ensure_future),
         async_refresh_entities=lambda: None,
         closed=False,
+        # Connected: the valve's announcements vouch for what is cached.
+        stream=SimpleNamespace(connected=True),
     )
     # The real error handling, bound to the stand-in: the write runs inside it.
     valve.coordinator.command_errors = MethodType(
@@ -4318,7 +4358,9 @@ async def test_daily_usage_refreshes_monthly_series_on_month_rollover(monkeypatc
     )
 
     await module.Valve.async_refresh_daily_usage(holder)
-    assert calls == ["DAY", "MONTH"]
+    # The monthly series first, so the daily one never replaces last month's days before
+    # the monthly figure that covers them is in.
+    assert calls == ["MONTH", "DAY"]
     assert holder._usage_seeded_month == "2026-10"
 
     # Subsequent refreshes within the same month only fetch DAY.

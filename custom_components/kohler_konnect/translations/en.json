@@ -21,8 +21,9 @@
       },
       "reauth_confirm": {
         "title": "Sign in again",
-        "description": "The saved session for {username} has expired. Enter the password again to reconnect.",
+        "description": "The saved session for {username} has expired. Enter the password again to reconnect. If the email address of your Kohler account has changed since, enter the new one.",
         "data": {
+          "username": "Email",
           "password": "Password"
         }
       }
@@ -263,6 +264,10 @@
     "faucet_api_changed": {
       "title": "Kohler keeps rejecting requests for {name}",
       "description": "Kohler's cloud has rejected several requests in a row, which usually means Kohler changed its API. Check for an update to this integration. If there's none, open an issue and attach the integration's diagnostics.\n\nLast error: {error}"
+    },
+    "faucet_auto_off_failed": {
+      "title": "{name}'s water may still be running",
+      "description": "Water turned on from Home Assistant at {name} reached its safety limit, but Home Assistant hasn't been able to turn it off: Kohler's cloud didn't take the command, or the faucet hasn't reported its water off since.\n\nHome Assistant keeps trying — after 1, 2, 5 and 10 minutes, then every 15 minutes — until the water is known to be off, across restarts too. If it's still running, turn it off at the faucet.\n\nThis message clears once the water is known to be off.\n\nLast error: {error}"
     },
     "replaced_integration": {
       "title": "Remove the old Kohler integrations",

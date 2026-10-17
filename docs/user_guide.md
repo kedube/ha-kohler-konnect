@@ -140,9 +140,12 @@ back over Azure IoT Hub MQTT, which Kohler's cloud pushes to. Nothing polls a sh
 
 **REST is read at setup and on reconnect, not on a timer.** Once at setup, and again on every
 MQTT reconnect. The broker replays no history on connect, so without that reseed the
-integration would sit blind until the hardware happened to say something. Beyond that, REST is
-read only for a reason: firmware, checked twice a day; water usage, after a shower ends; and
-the faucets, below.
+integration would sit blind until the hardware happened to say something. At setup the MQTT
+connection comes up alongside the reads, so each device is read once: one whose state was read
+before the connection was up has only that state read again, not everything. Messages that
+arrive before setup has read the account are kept and applied once it has. Beyond that, REST
+is read only for a reason: firmware and fault logs, checked twice a day; water usage, after a
+shower ends; and the faucets, below.
 
 **The valve is commanded with a hex word.** Temperature, flow and an outlet bitmask packed
 into four bytes. Temperature is a 10-bit value spanning two bytes — `°C = ((byte0 & 0x03) << 8
@@ -164,11 +167,13 @@ device it names.
 **Faucets also poll.** Each faucet has its own polling loop, inherited from the separate
 faucet integration this one replaced, where it was settled against a real faucet. It polls
 every 30 seconds while idle and every 5 while water runs, and relaxes to every 5 minutes (30
-seconds while running) once the stream has delivered a message about that faucet. If a poll
-ever finds a change the stream did not announce, polling takes charge again until the stream
-delivers. Its configuration and presets are re-read every 5 minutes. Its daily water usage is
-re-read every 30 minutes and about 2 minutes after the water stops; the monthly history behind
-This Year, like a valve's, only at startup and when the month turns.
+seconds while running) once the stream has delivered a message about that faucet. That is
+remembered across restarts, so after one the faucet keeps the relaxed pace while the stream is
+connected. If a poll ever finds a change the stream did not announce, polling takes charge
+again until the stream delivers. Its configuration and presets are re-read every 5 minutes.
+Its daily water usage is re-read every 30 minutes and about 2 minutes after the water stops;
+the monthly history behind This Year, like a valve's, only at startup and when the month
+turns.
 
 ## In Home Assistant
 
@@ -242,14 +247,13 @@ zone 2:
 
 | Entity | Type | What it does |
 |---|---|---|
-| `Water Used Today` | sensor | Water used since local midnight, from **Kohler's own per-day usage series** — the same data behind the Konnect app's chart. Refreshed after a shower ends (never on a polling clock) and resets to `0.0` at local midnight |
-| `Water Used This Week` | sensor | The last seven days including today, as a rolling window — **not a calendar week**. Summed from seven daily buckets; `per_day` carries the breakdown. No state class: a rolling window falls as old days leave it, which long-term statistics would record as negative use, so use `Water Used Today` for the Energy dashboard |
+| `Water Used Today` | sensor | Water used since local midnight, from **Kohler's own per-day usage series** — the same data behind the Konnect app's chart. Refreshed after a shower ends (never on a polling clock) and resets to `0.0` at local midnight. On accounts whose daily totals Kohler files by UTC date, an evening's water is counted today and left out of tomorrow's figure (`counted_yesterday`), restarts and reloads included, so it counts once. East of UTC, a shower between local and UTC midnight counts on the right day |
+| `Water Used This Week` | sensor | The last seven days including today, as a rolling window — **not a calendar week**. Summed from seven daily buckets; `per_day` carries the breakdown. Keeps long-term statistics, but as a rolling window its daily change can be negative when a heavy day leaves the window, so it is not a consumption meter: use `Water Used Today` for the Energy dashboard |
 | `Water Used This Month` | sensor | This calendar month's usage, from **Kohler's own history** and kept current after each shower via the daily usage series. Reads `0.0` on the 1st until the month's first shower. Carries every month returned as a `history` attribute |
-| `Water Used This Year` | sensor | Calendar year to date (`Jan 1` – today), matching the Konnect app's **Year** tab. Each month uses Kohler's monthly history or the daily series, whichever is higher, so every shower updates the yearly total with no extra API calls and a month that has just ended keeps its full total. Reads `0.0` on January 1 until the year's first shower |
-
-| `Shower on` | switch | Turns the shower on or off. On runs **the valve's own default shower** — its first preset, which the Konnect app keeps hidden — so the outlets, temperature and flow it starts are stored on the valve, not here. Off closes every outlet in both zones |
+| `Water Used This Year` | sensor | Calendar year to date (`Jan 1` – today), matching the Konnect app's **Year** tab. Each month uses Kohler's monthly history or the daily series, whichever is higher, so every shower updates the yearly total with no extra API calls and a month that has just ended keeps its full total; a month that has ended never reads lower than it already has (remembered until a restart or reload). Reads unknown, rather than a partial total, while Kohler's monthly history can't be read — except in January, or when the daily series reaches back to January 1. Reads `0.0` on January 1 until the year's first shower |
+| `Shower on` | switch | Turns the shower on or off. On runs **the valve's own default shower** — its first preset, which the Konnect app keeps hidden — so the outlets, temperature and flow it starts are stored on the valve, not here. Off closes every outlet in both zones, and goes first: shower commands asked for before it and not yet sent — outlet, temperature and flow changes, favorites, experiences, `custom_shower` and `send_valve_hex` — are dropped, with the message "superseded by a Stop". `Off` on `Favorite` does the same |
 | `Rainhead`, `Showerhead`, `Handshower`, `Tub Filler`, `Body Sprays`, `Foot Sprays`… | switch | One per outlet, named after the fixture the valve reports. See **Outlet names** below |
-| `Temperature` | number | Setpoint for that zone, in your account's unit — the Konnect app's slider: **Cold**, then 59 °F up to the valve's current `Max Temperature`. The bottom step (58 °F / 14 °C) is **Cold**: the valve stops mixing in hot water, as the app's `COLD` stop does, and the `cold` attribute reads true. `Temperature 1` / `Temperature 2` on a two-zone valve |
+| `Temperature` | number | Setpoint for that zone, in your account's unit — the Konnect app's slider: **Cold**, then 59 °F up to the valve's current `Max Temperature`, in whole degrees that never go above it (a 47.7 °C limit tops out at 47 °C). The bottom step (58 °F / 14 °C) is **Cold**: the valve stops mixing in hot water, as the app's `COLD` stop does, and the `cold` attribute reads true. `Temperature 1` / `Temperature 2` on a two-zone valve |
 | `Flow` | number | Flow as a percentage, bounded by the limits the valve itself reports. `Flow 1` / `Flow 2` on a two-zone valve. See **Flow** below |
 | `Favorite` | select | Presets **stored on the valve**, added in the Konnect app or at the first-generation touchscreen |
 | `Experience` | select | The valve's stored **experiences** (Wake Up, Cool Down…), added in the Konnect app. Started with the same command the app uses — new in this release and not yet tried on hardware; see [Favorites and presets](#favorites-and-presets) |
@@ -258,7 +262,7 @@ zone 2:
 | `System State` | sensor | The valve's own `normalOperation` / `showerInProgress` flag — a second opinion to `System Status`, decoded differently. Also `error` and `FirmwareUpdate`, which the Konnect app acts on but no install has yet been seen to send |
 | `Shower Active 1`, `Shower Active 2` | binary sensor | Whether that zone is running water. **Two-zone valves only** — with one zone `System Status` answers the same question and more. `Zone Active` with the other [naming choices](#multi-zone-naming) |
 | `At Temperature` | binary sensor | Whether the water has reached its setpoint |
-| `Problem` | binary sensor | Whether the valve reports a fault — the error flag in its status word, a `System State` of `error`, or an entry its fault log marks active (read at startup and on each reconnect; code, area and time in `active_faults`) |
+| `Problem` | binary sensor | Whether the valve reports a fault — the error flag in its status word, a `System State` of `error`, or an entry its fault log marks active (read at startup, on each reconnect and twice a day; code, area and time in `active_faults`) |
 | `Firmware Status`, `Gateway Firmware Status` | update | Whether a firmware update is available for the valve and its Wi-Fi gateway, with installed and latest versions, checked twice a day. **Read-only** — install updates in the Konnect app, which guards against installing mid-shower. The version numbers alone are the `Interface Firmware`, `Valve Firmware` and `Gateway Firmware` diagnostic sensors |
 | `Restart` | button | Reboots the valve, as the app's *Restart Product* does. **Disabled by default** — a button can't ask "are you sure?", so enable it on purpose. Stops any running water; can't revive a valve that has dropped off the cloud |
 
@@ -272,8 +276,8 @@ Configuration entities — they report what the valve holds **and change it**.
 
 | Entity | Kind | Range |
 |---|---|---|
-| `Max Temperature` | number | 🚨 The **scald limit**, 92-118 °F — the app's own range |
-| `Default Temperature` | number | Where a shower starts, 59-118 °F. Setting it **above the valve's current `Max Temperature` fails** with a message naming both numbers — a shower cannot start hotter than the scald limit. The limit in force is published as `scald_limit` |
+| `Max Temperature` | number | 🚨 The **scald limit**, 92-118 °F (33-47 °C) — the app's own range |
+| `Default Temperature` | number | Where a shower starts, 59-118 °F (15-47 °C). Setting it **above the valve's current `Max Temperature` fails** with a message naming both numbers — a shower cannot start hotter than the scald limit. The limit in force is published as `scald_limit` |
 | `Max Shower Duration` | select | 15 / 20 / 25 / 30 / 45 / 60 minutes — the app's six options, not a free range |
 
 **Every change is verified.** The valve's endpoint replaces one outlet's whole record with no
@@ -281,8 +285,29 @@ list form, so a change is one call per outlet, chained — a `201` from that end
 *accepted for delivery*, never *applied*. The entity responds at once, but the integration
 re-reads the valve about 30 s later to confirm what actually landed; if some outlets took the
 new value and others didn't, a **repair notice** appears under Settings naming the setting and
-the outlets still holding the old value. `Max Shower Duration` carries `outlets_agree` —
-`false` means a write like that was lost part-way. Selecting a duration rewrites all outlets.
+the outlets still holding the old value. Each setting has its own notice, cleared only when
+that setting verifies, never by another's. Nothing is written unless every outlet's record
+would be accepted: if one would be refused, no outlet is changed and the message says which.
+`Max Shower Duration` carries `outlets_agree` — `false` means a write like that was lost
+part-way. Selecting a duration rewrites all outlets.
+
+Every outlet setting re-sends the others with it, so **a setting the valve hasn't confirmed is
+checked before another is sent**. If the valve still reports a different value well after the
+change — the cloud never caught up, the valve didn't apply it, or it was changed in the Konnect
+app since — that setting is in dispute: its notice says so, and changing any *other* outlet
+setting is refused until you set the disputed one again (here or in the app). That keeps a
+scald limit lowered in the app from being put back by an unrelated change made here. If two
+settings are in dispute, setting either one again sends the other as the valve reports it,
+which changes nothing on the valve, and drops the value set here (the log says so). The check
+goes by the valve's own outlet announcements as well as the cloud's copy, which can lag them by
+up to half a minute. A change the valve announces within half a minute of a change made here is
+taken as the valve's own, unless it shows a value the setting had before — the late echo of an
+earlier save, which the next reading then checks. While the connection to Kohler is down, a
+change made in the app reaches Home Assistant only through that copy, so each outlet setting
+reads it first — though a change made in the app in the half minute before may not show in it
+yet. When the connection comes back, outlet settings can't be changed for half a
+minute, until the copy has caught up with anything changed meanwhile. The notices go away when
+Home Assistant restarts, along with anything still waiting to be confirmed.
 
 ⚠️ **Konnect 3.0.1 misreads any duration above 30 minutes**, showing it as 25 and writing 1500 s
 if you tap Save. Fixed in 3.0.5. Setting 45 or 60 here is safe for the valve and safe in a
@@ -342,7 +367,7 @@ zone's Flow value, so a flow you set is kept rather than reset to 100 %.
 | `Steam` | switch | Starts or stops the steam generator at **the controller's own default temperature and time**, as the app's *Steam start* card does. Refused while the controller is running the shower — the app won't run both at once. Only on controllers with steam attached. New in this release and not yet tried on hardware |
 | `Experience` | select | The controller's experiences — shower, steam and ice-shower programs such as Breathe, Focus or Detox — started and shown running. They run from zone 1's first outlet, as the app notes |
 | `Music` / `Light` / `Steam` | binary sensor | Accessory state. `Light` carries each light group's own state; `Steam` carries temperature, timers and `power_clean` (the generator's self-clean) |
-| `Problem` | binary sensor | A fault the controller reports, an active error (its title and code are attributes), or an accessory that is set up but has stopped responding — "Steam is disconnected", an SD card missing — the cases the app shows as error cards |
+| `Problem` | binary sensor | A fault the controller reports, an active error (its title and code are attributes), or an accessory that is set up but has stopped responding — "Steam is disconnected", an SD card missing — the cases the app shows as error cards. Active errors are read at startup, on each reconnect and twice a day; a read that fails keeps the errors already known |
 | `Max Shower Duration` | sensor | The controller's own limit on a shower, in minutes. The shorter of this and the valve's `Max Shower Duration` ends a shower — see [Shower time limits](#shower-time-limits) |
 | `Firmware Status` | update | Whether a controller firmware update is available, with installed and latest versions, checked twice a day. Read-only |
 
@@ -359,7 +384,7 @@ warmup off; `Warmup Auto-Restore`, if it's on, puts it back.
 
 | Entity | Device | Enabled | What it does |
 |---|---|---|---|
-| `MQTT Connection` | both | no | Whether the push stream is connected — **our** link to Kohler |
+| `MQTT Connection` | both | no | Whether the push stream is connected — **our** link to Kohler. Off for as long as a drop lasts |
 | `Cloud Connection` | valve | yes | Whether **Kohler's cloud** can reach the valve. A different question, and the one behind "the app says my valve is offline" — see [When the valve drops off the cloud](#when-the-valve-drops-off-the-cloud) |
 | `Last Update` | both | no | Timestamp of the most recent message |
 | `Report Log` | both | yes | Switch; one-file bug-report capture of the raw MQTT stream — see [Diagnostics](#diagnostics) |
@@ -590,7 +615,7 @@ Every field the action takes, with what each one does when you leave it out:
 action: kohler_konnect.custom_shower
 data:
   # Zone 1 — the only required field is the temperature
-  zone1_temperature: 108      # required; your account's unit, 59–118 °F or 15–48 °C
+  zone1_temperature: 108      # required; your account's unit, 59–118 °F or 15–47 °C
   zone1_outlet_1: true        # default false — an outlet you leave out is closed
   zone1_outlet_2: false
   zone1_outlet_3: false
@@ -619,8 +644,9 @@ What it does:
 * **It fires once.** A second command during the valve's warm-up hijacks the warm-up onto the
   outlets you wrote, so this action never sends a second command on its own.
 * **Flow** is under *Advanced* and defaults to full flow: this action states the whole
-  shower, so it does not take the Flow numbers' values. The flow you set holds only until
-  someone presses the flow button on the touchscreen, which takes over from then on.
+  shower, so it does not take the Flow numbers' values. Like them, it is a percent of each
+  zone's own ceiling — `0xC8` (200) on every valve seen so far. The flow you set holds only
+  until someone presses the flow button on the touchscreen, which takes over from then on.
 * **No pausing warm-up (beta).** Keeps the shower on after the valve's warm-up is finished.
   Only matters when the valve's warm-up is enabled. On such a valve every outlet command first
   runs the warm-up, and when the water is warm the valve **pauses** for two minutes, just as it
@@ -734,6 +760,16 @@ disappears once you change it.
 > Which outlets "Started Outlets" refers to is **not readable from the cloud API.** That
 > lives in per-zone configuration on the controller's local API.
 
+**Changes during a warm-up.** While the valve warms up, the outlets it reports are the
+warm-up's own, not the shower's. So a `Temperature`, `Flow` or outlet change made then keeps
+the outlets of the shower Home Assistant started. If the warm-up was started anywhere else —
+at the wall, in the Konnect app, from a favorite, or with `Shower on`, whose outlets Home
+Assistant doesn't know — the change is refused, with a message saying why, until the warm-up
+ends; so is a `send_valve_hex` word without `zone2_hex`. Turning the shower off and
+`custom_shower` always go through. A zone stopped or paused at the wall during the warm-up
+stays that way: a change to the other zone never re-opens it, and a command that fails during
+the warm-up doesn't lift the refusal.
+
 ### Warmup auto-restore
 
 Off by default. Turn it on if your warmup mode keeps turning itself off.
@@ -752,9 +788,14 @@ MQTT traffic either side.
 
 It is deliberately cautious: it will not undo a disable this integration performed itself, it
 will not fire on a restatement after a reboot, it stops after five restores that fail to
-stick, and it does nothing unless it has previously seen the mode enabled. It never writes
-while water is running: if the shower is on when the minute is up, it waits for the water to
-stop and then tries again. An **Off** you choose yourself during that minute is kept.
+stick, and it does nothing unless it has previously seen the mode enabled. It puts back only
+the two modes the dropdown can write: if the mode switched off was one of the delayed-start
+modes above, it is left off, with one warning in the log. It never writes while water is
+running: if the shower is on when the minute is up, it waits for the water to stop and then
+tries again. A restore still waiting when Home Assistant restarts or the integration reloads
+is finished afterwards, as long as warmup is still off and auto-restore still on. An **Off**
+you choose yourself in Home Assistant is kept, even when the integration only learns of it
+later — chosen while the stream was down, say.
 
 ### Shower time limits
 
@@ -794,11 +835,28 @@ raw capture file, which is useful before a deliberate experiment.
 
 Water turned on with the `Water` switch turns off by itself after a set time — 10 minutes
 unless changed in **Configure** — unless something turns it off first, or the faucet is seen
-running and then off — over the live stream as well as a poll. `0` turns the limit off. The
-deadline survives a restart or reload, and is dropped if the water was turned off while Home
-Assistant was down. No off command is sent if the faucet is already known to be off; one that
-fails is retried a minute later, up to ten times. Dispenses end by themselves and are not
-limited.
+running and then off — over the live stream as well as a poll. `0` turns the limit off, and
+drops one still standing from before. The limit is set, and saved, before the on command is
+sent. Turning the `Water` switch off ends it once a reading shows the water off — not merely
+Kohler accepting the command — and the faucet is read quickly after it so that comes
+promptly. A reading taken before Kohler's copy of the faucet's state has caught up with the
+on command can still say "off" — or "running", from a run that ended just before it. So once
+the water has shown as running, a reading saying "off" counts only a minute or more after the
+command, or straight after the `Water` switch turned it off; until then the faucet is read
+every few seconds, and the live stream's word counts at once. The deadline survives a restart or reload, and is dropped if the water was turned off
+while Home Assistant was down. Water turned on here that never shows as running drops its limit
+once two readings say it is off, the first at least a minute after the command — or at the
+first such reading after the `Water` switch turned it off. Dispenses end by themselves and are
+not limited.
+
+**Once the limit is reached, it doesn't give up while the water isn't known to be off.** No
+off command is sent if the faucet is already known to be off. One that fails, or that Kohler
+accepts but no reading then shows the water off, is sent again after 1, 2, 5 and 10 minutes,
+then every 15 minutes — later, if Kohler asks for a longer wait — across restarts and
+reloads. Only the first such try is logged as a warning; after the third, a repair,
+**"Kitchen's water may still be running"**, appears under Settings, and clears once the water
+is known to be off. After a restart, a limit that ran out while Home Assistant was down
+waits about 30 seconds for a reading before it sends its off.
 
 ### Konnect presets
 
@@ -806,8 +864,13 @@ Presets are made in the Konnect app; the `Preset` dropdown lists them in the app
 `Dispense preset` pours the chosen one with the ordinary dispense command and the preset's
 amount. The choice is kept by preset, not by name, so renaming one in the app keeps it chosen;
 deleting it falls back to the first. Presets are read from the faucet's own list — the one the
-app's faucet screen shows — with the account-wide list as a stand-in only when the faucet's
-own list cannot be read.
+app's faucet screen shows. The account-wide list stands in for it only when Kohler refuses
+that list, or answers in a form that can't be read, and it hasn't answered since Home
+Assistant started. Once it has ever answered (remembered across restarts, with the presets it
+held), a 404 means the faucet has no presets left. Any other failed read keeps the presets read
+last. After a restart, with nothing read yet, it falls back to the account-wide list, showing
+only the presets the faucet's own list last held: that list still carries presets deleted in
+the app.
 
 ### Leak alerts
 
@@ -860,7 +923,11 @@ Assistant.
    the password is not stored. Every supported device on the account is added.
 2. **Confirm your valve model**, if the account has a valve or a controller. The integration
    detects the outlet split from your account and skips the question when it can, so this
-   is usually nothing at all. An account with only faucets is never asked.
+   is usually nothing at all. An account with only faucets is never asked. A reply that
+   leaves out zone 2's outlet count, or gives one that can't be read, is never taken to mean
+   a single zone: setup asks instead, and later the model already in use is kept. A valve or
+   controller whose layout is only read after setup, and turns out different, reloads the
+   integration once so its entities match.
 
 Temperature and water units are read from your Konnect account, not chosen here — set them in
 the Konnect app and they follow. That includes the faucets' dispense units: US cups, quarts
@@ -1105,11 +1172,18 @@ attributes say which reason fired and when.
 problem, not a plumbing one. Nothing in Home Assistant can bring it back; the valve needs to be
 power-cycled at the outlet. Once it is back, its first message turns `Cloud Connection` on
 straight away, with no further action — a message from the valve arrives through Kohler's
-cloud, so it is proof by itself. `reachable_because` says so until the next check.
+cloud, so it is proof by itself. `reachable_because` says so until the next check. A
+`Disconnected` from a read that was already on its way when the valve spoke doesn't turn it
+off again; `reachable_because` says that too.
 
 **Home Assistant keeps asking me to sign in again.** Kohler's identity provider rotates the
 refresh token on every use. If another tool is refreshing the same grant, it invalidates the
 copy Home Assistant holds. Give this integration its own sign-in.
+
+**My Kohler email has changed.** When Home Assistant asks you to sign in again, the dialog
+has an **Email** field, filled in with the email the integration has. Enter the new one: it is
+accepted as long as it signs in to the same Kohler account, and the integration uses it from
+then on. A different Kohler account is refused.
 
 **The Warmup dropdown has an option I didn't expect.** Your valve is holding one of the two
 legacy delayed-start modes. It's shown so Home Assistant can display the true state, and it
@@ -1126,6 +1200,10 @@ one zone.
 **Temperature is in the wrong unit.** It follows your Konnect account. Change it in the
 Konnect app.
 
+**Repairs said `Water Used This Week` "no longer has a state class".** That was release 1.03,
+which removed it. The right response was to leave the repair alone: after updating, it clears
+itself and the sensor's long-term statistics carry on — nothing was recorded while 1.03 ran.
+
 **A faucet refuses to dispense.** Check its `Handle` sensor: a closed handle blocks remote
 water, as it does in the app. Also check `Connected`, and whether `Firmware status` shows a
 download in progress. See [When a faucet refuses](#when-a-faucet-refuses).
@@ -1133,7 +1211,8 @@ download in progress. See [When a faucet refuses](#when-a-faucet-refuses).
 **A faucet's changes take up to 30 seconds to appear.** The stream has not yet delivered a
 message about that faucet — until it has, polling carries it. Use the faucet once, from the
 app or by hand, and it speeds up. If it keeps reverting, the diagnostics' `instant_updates`
-counts say how often the stream missed a change.
+counts say how often the stream missed a change; `restored` there means the stream proved
+itself for that faucet before the last restart, and no message has come since.
 
 ## Known limitations
 
@@ -1166,13 +1245,15 @@ counts say how often the stream missed a change.
   used a Philips Hue bulb and it did not pair.
 * **Warmup's selected outlets can't be read** from the cloud API.
 * **Two-step commands during a warm-up.** Every valve command carries both zones' complete
-  state. Home Assistant sends them one at a time per valve and builds each on the last one sent
-  until the valve reports back, so outlet switches and temperature changes in quick succession —
-  or several outlet switches in one action — all take effect (until 2026-10-16 the second could
-  close what the first opened). With the valve's warm-up on, a two-step automation still cannot
-  work: a command during the warm-up hijacks it onto the outlets you wrote, and one after the
-  warm-up's pause ends the session — so send everything in one command: the `custom_shower`
-  action, or a single `send_valve_hex` word.
+  state. Home Assistant sends them one at a time per valve and, for about 5 seconds after one,
+  builds the next on what it sent, so outlet switches and temperature changes in quick
+  succession — or several outlet switches in one action — all take effect (until 2026-10-16 the
+  second could close what the first opened). A valve report that arrives in those seconds can
+  close an outlet or keep a pause, but never reopens one. With the valve's warm-up on, a
+  two-step automation still cannot work: a command during the warm-up hijacks it onto the
+  outlets you wrote, or is refused (see [Warmup](#warmup)), and one after the warm-up's pause
+  ends the session — so send everything in one command: the `custom_shower` action, or a
+  single `send_valve_hex` word.
 * **Little hardware tested.** See below.
 * **Faucet commands use a different sign-in than before.** The separate faucet integration
   signed in with Kohler's password (ROPC) policy, which Kohler accepts for faucet commands.

@@ -14,6 +14,7 @@ captured payloads.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections.abc import Container
 from dataclasses import dataclass, field, replace
@@ -110,6 +111,30 @@ def _text(item: dict[str, Any], key: str) -> str | None:
     return None if value is None else str(value)
 
 
+def _finite(value: object, scale: float = 1) -> float | None:
+    """``value`` as a number times ``scale``, or None unless that is a finite number.
+
+    ``float`` takes ``"NaN"``, ``"Infinity"`` and ``"1e400"`` (infinity again), and the
+    stdlib JSON parser hands REST and MQTT the bare ``NaN`` and ``Infinity`` tokens as
+    floats — so "a number or junk" was never the whole input. Until 2026-10-16 both got
+    through: rounding infinity raised `OverflowError`, which nothing in the REST seed
+    caught, and a NaN setpoint stored on a word made every write that inherited it raise in
+    `encode_word`. Non-finite reads as unparseable, which every caller already has a
+    fallback for. The check is after scaling, because a finite ``1e308`` times four is not.
+    """
+    try:
+        number = float(str(value)) * scale
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _rounded(value: object, scale: float = 1) -> int | None:
+    """`_finite`, rounded to the whole number the outlet records store."""
+    number = _finite(value, scale)
+    return None if number is None else round(number)
+
+
 def outlet_limits_from_settings(payload: Any) -> dict[int, OutletLimits]:
     """Read per-outlet limits from a ``gcsadvancestate`` response.
 
@@ -154,10 +179,7 @@ def outlet_limits_from_settings(payload: Any) -> dict[int, OutletLimits]:
 
             def _flow(key: str, item: dict = entry) -> int | None:
                 """Display flow -> byte scale, the units OutletLimits is defined in."""
-                try:
-                    return round(float(str(item.get(key))) * 4)
-                except (TypeError, ValueError):
-                    return None
+                return _rounded(item.get(key), 4)
 
             try:
                 run_time: int | None = int(str(entry.get("maximumRuntime")))
@@ -170,20 +192,12 @@ def outlet_limits_from_settings(payload: Any) -> dict[int, OutletLimits]:
                 outlet_type: int | None = int(str(entry.get("outLetType")))
             except (TypeError, ValueError):
                 outlet_type = None
-            try:
-                # REST reports this in display °C (`45`, `47.8`); stored in tenths.
-                max_temperature: int | None = round(
-                    float(str(entry.get("maximumOutletTemperature"))) * 10
-                )
-            except (TypeError, ValueError):
-                max_temperature = None
+            # REST reports this in display °C (`45`, `47.8`); stored in tenths.
+            max_temperature = _rounded(entry.get("maximumOutletTemperature"), 10)
 
             def _tenths(key: str, item: dict = entry) -> int | None:
                 """Display °C -> tenths, the scale this model stores temperatures in."""
-                try:
-                    return round(float(str(item.get(key))) * 10)
-                except (TypeError, ValueError):
-                    return None
+                return _rounded(item.get(key), 10)
 
             try:
                 outlet_flags: int | None = int(str(entry.get("outLetFlags")))
@@ -393,6 +407,10 @@ class GcsState:
     # MQTT one outlet per message, unprompted, so this fills in gradually and may stay
     # partial — every reader must tolerate a missing entry.
     outlet_limits: dict[int, OutletLimits] = field(default_factory=dict)
+    # The fields of a `gcs-state` read that the last message applied carried — a word
+    # that decoded, a session field it had, the warm-up mode — for `Valve.apply_rest_reply`,
+    # which keeps exactly those over a read the message overtook.
+    carried: frozenset[str] = field(default=frozenset(), compare=False)
 
     def _flags(self, *, flowing: bool) -> list[bool]:
         words = {1: self.valve1, 2: self.valve2}
@@ -635,6 +653,7 @@ class GcsState:
             return False
         # Before dispatch: an undecodable message is still proof of life.
         self.last_update = envelope.received_at
+        self.carried = frozenset()
         handler = {
             MSG_GCS_SOLO_STATUS: self._apply_solo,
             MSG_GCS_WARMUP_STATUS: self._apply_warmup,
@@ -816,22 +835,36 @@ class GcsState:
         )
         if attribute is None:
             return False
-        # **Each word is guarded on its own, and neither guards the rest of the message.**
-        # An absent or garbled word keeps that zone as it was — blanking it would close a
-        # zone that may still be running — but the session fields below are the valve's own
-        # report whatever its words say. Until 2026-10-16 a bad `primaryValve1` returned
-        # here, dropping them too: `{currentSystemState: "error"}` with no word left
-        # `has_fault` False, so a fault the valve announced never reached the Problem sensor.
+        # **Each word is guarded on its own, and neither guards the rest of the message.** An
+        # absent or garbled word keeps its zone as it was — blanking it would close a zone
+        # that may still be running — while a word that decodes is the valve's answer for
+        # its zone, and the session fields below are its report whatever its words say.
+        # Until 2026-10-16 a bad `primaryValve1` returned here, dropping them too:
+        # `{currentSystemState: "error"}` with no word left `has_fault` False, so a fault the
+        # valve announced never reached the Problem sensor.
+        #
+        # ⚠️ **Not a pair-or-nothing rule.** One was tried on 2026-10-16, because the write
+        # overlay then ended when *either* word object changed, so half a pair let the next
+        # write rebuild the other zone from its stale word. The overlay now narrows zone by
+        # zone (`Valve._valve_baseline`), which makes half a pair safe — and refusing the
+        # good half hid a real answer: a Stop at the panel for zone 1, reported beside a
+        # garbled zone 2 word, was dropped, and the next zone 1 write re-opened it. A
+        # one-zone model reads `primaryValve1` alone: its `secondaryValve1` is the
+        # unused-valve word, and nothing in it says anything about zone 1.
+        carried: set[str] = set()
         try:
             valve1 = decode_word(str(attribute.get("primaryValve1") or ""))
+            carried.add("valve1")
         except ValveHexError:
-            _LOGGER.debug("Undecodable primaryValve1 in %s", envelope.code)
+            _LOGGER.debug("Keeping zone 1's last word: %s has none", envelope.code)
             valve1 = self.valve1
         valve2 = None
         if self.model.uses_valve2:
             try:
                 valve2 = decode_word(str(attribute.get("secondaryValve1") or ""))
+                carried.add("valve2")
             except ValveHexError:
+                _LOGGER.debug("Keeping zone 2's last word: %s has none", envelope.code)
                 valve2 = self.valve2
 
         changed = (valve1, valve2) != (self.valve1, self.valve2)
@@ -839,20 +872,26 @@ class GcsState:
         if (volume := attribute.get("totalVolume")) is not None:
             changed |= volume != self.total_volume
             self.total_volume = volume
+            carried.add("total_volume")
         if (flow_total := attribute.get("totalFlow")) is not None:
             changed |= self._accept_total_flow_raw(flow_total)
+            carried.add("total_flow")
         if (system := attribute.get("currentSystemState")) is not None:
             system = str(system)
             changed |= system != self.system_state
             self.system_state = system
+            carried.add("system_state")
         if (status := attribute.get("warmUpStatus")) is not None:
             in_progress = _is_warmup_in_progress(status)
             changed |= in_progress != self.warmup_in_progress
             self.warmup_in_progress = in_progress
+            carried.add("warmup_in_progress")
         if "presetOrExperienceId" in attribute:
             active = _preset_id_or_none(attribute.get("presetOrExperienceId"))
             changed |= active != self.active_preset_id
             self.active_preset_id = active
+            carried.add("active_preset_id")
+        self.carried = frozenset(carried)
         return changed
 
     def _apply_warmup(self, envelope: Envelope) -> bool:
@@ -871,6 +910,7 @@ class GcsState:
         changed = mode is not None and mode != self.warmup_mode
         if mode is not None:
             self.warmup_mode = str(mode)
+            self.carried = frozenset({"warmup_mode"})
         return changed
 
     def apply_rest_state(self, payload: dict[str, Any]) -> None:
@@ -895,16 +935,15 @@ class GcsState:
             for bit, key in enumerate(("out1", "out2", "out3")):
                 if str(valve.get(key)) == "1":
                     mask |= 1 << bit
-            setpoint = valve.get("temperatureSetpoint")
-            flow = valve.get("flowSetpoint")
-            try:
-                celsius = float(setpoint) if setpoint is not None else 38.0
-            except (TypeError, ValueError):
+            # A setpoint or flow that is not a finite number — absent, junk, or the `NaN`
+            # and `Infinity` `float` accepts — takes the same fallback. A NaN setpoint was
+            # stored as read until 2026-10-16, and every write that inherited it raised.
+            celsius = _finite(valve.get("temperatureSetpoint"))
+            if celsius is None:
                 celsius = 38.0
-            try:
-                # gcs-state reports flow on the device's own 0-50 scale.
-                percent = float(flow) * 2 if flow is not None else 0.0
-            except (TypeError, ValueError):
+            # gcs-state reports flow on the device's own 0-50 scale.
+            percent = _finite(valve.get("flowSetpoint"), 2)
+            if percent is None:
                 percent = 0.0
             word = ValveWord(
                 prefix=1 if number == 1 else 0x11,
@@ -1371,11 +1410,25 @@ class HubState:
         used to reset the dropdown while favorite 2 ran. `_apply_experience` has the same
         guard.
 
+        **A stop does not end the scan** (2026-10-16). The switch can also arrive as one
+        message, the old favorite's `OFF` followed by the new one's `ON`, and breaking at the
+        `OFF` dropped the `ON`: the dropdown showed `Off` while favorite 2 ran. The scan goes
+        on to the first `ON` for a favorite this message did not just stop — a trailing
+        `ON` for the stopped one still cannot resurrect it.
+
         The name travels with the message, which is why it is kept — it lets the dropdown
         show a running favorite before the favorites list has been seeded.
+
+        ⚠️ **Nothing corrects a stop the stream missed.** `hub-state` carries no favorite, so
+        neither the REST seed nor a reconnect's reseed says which one is running: an `OFF`
+        lost in a gap leaves the last favorite showing until the next `FAVORITE_STS`.
         """
         favorite_id: str | None = None
         name: str | None = None
+        # What is running as this message's stops are applied in order, and which ids it
+        # stopped.
+        running = (self.active_favorite_id, self.active_favorite_name)
+        stopped: set[str] = set()
         for attribute in envelope.attributes:
             if not isinstance(attribute, dict):
                 continue
@@ -1385,16 +1438,19 @@ class HubState:
             if identifier is None:
                 continue
             if str(attribute.get("status") or "").strip().upper() == "OFF":
-                # An explicit stop. Break rather than continue, so a trailing attribute
-                # cannot resurrect the favorite the controller just turned off.
-                stopped = str(identifier)
-                if self.active_favorite_id in (None, stopped) or stopped in {"0", ""}:
-                    favorite_id = name = None
-                else:
-                    # A late stop for a favorite that is no longer the one running.
-                    favorite_id = self.active_favorite_id
-                    name = self.active_favorite_name
-                break
+                # An explicit stop. The scan continues, for a start later in the message.
+                off = str(identifier)
+                stopped.add(off)
+                if running[0] in (None, off) or off in {"0", ""}:
+                    running = (None, None)
+                # Otherwise a late stop for a favorite that is no longer the one running,
+                # which leaves that one showing.
+                favorite_id, name = running
+                continue
+            if str(identifier) in stopped:
+                # The favorite this message just turned off: a trailing attribute cannot
+                # resurrect it.
+                continue
             favorite_id = str(identifier)
             name = str(attribute.get("name") or "").strip() or None
             break

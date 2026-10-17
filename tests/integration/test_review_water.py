@@ -98,18 +98,24 @@ def short_waits() -> Generator[None]:
 
 
 # --------------------------------------------------------------------------- #
-# 1. A rolling week is not a meter
+# 1. A rolling week is a net total, not a meter
 # --------------------------------------------------------------------------- #
-async def test_the_rolling_weeks_carry_no_state_class(
+async def test_the_rolling_weeks_are_net_totals(
     hass: HomeAssistant, config_entry: MockConfigEntry, kohler: ReviewKohler
 ) -> None:
-    """Without one, the recorder keeps no statistics for them and Energy cannot pick them."""
+    """`TOTAL` and no `last_reset`, so statistics recorded before 1.03 carry on.
+
+    1.03 dropped the state class, and Home Assistant raised `state_class_removed` for the
+    statistics owners already had (restored 2026-10-16).
+    """
     await _set_up(hass, config_entry)
     for week in (
         "sensor.anthem_valve_water_used_this_week",
         "sensor.kitchen_water_used_this_week",
     ):
-        assert "state_class" not in hass.states.get(week).attributes, week
+        attributes = hass.states.get(week).attributes
+        assert attributes["state_class"] == "total", week
+        assert "last_reset" not in attributes, week
     for today in (
         "sensor.anthem_valve_water_used_today",
         "sensor.kitchen_water_used_today",

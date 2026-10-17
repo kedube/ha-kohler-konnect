@@ -21,8 +21,9 @@
       },
       "reauth_confirm": {
         "title": "Logga in igen",
-        "description": "Den sparade sessionen för {username} har gått ut. Ange lösenordet igen för att återansluta.",
+        "description": "Den sparade sessionen för {username} har gått ut. Ange lösenordet igen för att återansluta. Om e-postadressen för ditt Kohler-konto har ändrats sedan dess anger du den nya.",
         "data": {
+          "username": "E-post",
           "password": "Lösenord"
         }
       }
@@ -263,6 +264,10 @@
     "faucet_api_changed": {
       "title": "Kohler fortsätter att avvisa förfrågningar för {name}",
       "description": "Kohlers moln har avvisat flera förfrågningar i rad, vilket oftast betyder att Kohler har ändrat sitt API. Kontrollera om det finns en uppdatering av integrationen. Om inte, öppna ett ärende och bifoga integrationens diagnostik.\n\nSenaste fel: {error}"
+    },
+    "faucet_auto_off_failed": {
+      "title": "Vattnet i {name} kan fortfarande vara på",
+      "description": "Vatten som slogs på från Home Assistant vid {name} har nått säkerhetsgränsen, men Home Assistant har inte kunnat stänga av det: Kohlers moln tog inte emot kommandot, eller så har kranen inte rapporterat att vattnet är avstängt sedan dess.\n\nHome Assistant fortsätter att försöka — efter 1, 2, 5 och 10 minuter, sedan var 15:e minut — tills det är känt att vattnet är avstängt, även efter omstarter. Om det fortfarande rinner, stäng av det vid kranen.\n\nDet här meddelandet försvinner så snart det är känt att vattnet är avstängt.\n\nSenaste fel: {error}"
     },
     "replaced_integration": {
       "title": "Ta bort de gamla Kohler-integrationerna",

@@ -9,13 +9,16 @@ preserving whichever outlets are currently open, a pause the zone is holding, an
 the zone's Flow number holds (Home Assistant's own, never the valve's idle byte). That
 mirrors the Konnect app, which POSTs a fresh command on every adjustment, and it means
 changing the temperature mid-shower takes effect immediately rather than at the next start.
+During a warm-up the outlets kept are the shower's being warmed up, not the warm-up's own,
+and the change is refused when that shower was started elsewhere (`Valve._warmup_shower`).
 
 **Whole degrees are the Konnect app's**: rounded half-up from the exact Celsius value, as
 the app's ``round(c * 1.8 + 32)`` does. Rounding twice — to 0.1 °F in
 `valve_hex.celsius_to_unit`, then to whole degrees with Python's half-to-even — showed
 38.6 °C as 102 °F where the app shows 101. And a **ceiling** is never rounded up: the
 highest whole value offered is one whose write does not exceed the limit, so a 47.7 °C scald
-limit offers 47 °C, not a 48 that would write 48.0.
+limit offers 47 °C, not a 48 that would write 48.0 — the app's 118 °F top included, which is
+that same 47.7 °C. A **floor** is likewise never rounded below the minimum it stands for.
 
 **Flow is a per-zone control here, restored 2026-09-10.** It was removed on 2026-08-13
 because a first-gen Anthem touchscreen was observed rewriting both zones' flow the instant
@@ -91,6 +94,32 @@ def _whole_ceiling(tenths: int, temperature_unit: str) -> int:
     while round(unit_to_celsius(whole, temperature_unit) * 10) > tenths:
         whole -= 1
     return whole
+
+
+def _whole_floor(tenths: int, temperature_unit: str) -> int:
+    """The lowest whole degree whose write is not below ``tenths`` of °C.
+
+    `_whole_ceiling`'s counterpart, for a slider bounded **below** by a limit. Rounding the
+    limit half-up can land under it — a 15.2 °C minimum rounds to 15 °C, which writes 15.0 —
+    so this steps up until the value, converted the way a write converts it, reaches it.
+    Every captured outlet's minimum is a whole 15.0 °C (59 °F), where nothing moves.
+    """
+    whole = _whole_degrees(tenths, temperature_unit.lower().startswith("f"))
+    while round(unit_to_celsius(whole, temperature_unit) * 10) < tenths:
+        whole += 1
+    return whole
+
+
+def _celsius_ceiling(fahrenheit: float) -> float:
+    """One of the app's Fahrenheit tops as the highest whole °C that does not exceed it.
+
+    The app's ranges are in °F, and its top, 118 °F, is 47.7 °C. Rounding that to the
+    nearest degree offered 48 on every Celsius slider until 2026-10-16, and 48 writes 48.0 —
+    past the limit it stands for. `services._temperature_bounds` uses this too, so the
+    `custom_shower` form stops where the slider does.
+    """
+    tenths = round(unit_to_celsius(fahrenheit, "Fahrenheit") * 10)
+    return float(_whole_ceiling(tenths, "Celsius"))
 
 
 async def async_setup_entry(
@@ -199,11 +228,16 @@ class ZoneTemperatureNumber(ZoneNumberBase):
 
     @property
     def _floor(self) -> float:
-        """The lowest real setpoint — the outlet's minimum, else 59 °F / 15 °C."""
+        """The lowest real setpoint — the outlet's minimum, else 59 °F / 15 °C.
+
+        The minimum's whole-degree **floor that is not below it** (`_whole_floor`), never
+        the nearest whole degree, which for a fractional minimum offered a setpoint under
+        it until 2026-10-16.
+        """
         limits = self._zone_limits()
         tenths = None if limits is None else limits.minimum_temperature_tenths
         if tenths:
-            return float(_whole_degrees(tenths, self._fahrenheit))
+            return float(_whole_floor(tenths, self.coordinator.temperature_unit))
         if self._fahrenheit:
             return float(ZONE_TEMPERATURE_MIN_F)
         return float(round(unit_to_celsius(ZONE_TEMPERATURE_MIN_F, "Fahrenheit")))
@@ -218,7 +252,8 @@ class ZoneTemperatureNumber(ZoneNumberBase):
         """The valve's current scald limit, else the top of the app's Max Temperature range.
 
         The limit's whole-degree **ceiling that does not exceed it** (`_whole_ceiling`),
-        never the nearest whole degree: a 47.7 °C limit offered 48 °C until 2026-10-16.
+        never the nearest whole degree: a 47.7 °C limit offered 48 °C until 2026-10-16 —
+        and so did the fallback, 118 °F being that same 47.7 °C.
         """
         limits = self._zone_limits()
         tenths = None if limits is None else limits.maximum_temperature_tenths
@@ -227,7 +262,7 @@ class ZoneTemperatureNumber(ZoneNumberBase):
             return max(float(ceiling), self._floor)
         if self._fahrenheit:
             return float(UI_TEMPERATURE_MAX_F)
-        return float(round(unit_to_celsius(UI_TEMPERATURE_MAX_F, "Fahrenheit")))
+        return _celsius_ceiling(UI_TEMPERATURE_MAX_F)
 
     @property
     def native_value(self) -> float | None:
@@ -549,7 +584,9 @@ class OutletMaxTemperatureNumber(_OutletTemperatureNumber):
             low, high = float(UI_TEMPERATURE_MIN_F), float(UI_TEMPERATURE_MAX_F)
         else:
             low = float(round(unit_to_celsius(UI_TEMPERATURE_MIN_F, "Fahrenheit")))
-            high = float(round(unit_to_celsius(UI_TEMPERATURE_MAX_F, "Fahrenheit")))
+            # 47, not the 48 that rounding 47.7 gave: a scald limit is never offered
+            # above the app's own top. See `_celsius_ceiling`.
+            high = _celsius_ceiling(UI_TEMPERATURE_MAX_F)
         self._attr_native_min_value = low
         self._attr_native_max_value = high
 
@@ -602,7 +639,7 @@ class OutletDefaultTemperatureNumber(_OutletTemperatureNumber):
         self._attr_native_max_value = (
             float(UI_TEMPERATURE_MAX_F)
             if self._fahrenheit
-            else float(round(unit_to_celsius(UI_TEMPERATURE_MAX_F, "Fahrenheit")))
+            else _celsius_ceiling(UI_TEMPERATURE_MAX_F)
         )
         self._attr_native_min_value = (
             float(UI_DEFAULT_TEMPERATURE_MIN_F)

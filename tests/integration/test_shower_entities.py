@@ -1300,7 +1300,7 @@ async def test_max_shower_duration_rewrites_every_outlet(
         "purge": "",
     }
     # Verified against a read-back, so no warning is raised.
-    issue = f"outlet_write_unverified_{device_issue_key(VALVE_ID)}"
+    issue = f"outlet_write_unverified_maximum_run_time_{device_issue_key(VALVE_ID)}"
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue) is None
 
     # The valve announces each outlet as it applies the change.
@@ -1330,7 +1330,7 @@ async def test_a_duration_write_the_valve_ignores_raises_a_repair_issue(
     await hass.async_block_till_done()
 
     issue = ir.async_get(hass).async_get_issue(
-        DOMAIN, f"outlet_write_unverified_{device_issue_key(VALVE_ID)}"
+        DOMAIN, f"outlet_write_unverified_maximum_run_time_{device_issue_key(VALVE_ID)}"
     )
     assert issue is not None
     assert issue.translation_placeholders["setting"] == (
@@ -1505,7 +1505,10 @@ async def test_flow_shows_the_valves_own_value_while_water_runs(
 async def test_a_metric_account_uses_the_apps_range_in_celsius(
     hass: HomeAssistant, config_entry: MockConfigEntry, kohler: ShowerKohler
 ) -> None:
-    """Before the valve reports its outlets: 15-48 °C, with Cold one step below."""
+    """Before the valve reports its outlets: 15-47 °C, with Cold one step below.
+
+    47, not 48: the app's top, 118 °F, is 47.7 °C, and 48 would write 48.0.
+    """
     hass.config.units = METRIC_SYSTEM
     kohler.temperature_unit = "Celsius"
     kohler.valve_outlets = None
@@ -1516,7 +1519,7 @@ async def test_a_metric_account_uses_the_apps_range_in_celsius(
 
     temperature = state(hass, TEMPERATURE)
     assert temperature.attributes["unit_of_measurement"] == "°C"
-    assert (temperature.attributes["min"], temperature.attributes["max"]) == (14, 48)
+    assert (temperature.attributes["min"], temperature.attributes["max"]) == (14, 47)
 
 
 # --------------------------------------------------------------------------- #
@@ -2036,7 +2039,7 @@ async def test_custom_shower_refuses_outlets_the_valve_does_not_have(
             {"zone1_temperature": 100, "zone2_temperature": 40},
             "Zone 2 temperature",
         ),
-        ("Celsius", {"zone1_temperature": 100}, "between 15 and 48 °C"),
+        ("Celsius", {"zone1_temperature": 100}, "between 15 and 47 °C"),
     ],
 )
 async def test_custom_shower_refuses_temperatures_outside_the_slider(
