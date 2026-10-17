@@ -11,6 +11,14 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Documentation**
+
+- **The Energy dashboard.** `Water Used Today`, `This Month` and `This Year` are now tested
+  against Home Assistant's own Energy dashboard checks and statistics, for valves and faucets
+  alike, through a local midnight: each litre is counted once. The user guide says which to
+  pick (one per device) and to leave out `This Week`, whose rolling window would show
+  negative water.
+
 ## 1.05 — 2026-10-17
 
 **Added**

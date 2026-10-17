@@ -271,6 +271,20 @@ zone 2:
 long-term statistics at local midnight, on the 1st and on January 1. The drop back to zero is
 recorded as a new period, not as negative water use.
 
+#### The Energy dashboard
+
+Any of `Water Used Today`, `This Month` and `This Year` can be a valve's or a faucet's water
+in Home Assistant's Energy dashboard, as a water source or under *individual water devices*,
+in L or gal as your Konnect account has it. They count the same water, and the dashboard
+shows the same figures whichever one you pick, so choose **one per device**: two of them
+count the water twice. `Water Used Today` is the usual choice.
+
+Leave out `Water Used This Week`. It is a rolling seven days, so the dashboard would show
+negative water on the day a heavy day leaves the window.
+
+Water shows in the dashboard at the hour Kohler's figures are read: when a shower ends, and
+for a faucet every half hour and after the water stops.
+
 #### The three settings the Konnect app also has
 
 Configuration entities — they report what the valve holds **and change it**.
@@ -438,7 +452,7 @@ the showers'.
 | `Leak` | binary sensor | Kohler reports a leak that hasn't been cleared — live from the stream's leak alert, and from the faucet's leak history. See [Leak alerts](#leak-alerts) |
 | `Clear leak alert` | button | Marks the current leaks as dealt with, which turns `Leak` off |
 | `Last dispensed` | sensor | The most recent amount dispensed, in mL or fl oz. Every dispense from Home Assistant counts; one started elsewhere counts only when the faucet's reported state carries its amount, which it doesn't always |
-| `Water used today` | sensor | As the valve's `Water Used Today`, from the faucet's own usage history |
+| `Water used today` | sensor | As the valve's `Water Used Today`, from the faucet's own usage history. For the Energy dashboard, see [The Energy dashboard](#the-energy-dashboard) |
 | `Water used this week` | sensor | The last seven days including today |
 | `Water used this month` | sensor | This calendar month, the larger of Kohler's monthly figure and the daily total |
 | `Water used this year` | sensor | Calendar year to date |
