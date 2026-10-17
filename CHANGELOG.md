@@ -11,6 +11,8 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+## 1.05 — 2026-10-17
+
 **Added**
 
 - **`Clear Error Log`** on each Anthem valve, a configuration button that clears the valve's
