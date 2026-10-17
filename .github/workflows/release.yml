@@ -5,7 +5,7 @@ name: Release
 # Unreleased section into a version heading, and publishes a GitHub release whose notes are
 # that section plus the commits since the last release — no draft, no manual step.
 # workflow_dispatch is the manual escape hatch (release the current manifest version, or
-# force a bump) for when the two-workflow handshake below needs a nudge.
+# force a bump) for when the Validate check below needs a nudge.
 #
 # Which version: if manifest.json holds a version with no git tag yet, somebody set it by
 # hand, and it is released exactly as written. Otherwise — the manifest still says the last
@@ -15,10 +15,13 @@ name: Release
 # Tags and release names are the bare version — `1.0`, never `v1.0`. A leading `v` set in
 # the manifest by hand is removed and the manifest committed without it.
 #
-# Why two triggers instead of one: this repo runs Test (pytest + ruff) and Validate (HACS +
-# hassfest) as separate workflows, unlike a single combined CI workflow. workflow_run only
-# fires per-workflow, so this listens to both and, on each firing, checks via the API that
-# the *other* one has also succeeded for that same commit before releasing.
+# Only Test starts it. This repo runs Test (pytest + ruff) and Validate (HACS + hassfest) as
+# separate workflows, and until 2026-10-16 both started this one, so every push ran it twice
+# (the first run, from Validate, found Test still going and stopped) and every nightly
+# Validate added a skipped run. Validate takes under a minute and Test about three, so this
+# waits for Test and then checks via the API that Validate has succeeded for the same
+# commit, waiting out the rare push where it hasn't finished. Validate re-run after failing
+# no longer releases by itself: re-run Test once it passes.
 
 on:
   workflow_dispatch:
@@ -35,7 +38,10 @@ on:
   workflow_run:
     workflows:
       - Test
-      - Validate
+    # Test also runs for pull requests and other branches; without this, each of those
+    # would show a skipped Release run too.
+    branches:
+      - main
     types:
       - completed
 
@@ -68,23 +74,34 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      - name: Check both CI workflows succeeded for this commit
-        id: both_green
+      # Test's success is the trigger, so only Validate is left to check. It almost always
+      # finished minutes ago; when it hasn't, wait for it rather than skip the release.
+      - name: Check Validate succeeded for this commit
+        id: validate_green
         if: github.event_name == 'workflow_run'
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          both_green=true
-          for wf in Test Validate; do
-            conclusion="$(gh api "repos/${{ github.repository }}/actions/workflows/${wf,,}.yml/runs?head_sha=${HEAD_SHA}&status=completed&per_page=1" \
-              --jq '.workflow_runs[0].conclusion // "missing"')"
-            if [ "$conclusion" != "success" ]; then
-              echo "$wf has not succeeded yet for $HEAD_SHA (conclusion: $conclusion)."
-              both_green=false
+          validate_green=false
+          # Every 20 seconds for up to 15 minutes.
+          for _ in $(seq 45); do
+            read -r status conclusion < <(
+              gh api "repos/${{ github.repository }}/actions/workflows/validate.yml/runs?head_sha=${HEAD_SHA}&per_page=1" \
+                --jq '(.workflow_runs[0] // {}) | "\(.status // "missing") \(.conclusion // "none")"'
+            )
+            if [ "$status" = "completed" ]; then
+              echo "Validate concluded $conclusion for $HEAD_SHA."
+              [ "$conclusion" = "success" ] && validate_green=true
+              break
             fi
+            echo "Validate is $status for $HEAD_SHA; checking again in 20 seconds."
+            sleep 20
           done
-          echo "both_green=$both_green" >> "$GITHUB_OUTPUT"
+          if [ "$status" != "completed" ]; then
+            echo "Validate did not finish for $HEAD_SHA within 15 minutes."
+          fi
+          echo "validate_green=$validate_green" >> "$GITHUB_OUTPUT"
 
       - name: Skip stale or partial workflow runs
         id: head_check
@@ -92,7 +109,7 @@ jobs:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
           EVENT_NAME: ${{ github.event_name }}
           BUMP_INPUT: ${{ inputs.bump || 'none' }}
-          BOTH_GREEN: ${{ steps.both_green.outputs.both_green }}
+          VALIDATE_GREEN: ${{ steps.validate_green.outputs.validate_green }}
         run: |
           current_sha="$(git rev-parse origin/main)"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
@@ -105,15 +122,15 @@ jobs:
             exit 0
           fi
 
-          if [ "$BOTH_GREEN" != "true" ]; then
-            echo "Waiting on the other CI workflow for $EXPECTED_SHA before releasing."
+          if [ "$VALIDATE_GREEN" != "true" ]; then
+            echo "Validate has not succeeded for $EXPECTED_SHA, so it is not released."
             echo "release_action=skip" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Already released — the other CI workflow's run got here first. Without this, a
-          # hand-set version released with nothing to commit would be bumped and released a
-          # second time.
+          # Already released — by an earlier run for this commit, such as Test re-run after
+          # it released. Without this, a hand-set version released with nothing to commit
+          # would be bumped and released a second time.
           if git tag --points-at "$current_sha" | grep -Eq '^[0-9]+(\.[0-9]+)+$'; then
             echo "$current_sha is already released."
             echo "release_action=skip" >> "$GITHUB_OUTPUT"
