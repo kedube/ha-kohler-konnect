@@ -66,7 +66,7 @@ All are under `/devices/api/v1/device-management/`.
 | `gcs-configuration/{id}` | `configuration.about {uI2, primaryValve, secondaryValve1, gateway}` each `{firmware, assetsFirmware}`; top-level `about.firmware {version, latestVersion}`; `otaReportedProperties`; `firmwareUpdate {progress, progressPercent, status, version, …}`; `createdTime` | Firmware per part (live). `about` nests under `configuration` on some accounts and sits at the top on others |
 | `gcs-configuration/{id}/about` | `gatewayConfigInfo {firmware, installDate, model, serialNo}`, `valvesConfigInfo[] {firmware, model, name, serialNo, status}`, `interfacesConfigInfo[] {firmware, name, status}` | Per-part identity (app) |
 | `gcs-preset/{id}` | `gcsPresetExperienceDetails[] {presetId, title\|logicalName, isExperience ("True"/"False"), time, volume, valveDetails[{valveIndex: "Valve1", hexString}]}` | Ten preset slots plus experiences (live) |
-| `gcs-diagnostics/{id}` | Fault log, see [platform §8](platform.md#8-diagnostics-fault-logs). `DELETE` clears it | app |
+| `gcs-diagnostics/{id}` | Fault log, see [platform §8](platform.md#8-diagnostics-fault-logs). `DELETE` clears it — the integration's `Clear Error Log` button | app |
 | `gcs-experience` | `[{name, type, description, duration, url}]` — the catalogue of experiences that can be added | app |
 | `gcs-usage/{id}` | See [platform §6](platform.md#6-water-usage) | live |
 

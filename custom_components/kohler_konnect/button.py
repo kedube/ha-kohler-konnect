@@ -1,8 +1,9 @@
 """Buttons for the Kohler Konnect integration.
 
-Two: restart a valve (below), and start a new raw MQTT capture file. That exists because the
-natural way to get a fresh capture — restart Home Assistant — costs a full reload and drops
-the MQTT connection, which nobody wants in the middle of a sequence of shower experiments.
+Restart a valve, clear a valve's or a controller's error log (below), and start a new raw
+MQTT capture file. That last exists because the natural way to get a fresh capture — restart
+Home Assistant — costs a full reload and drops the MQTT connection, which nobody wants in
+the middle of a sequence of shower experiments.
 
 Pressing this rolls the file instead: the current one is closed and a new one opened, so each
 experiment lands in its own file rather than being separated by timestamp afterwards.
@@ -35,6 +36,15 @@ async def async_setup_entry(
     coordinator: KohlerKonnectCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
         [ValveRestartButton(coordinator, valve) for valve in coordinator.valves]
+    )
+    async_add_entities(
+        [ValveClearErrorLogButton(coordinator, valve) for valve in coordinator.valves]
+    )
+    async_add_entities(
+        [
+            ControllerClearErrorLogButton(coordinator, controller)
+            for controller in coordinator.controllers
+        ]
     )
 
     # The capture covers the whole account rather than one device, so it only needs to live
@@ -80,6 +90,50 @@ class ValveRestartButton(KohlerValveEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         await self._valve.async_restart()
+
+
+class ValveClearErrorLogButton(KohlerValveEntity, ButtonEntity):
+    """Clear the valve's error log — the Konnect app's Diagnostics → clear error log.
+
+    ``DELETE gcs-diagnostics/{id}``, as Konnect 3.0.6 sends it. The `Problem` sensor's
+    `active_faults` come from that log, so a fault long over stops showing there; one the
+    valve still has comes back with the log's next read, and its status word is unaffected.
+
+    App-confirmed; not yet pressed against hardware by this integration (2026-10-16).
+    """
+
+    _attr_name = "Clear Error Log"
+    _attr_icon = "mdi:playlist-remove"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
+        super().__init__(coordinator, valve)
+        self._attr_unique_id = f"{self._device_id}_clear_error_log"
+
+    async def async_press(self) -> None:
+        await self._valve.async_clear_fault_log()
+
+
+class ControllerClearErrorLogButton(KohlerControllerEntity, ButtonEntity):
+    """Clear an Anthem Plus controller's error log: ``DELETE hub-diagnostics/{id}``.
+
+    The valve's button, for a controller. Konnect 3.0.6 declares the call, but no screen of
+    the app was found to use it and it has not been tried against a controller, so Kohler
+    may refuse it — which the press then says (2026-10-16).
+    """
+
+    _attr_name = "Clear Error Log"
+    _attr_icon = "mdi:playlist-remove"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self, coordinator: KohlerKonnectCoordinator, controller: Controller
+    ) -> None:
+        super().__init__(coordinator, controller)
+        self._attr_unique_id = f"{self._device_id}_clear_error_log"
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_clear_hub_fault_log(self._controller)
 
 
 class _NewCaptureMixin:

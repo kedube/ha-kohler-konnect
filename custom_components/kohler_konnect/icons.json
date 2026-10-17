@@ -60,6 +60,9 @@
       "progress": {
         "default": "mdi:progress-clock"
       },
+      "gateway_firmware": {
+        "default": "mdi:chip"
+      },
       "handle_state": {
         "default": "mdi:gesture-tap-button"
       },

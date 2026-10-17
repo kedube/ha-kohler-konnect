@@ -147,6 +147,9 @@
           "completed": "Terminé"
         }
       },
+      "gateway_firmware": {
+        "name": "Firmware de la passerelle"
+      },
       "handle_state": {
         "name": "Manette",
         "state": {

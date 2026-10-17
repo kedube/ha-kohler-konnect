@@ -147,6 +147,9 @@
           "completed": "Abgeschlossen"
         }
       },
+      "gateway_firmware": {
+        "name": "Gateway-Firmware"
+      },
       "handle_state": {
         "name": "Hebel",
         "state": {

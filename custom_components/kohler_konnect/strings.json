@@ -147,6 +147,9 @@
           "completed": "Completed"
         }
       },
+      "gateway_firmware": {
+        "name": "Gateway firmware"
+      },
       "handle_state": {
         "name": "Handle",
         "state": {

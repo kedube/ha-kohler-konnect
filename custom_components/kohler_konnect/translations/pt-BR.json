@@ -147,6 +147,9 @@
           "completed": "Concluído"
         }
       },
+      "gateway_firmware": {
+        "name": "Firmware do gateway"
+      },
       "handle_state": {
         "name": "Alavanca",
         "state": {

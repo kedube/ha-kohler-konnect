@@ -2481,6 +2481,20 @@ class Valve:
             if _fault_is_active(entry)
         ]
 
+    async def async_clear_fault_log(self) -> None:
+        """Clear the valve's fault log, as the Konnect app's Diagnostics screen does.
+
+        ``DELETE gcs-diagnostics/{id}``. The faults known from the log go with it, and the
+        log is read again at once: clearing it is not clearing a fault the valve still
+        has, which its next entry, or its status word, shows again. Not taken in turn with
+        the word writes: it touches the cloud's record, not the valve.
+        """
+        with self.coordinator.command_errors(VALVE_OFFLINE):
+            await self.client.async_clear_gcs_diagnostics(self.device_id)
+        self.active_faults = []
+        await self.async_refresh_faults()
+        self.coordinator.async_refresh_entities()
+
     def journal_baseline(self) -> None:
         """Record the mode in force when the warmup journal opened. See the comment inside."""
         # BASELINE: what mode was in force when this file opened, from the REST seed above.
@@ -4753,6 +4767,25 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for entry in details
             if isinstance(entry, dict) and str(entry.get("errorCode") or "0") != "0"
         ]
+
+    async def async_clear_hub_fault_log(self, controller: Controller) -> None:
+        """Clear a controller's fault log: ``DELETE hub-diagnostics/{id}``.
+
+        The valve's `Valve.async_clear_fault_log`, for an Anthem Plus. Konnect 3.0.6
+        declares the call beside the valve's, but no screen of the app was found to use it,
+        and it has not been tried against a controller from here — so a refusal is passed
+        on as it comes. The active errors are then read again, as for a valve.
+        """
+        with self.command_errors(_controller_offline(controller)):
+            await self.client.async_clear_hub_diagnostics(controller.device_id)
+        controller.active_errors = []
+        try:
+            await self._async_refresh_active_errors(controller)
+        except AuthError as err:
+            _LOGGER.debug("Could not read %s's active errors: %s", controller.name, err)
+            if credential_is_dead(err):
+                self._handle_auth_error(err)
+        self.async_refresh_entities()
 
     @callback
     def _async_link_controller_page(self, controller: Controller) -> None:

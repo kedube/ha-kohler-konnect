@@ -147,6 +147,9 @@
           "completed": "Zakończono"
         }
       },
+      "gateway_firmware": {
+        "name": "Oprogramowanie układowe bramy"
+      },
       "handle_state": {
         "name": "Dźwignia",
         "state": {

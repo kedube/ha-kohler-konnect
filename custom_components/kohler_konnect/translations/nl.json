@@ -147,6 +147,9 @@
           "completed": "Voltooid"
         }
       },
+      "gateway_firmware": {
+        "name": "Gatewayfirmware"
+      },
       "handle_state": {
         "name": "Hendel",
         "state": {

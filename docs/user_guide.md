@@ -265,6 +265,7 @@ zone 2:
 | `Problem` | binary sensor | Whether the valve reports a fault — the error flag in its status word, a `System State` of `error`, or an entry its fault log marks active (read at startup, on each reconnect and twice a day; code, area and time in `active_faults`) |
 | `Firmware Status`, `Gateway Firmware Status` | update | Whether a firmware update is available for the valve and its Wi-Fi gateway, with installed and latest versions, checked twice a day. **Read-only** — install updates in the Konnect app, which guards against installing mid-shower. The version numbers alone are the `Interface Firmware`, `Valve Firmware` and `Gateway Firmware` diagnostic sensors |
 | `Restart` | button | Reboots the valve, as the app's *Restart Product* does. **Disabled by default** — a button can't ask "are you sure?", so enable it on purpose. Stops any running water; can't revive a valve that has dropped off the cloud |
+| `Clear Error Log` | button | Configuration. Clears the valve's error log, as the app's *Diagnostics* screen does, and `Problem` with it — though a fault the valve still has shows again, since the log is read straight after. New in this release and not yet pressed on hardware |
 
 `Water Used Today`, `This Month` and `This Year` each start a new period in Home Assistant's
 long-term statistics at local midnight, on the 1st and on January 1. The drop back to zero is
@@ -368,6 +369,7 @@ zone's Flow value, so a flow you set is kept rather than reset to 100 %.
 | `Experience` | select | The controller's experiences — shower, steam and ice-shower programs such as Breathe, Focus or Detox — started and shown running. They run from zone 1's first outlet, as the app notes |
 | `Music` / `Light` / `Steam` | binary sensor | Accessory state. `Light` carries each light group's own state; `Steam` carries temperature, timers and `power_clean` (the generator's self-clean) |
 | `Problem` | binary sensor | A fault the controller reports, an active error (its title and code are attributes), or an accessory that is set up but has stopped responding — "Steam is disconnected", an SD card missing — the cases the app shows as error cards. Active errors are read at startup, on each reconnect and twice a day; a read that fails keeps the errors already known |
+| `Clear Error Log` | button | Configuration. Clears the controller's error log, which `Problem`'s active errors come from. Kohler's API has the same call for a controller as for a valve, but the app wasn't found to offer it for Anthem Plus and it hasn't been tried on one: if Kohler refuses it, pressing it says so |
 | `Max Shower Duration` | sensor | The controller's own limit on a shower, in minutes. The shorter of this and the valve's `Max Shower Duration` ends a shower — see [Shower time limits](#shower-time-limits) |
 | `Firmware Status` | update | Whether a controller firmware update is available, with installed and latest versions, checked twice a day. Read-only |
 
@@ -444,6 +446,7 @@ the showers'.
 | `Handle` | sensor | Diagnostic. The manual handle's position: `open` or `closed` |
 | `Connected` | binary sensor | Diagnostic. Whether Kohler's cloud can reach the faucet; `last_connected` attribute |
 | `Firmware download` | sensor | Diagnostic, disabled by default. Kohler's `progress` field, which follows a firmware download, not the water |
+| `Gateway firmware` | sensor | Diagnostic. The firmware version the Konnect app shows as the faucet's *Gateway firmware* |
 
 While `Connected` is off, the entities that show or control the live faucet are
 unavailable; the leak, usage, firmware and settings entities stay available.

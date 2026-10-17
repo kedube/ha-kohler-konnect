@@ -1,4 +1,4 @@
-"""Faucet sensors: status, handle, firmware download, last dispense and water usage."""
+"""Faucet sensors: status, handle, firmware, last dispense and water usage."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from homeassistant.const import EntityCategory
 
 from ..water import DailyWaterUsage, MonthlyWaterUsage, YearlyWaterUsage
 from .coordinator import FaucetCoordinator
-from .entity import KohlerFaucetEntity
+from .entity import KohlerFaucetEntity, as_text
 from .units import HA_UNIT_KEYS, from_ml, to_ml
 
 
@@ -67,6 +67,7 @@ def faucet_sensors(coordinator: FaucetCoordinator) -> list[SensorEntity]:
         FaucetStateSensor(coordinator, description) for description in SENSORS
     ]
     entities += [
+        FaucetGatewayFirmwareSensor(coordinator),
         FaucetLastDispenseSensor(coordinator),
         FaucetDailyWaterSensor(coordinator),
         FaucetWeeklyWaterSensor(coordinator),
@@ -105,6 +106,29 @@ class FaucetStateSensor(KohlerFaucetEntity, SensorEntity):
     def native_value(self) -> str | None:
         state = self.coordinator.data or {}
         return state_key(state.get(self.entity_description.field))
+
+
+class FaucetGatewayFirmwareSensor(KohlerFaucetEntity, SensorEntity):
+    """The firmware the Konnect app shows as the faucet's "Gateway firmware".
+
+    ``configuration.about.firmware.version``, the version the app's firmware install waits
+    for; Kohler's firmware check (`currentFirmware`) stands in until the configuration has
+    been read. Cloud-side, so shown while the faucet is offline too.
+    """
+
+    _requires_online = False
+    _attr_translation_key = "gateway_firmware"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: FaucetCoordinator) -> None:
+        super().__init__(coordinator, "gateway_firmware")
+
+    @property
+    def native_value(self) -> str | None:
+        firmware = self.coordinator.firmware
+        return as_text(self.coordinator.about.get("firmware")) or (
+            firmware.current if firmware else None
+        )
 
 
 class FaucetLastDispenseSensor(KohlerFaucetEntity, RestoreSensor):

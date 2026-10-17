@@ -602,12 +602,14 @@ def test_every_controller_platform_constructs():
         [make_valve(model, [31, 11, 1])], [make_controller(model)]
     )
     built = {name: _hub(collect(name, coordinator)) for name in PLATFORMS}
-    # Every platform that has controller entities must produce them; the two that have none
-    # are asserted empty so this notices if that ever changes silently.
+    # Every platform that has controller entities must produce them; the one that has none
+    # is asserted empty so this notices if that ever changes silently. The button is the
+    # error log's clear (2026-10-16).
     assert {name for name, entities in built.items() if entities} == {
         "switch",
         "sensor",
         "binary_sensor",
+        "button",
         "select",
         "update",
     }, {name: len(entities) for name, entities in built.items()}

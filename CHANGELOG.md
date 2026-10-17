@@ -11,6 +11,16 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Added**
+
+- **`Clear Error Log`** on each Anthem valve, a configuration button that clears the valve's
+  error log as the Konnect app's Diagnostics screen does. Its `Problem` sensor follows,
+  though a fault the valve still has shows again. Anthem Plus controllers get the same
+  button: Kohler's API has the call for them too, but the app wasn't found to offer it and
+  it hasn't been tried on one.
+- **`Gateway firmware`** on each Sensate faucet, a diagnostic sensor with the firmware
+  version the Konnect app shows under that name.
+
 ## 1.04 — 2026-10-17
 
 **Fixed — safety**

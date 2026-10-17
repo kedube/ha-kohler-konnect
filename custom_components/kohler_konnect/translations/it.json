@@ -147,6 +147,9 @@
           "completed": "Completato"
         }
       },
+      "gateway_firmware": {
+        "name": "Firmware del gateway"
+      },
       "handle_state": {
         "name": "Leva",
         "state": {

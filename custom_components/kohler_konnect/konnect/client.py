@@ -48,6 +48,7 @@ from .const import (
     GCS_STATE,
     GCS_USAGE,
     HUB_CONFIGURATION,
+    HUB_DIAGNOSTICS,
     HUB_DIAGNOSTICS_ACTIVE,
     HUB_EXPERIENCES,
     HUB_FAVORITES,
@@ -798,6 +799,22 @@ class KohlerClient:
             _LOGGER.debug("Could not read gcs-diagnostics: %s", err)
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    async def async_clear_gcs_diagnostics(self, device_id: str) -> None:
+        """Clear the valve's fault log — the Konnect app's Diagnostics → clear error log.
+
+        ``DELETE gcs-diagnostics/{id}``, as Konnect 3.0.6 declares it. Raises when it
+        fails: a clear that did not happen must not read as one that did.
+        """
+        await self.async_request("DELETE", GCS_DIAGNOSTICS.format(device_id=device_id))
+
+    async def async_clear_hub_diagnostics(self, device_id: str) -> None:
+        """Clear an Anthem Plus controller's fault log: ``DELETE hub-diagnostics/{id}``.
+
+        Konnect 3.0.6 declares it beside the valve's; no screen of the app was found to
+        use it, and it has not been tried against a controller from here.
+        """
+        await self.async_request("DELETE", HUB_DIAGNOSTICS.format(device_id=device_id))
 
     async def async_get_firmware(self, device_id: str, part: str) -> dict[str, Any]:
         """Installed vs latest firmware for one part: ``gcs``, ``gateway`` or ``hub``.

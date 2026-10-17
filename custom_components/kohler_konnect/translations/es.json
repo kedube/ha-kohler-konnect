@@ -147,6 +147,9 @@
           "completed": "Completada"
         }
       },
+      "gateway_firmware": {
+        "name": "Firmware de la puerta de enlace"
+      },
       "handle_state": {
         "name": "Maneta",
         "state": {

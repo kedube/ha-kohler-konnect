@@ -113,7 +113,7 @@ After an onoff or dispense, if MQTT is **not** connected, the app re-reads R1
 | Field | Notes |
 |---|---|
 | `id`, `deviceId`, `sku`, `tenantId`, `version`, `applicationSource`, `installedDate`, `createdTime`, `updatedTimestamp`, `iot` | Top-level metadata. |
-| `configuration.about` (`AboutResponse`) | Faucet-relevant: `name`, `model`, `modelNumber`, `serialNumber`, `hardware`, `installedDate`, `firmware` (`FirmwareModel`: `version`, `latestVersion`, `progress`, `releasedOn`, plus `application`/`bootloader`/`os`/… `VersionDetails`). |
+| `configuration.about` (`AboutResponse`) | Faucet-relevant: `name`, `model`, `modelNumber`, `serialNumber`, `hardware`, `installedDate`, `firmware` (`FirmwareModel`: `version`, `latestVersion`, `progress`, `releasedOn`, plus `application`/`bootloader`/`os`/… `VersionDetails`). **The app shows `firmware.version` as "Gateway firmware"** (16.0 on the owner's faucet, whose `application` was 4.0, `certificate` 3.0 and `servicePack` 5302; live, 2026-10-16). |
 | `configuration.otaInProgress` | Boolean (`ConfigurationModel.java:63`). **Not read by faucet code.** |
 | `firmwareUpdate` (top-level, `firmwareupdate/FirmwareUpdate.java`) | `_interface`, `firmwareType`, `isAutoUpdate`, `lastUpdated`, `progress`, `progressPercent`, `retryAttempts`, `startTimestamp`, `status`, `version`. **Not read by faucet code.** |
 | `leakDetectionHistory` | `List<LeakDetectionHistoryModel>`. **Each entry is `{ "leakDetectionTime": <Long epoch seconds> }`** (`LeakDetectionHistoryModel.java:13-14`). The About screen sorts entries newest first and renders each as a date and time row (`ep0/b0.java:1553` `C3()`, which multiplies by 1000). |

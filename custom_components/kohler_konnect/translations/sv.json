@@ -147,6 +147,9 @@
           "completed": "Klar"
         }
       },
+      "gateway_firmware": {
+        "name": "Gatewayfirmware"
+      },
       "handle_state": {
         "name": "Handtag",
         "state": {
