@@ -58,7 +58,6 @@ from custom_components.kohler_konnect.konnect.const import (
     CLIENT_ID,
     TOKEN_EXPIRY_MARGIN_SECONDS,
 )
-from custom_components.kohler_konnect.konnect.gcs import plan_preset_timer
 from custom_components.kohler_konnect.konnect.hub import (
     HubCapabilities,
     HubDevice,
@@ -74,10 +73,19 @@ from custom_components.kohler_konnect.konnect.models import (
     model_for_topology,
     resolve_outlet_source,
 )
+from custom_components.kohler_konnect.konnect.state import GcsState
 from custom_components.kohler_konnect.konnect.topology import (
     describe,
     topology_from_hub_configuration,
     topology_from_valve_settings,
+)
+from custom_components.kohler_konnect.konnect.valve_hex import (
+    UNUSED_VALVE_WORD,
+    ValveHexError,
+    decode_preset_word,
+    decode_word,
+    encode_preset_word,
+    preset_words_to_pair,
 )
 
 TENANT = "0f0f0f0f-1111-2222-3333-444444444444"
@@ -776,66 +784,100 @@ def test_an_account_with_nothing_supported_says_so():
 
 
 # --------------------------------------------------------------------------- #
-# Presets: deciding what a timer sync writes back
+# Presets: the stored valve words the default shower is sent from
 # --------------------------------------------------------------------------- #
 def _presets(*records: Any) -> dict[str, Any]:
     return {"gcsPresetExperienceDetails": list(records)}
 
 
-def test_a_preset_timer_rewrite_echoes_name_volume_and_valid_words_exactly():
-    """`writepreset` replaces the record, so everything but `time` must go back as read."""
-    payload = _presets(
-        "junk",
-        {"presetId": "not-a-number"},
-        {
-            "presetId": "2",
-            "logicalName": "Morning",
-            "name": "ignored",
-            "time": "1800",
-            "volume": "12",
-            "valveDetails": [
-                {"valveIndex": "Valve1", "hexString": "1190C8"},
-                {"valveIndex": "Valve2", "hexString": "000000"},  # unused
-                {"valveIndex": "Valve3", "hexString": ""},  # unused
-                {"valveIndex": "Zone1", "hexString": "1190C8"},  # not a valve
-                {"valveIndex": "Valvex", "hexString": "1190C8"},  # no number
-                "junk",
-            ],
-        },
+def test_a_preset_read_keeps_each_zones_word_by_its_valve_index():
+    """Keyed by `valveIndex`, so the list's order and its junk entries do not matter."""
+    state = GcsState(get_valve_model("K-28212"))
+    state.apply_preset_list(
+        _presets(
+            "junk",
+            {"presetId": "not-a-number"},
+            {
+                "presetId": "1",
+                "title": "Default shower",
+                "valveDetails": [
+                    {"valveIndex": "Valve2", "hexString": "05849c"},
+                    {"valveIndex": "Valve3", "hexString": "18ec00"},  # not a zone
+                    {"valveIndex": "Zone1", "hexString": "1190C8"},  # not a valve
+                    {"valveIndex": "Valvex", "hexString": "1190C8"},  # no number
+                    {"valveIndex": " Valve1 ", "hexString": " 018448 "},
+                    "junk",
+                ],
+            },
+            {"presetId": "2", "title": "Morning"},
+        )
     )
-    plan = plan_preset_timer(payload, 2, 900)
-    assert plan.needed
-    assert (plan.reason, plan.name, plan.volume, plan.previous) == (
-        "rewrite",
-        "Morning",
-        "12",
-        1800,
+    assert state.presets[1].valve_words == ("018448", "05849C")
+    assert state.presets[2].valve_words == ()
+
+
+def test_the_default_shower_is_sent_as_preset_1s_own_words():
+    """The two words of the live "Default shower": zone 1 closed, zone 2 outlet 1."""
+    model = get_valve_model("K-28212")
+    zone1, zone2 = (
+        decode_word(word) for word in preset_words_to_pair(model, ("018448", "05849C"))
     )
-    assert plan.valves == {1: "1190c8"}
+    assert (zone1.prefix, zone1.outlet_mask, zone1.temperature_celsius) == (
+        0x01,
+        0,
+        38.8,
+    )
+    assert zone1.flow_percent == 36.0  # 0x48, the stored flow, not full
+    assert (zone2.prefix, zone2.outlet_mask, zone2.temperature_celsius) == (
+        0x11,
+        0b001,
+        38.8,
+    )
+    assert zone2.flow_percent == 78.0  # 0x9C
+    assert not zone1.paused and not zone2.paused
+
+
+def test_a_single_zone_default_shower_sends_the_unused_word_for_zone_2():
+    model = get_valve_model("K-28210")
+    assert preset_words_to_pair(model, ("1190C8", "0589C8")) == (
+        "0190C804",  # outlet 3, 40.0 °C, full flow
+        UNUSED_VALVE_WORD,
+    )
+
+
+@pytest.mark.parametrize("words", [(), ("",), ("", ""), ("000000", "000000")])
+def test_a_preset_with_no_word_for_any_zone_is_not_sent(words):
+    with pytest.raises(ValveHexError, match="no valve word"):
+        preset_words_to_pair(get_valve_model("K-28212"), words)
 
 
 @pytest.mark.parametrize(
-    ("payload", "reason"),
+    ("word", "mask", "celsius", "flow"),
     [
-        (None, "absent"),
-        ({"gcsPresetExperienceDetails": "nope"}, "absent"),
-        (_presets({"presetId": 3, "title": "Other"}), "absent"),
-        # A blank slot is left blank rather than half-created.
-        (_presets({"presetId": 2, "title": " ", "valveDetails": []}), "empty"),
-        (_presets({"presetId": 2, "title": "Morning", "time": 900}), "already"),
+        ("018448", 0b000, 38.8, 36.0),
+        ("05849C", 0b001, 38.8, 78.0),
+        ("1190C8", 0b100, 40.0, 100.0),
+        ("0589c8", 0b001, 39.3, 100.0),
+        ("1DE8C8", 0b111, 48.8, 100.0),
     ],
 )
-def test_a_preset_timer_is_left_alone_unless_a_real_preset_differs(payload, reason):
-    plan = plan_preset_timer(payload, 2, 900)
-    assert plan.reason == reason
-    assert not plan.needed
-
-
-def test_a_preset_with_an_unreadable_time_is_rewritten_with_volume_defaulted():
-    plan = plan_preset_timer(
-        _presets({"presetId": 2, "title": "Morning", "time": "soon"}), 2, 900
+def test_a_preset_word_decodes_to_its_outlets_temperature_and_flow(
+    word, mask, celsius, flow
+):
+    """Byte 0's outlet bits are 0x04/0x08/0x10, not a command word's 0x01/0x02/0x04."""
+    decoded = decode_preset_word(word)
+    assert (decoded.outlet_mask, decoded.temperature_celsius, decoded.flow_percent) == (
+        mask,
+        celsius,
+        flow,
     )
-    assert (plan.reason, plan.previous, plan.volume) == ("rewrite", None, "0")
+    assert encode_preset_word(celsius, flow, mask) == word.upper()
+
+
+@pytest.mark.parametrize("word", ["0584", "05849C01", "zzzzzz", None])
+def test_a_malformed_preset_word_does_not_decode(word):
+    with pytest.raises(ValveHexError):
+        decode_preset_word(word)
 
 
 # --------------------------------------------------------------------------- #

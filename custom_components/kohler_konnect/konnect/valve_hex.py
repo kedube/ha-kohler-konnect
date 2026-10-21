@@ -383,15 +383,16 @@ def preset_word_temperature(word: str) -> float:
     return round(tenths / TEMPERATURE_TENTHS_PER_DEGREE, 1)
 
 
-#: The ceiling for a preset word **read back** and echoed into a write: 48.9 °C.
+#: The ceiling for a preset word **read back** from the cloud and sent on to the valve:
+#: 48.9 °C.
 #:
 #: One tenth above `TEMPERATURE_MAX_TENTHS`, because that is the highest value the Konnect
 #: app itself stores in a favorite: its favorite path converts °F arithmetically (see the
 #: correction above the Fahrenheit table), and 120 °F — the top of the older app's
-#: Max Temperature range — becomes `48.884` -> `"48.9"` -> 489. With the old ceiling a timer
-#: sync dropped that valve's word from a favorite the owner made in the app, silently
-#: changing the favorite. The valve still clamps any outlet at its own
-#: `maximumOutletTemperature`, which the app never writes above 48.8 °C, so admitting the
+#: Max Temperature range — becomes `48.884` -> `"48.9"` -> 489. With the old ceiling the
+#: preset-timer sync (removed in 1.08) dropped that valve's word from a favorite the owner
+#: made in the app, silently changing the favorite. The valve still clamps any outlet at its
+#: own `maximumOutletTemperature`, which the app never writes above 48.8 °C, so admitting the
 #: app's own value admits nothing hotter than the valve would run.
 PRESET_ECHO_MAX_TENTHS = 489
 
@@ -399,13 +400,12 @@ PRESET_ECHO_MAX_TENTHS = 489
 def check_preset_word(word: str) -> str:
     """Return ``word`` normalised, or raise if it is malformed or commands a scald.
 
-    Used on words **read back from the cloud** before they are echoed into a write.
-    ``writepreset`` replaces a preset record whole, so every field not being changed has to
-    be sent back exactly as it was found — which means a value the integration never
-    computed passes through it to the valve. That is a narrow trust boundary, but a real
-    one, and it is cheap to close: a preset word carries the same 10-bit temperature the
-    command word does, so a corrupted or hostile record could set a preset to 102.3 °C and
-    this integration would be the thing that wrote it there.
+    Used on words **read back from the cloud** before they become a command: preset 1's
+    words are what the Shower switch sends (:func:`preset_words_to_pair`), so a value the
+    integration never computed passes through it to the valve. That is a narrow trust
+    boundary, but a real one, and it is cheap to close: a preset word carries the same
+    10-bit temperature the command word does, so a corrupted or hostile record could ask
+    for 102.3 °C and this integration would be the thing that sent it.
 
     The ceiling is :data:`PRESET_ECHO_MAX_TENTHS` — one tenth above what
     :func:`encode_preset_word` clamps to, so a word this integration wrote always passes,
@@ -732,10 +732,83 @@ def pause_pair(
 
 # A `preset_word_to_command` used to live here: it built a command word by reading a
 # preset hexString's byte 0 as an outlet mask. **That reading is wrong** — byte 0 carries
-# the temperature high bit and the PRESET_OUTLET_BITS positions, and live data disproved
-# the mask premise (see `preset_valve_to_command`, whose docstring holds the evidence).
-# Removed 2026-08-21 along with its only caller, the superseded two-command preset start
-# (`controlpresetorexperience` runs the preset by itself, so no valve write follows it).
+# the temperature high bit and the PRESET_OUTLET_BITS positions (see the table above
+# `PRESET_OUTLET_BITS`). Removed 2026-08-21 along with its only caller, the superseded
+# two-command preset start (`controlpresetorexperience` runs the preset by itself, so no
+# valve write follows it). `decode_preset_word` below reads byte 0 the right way.
+
+
+def decode_preset_word(word: str) -> ValveWord:
+    """Decode a 3-byte preset hexString into the shape of a command word.
+
+    The inverse of :func:`encode_preset_word`: the outlets from byte 0's
+    :data:`PRESET_OUTLET_BITS`, the temperature from its high bits and byte 1, and the flow
+    from byte 2, which is on the command word's own scale. ``paused`` is always False — a
+    preset has no pause. Raises :class:`ValveHexError` if the word is not six hex characters.
+    """
+    text = str(word or "").strip().upper()
+    if not PRESET_WORD.fullmatch(text):
+        raise ValveHexError(f"Preset word must be 6 hex characters, got {word!r}")
+    byte0 = int(text[0:2], 16)
+    return ValveWord(
+        prefix=byte0,
+        temperature_celsius=preset_word_temperature(text),
+        flow_percent=round(int(text[4:6], 16) / FLOW_PER_PERCENT, 1),
+        outlet_mask=sum(
+            1 << index for index, bit in enumerate(PRESET_OUTLET_BITS) if byte0 & bit
+        ),
+        paused=False,
+        raw=text,
+    )
+
+
+def preset_words_to_pair(model: ValveModel, words: Sequence[str]) -> tuple[str, str]:
+    """Build both command words from a preset's stored valve words.
+
+    How the Shower switch runs the default shower: preset 1's words, sent as one
+    ``solowritesystem`` the way Simple Start in the Konnect app does, never run as a preset
+    (see `SHOWER_ON_PRESET_ID` in the integration's ``const.py``). ``words`` is in valve
+    order, as `GcsPreset.valve_words` holds them: index 0 is ``Valve1`` (zone 1), index 1
+    ``Valve2`` (zone 2). Each is checked with :func:`check_preset_word` — it came from the
+    cloud and is about to run water — and re-encoded with its own outlets, temperature and
+    flow, pause clear.
+
+    A zone the preset opens nothing on is still an **addressed** word with mask ``0x00`` —
+    never the all-zero sentinel, which makes a two-valve system discard the whole command
+    (`docs/protocol/gcs_valve.md` §3.1). A zone with no stored word at all (missing, or the
+    unused ``000000``) is sent closed at the other zone's temperature and flow, the way
+    `encode_shower` falls zone 2 back to zone 1's, rather than at the 0 °C that word decodes
+    to. Only a model with no second valve gets the sentinel for word 2.
+
+    Raises :class:`ValveHexError` when no zone has a word, or a word is malformed or hotter
+    than the app can store.
+    """
+    stored: dict[int, ValveWord] = {}
+    for zone in model.zones:
+        text = words[zone - 1] if zone <= len(words) else ""
+        if text and text.strip("0"):
+            stored[zone] = decode_preset_word(check_preset_word(text))
+    if not stored:
+        raise ValveHexError("The preset holds no valve word for any zone")
+    fallback = stored[min(stored)]
+
+    def command(zone: int, prefix: int) -> str:
+        word = stored.get(zone)
+        if word is None:
+            return encode_word(
+                prefix,
+                fallback.temperature_celsius,
+                fallback.flow_percent,
+                VALVE_STOP_MASK,
+            )
+        return encode_word(
+            prefix, word.temperature_celsius, word.flow_percent, word.outlet_mask
+        )
+
+    valve1 = command(1, VALVE1_PREFIX)
+    if not model.uses_valve2:
+        return valve1, UNUSED_VALVE_WORD
+    return valve1, command(2, VALVE2_PREFIX)
 
 
 def celsius_to_unit(value_c: float, temperature_unit: str) -> float:

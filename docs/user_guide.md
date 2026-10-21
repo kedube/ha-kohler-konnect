@@ -251,7 +251,7 @@ zone 2:
 | `Water Used This Week` | sensor | The last seven days including today, as a rolling window — **not a calendar week**. Summed from seven daily buckets; `per_day` carries the breakdown. Keeps long-term statistics, but as a rolling window its daily change can be negative when a heavy day leaves the window, so it is not a consumption meter: use `Water Used Today` for the Energy dashboard |
 | `Water Used This Month` | sensor | This calendar month's usage, from **Kohler's own history** and kept current after each shower via the daily usage series. Reads `0.0` on the 1st until the month's first shower. Carries every month returned as a `history` attribute |
 | `Water Used This Year` | sensor | Calendar year to date (`Jan 1` – today), matching the Konnect app's **Year** tab. Each month uses Kohler's monthly history or the daily series, whichever is higher, so every shower updates the yearly total with no extra API calls and a month that has just ended keeps its full total; a month that has ended never reads lower than it already has (remembered until a restart or reload). Reads unknown, rather than a partial total, while Kohler's monthly history can't be read — except in January, or when the daily series reaches back to January 1. Reads `0.0` on January 1 until the year's first shower |
-| `Shower on` | switch | Turns the shower on or off. On runs **the valve's own default shower** — its first preset, which the Konnect app keeps hidden — so the outlets, temperature and flow it starts are stored on the valve, not here. Off closes every outlet in both zones, and goes first: shower commands asked for before it and not yet sent — outlet, temperature and flow changes, favorites, experiences, `custom_shower` and `send_valve_hex` — are dropped, with the message "superseded by a Stop". `Off` on `Favorite` does the same |
+| `Shower on` | switch | Turns the shower on or off. On runs **the valve's own default shower**, the way Simple Start in the Konnect app does: it opens the default outlets at the default temperature and flow stored on the valve, so you change them in the Konnect app, not here. It never changes any setting on the valve, and only `Max Shower Duration` ends that shower. If the valve hasn't reported its defaults yet, it says so and sends nothing. Off closes every outlet in both zones, and goes first: shower commands asked for before it and not yet sent — outlet, temperature and flow changes, favorites, experiences, `custom_shower` and `send_valve_hex` — are dropped, with the message "superseded by a Stop". `Off` on `Favorite` does the same |
 | `Rainhead`, `Showerhead`, `Handshower`, `Tub Filler`, `Body Sprays`, `Foot Sprays`… | switch | One per outlet, named after the fixture the valve reports. See **Outlet names** below |
 | `Temperature` | number | Setpoint for that zone, in your account's unit — the Konnect app's slider: **Cold**, then 59 °F up to the valve's current `Max Temperature`, in whole degrees that never go above it (a 47.7 °C limit tops out at 47 °C). The bottom step (58 °F / 14 °C) is **Cold**: the valve stops mixing in hot water, as the app's `COLD` stop does, and the `cold` attribute reads true. `Temperature 1` / `Temperature 2` on a two-zone valve |
 | `Flow` | number | Flow as a percentage, bounded by the limits the valve itself reports. `Flow 1` / `Flow 2` on a two-zone valve. See **Flow** below |
@@ -406,7 +406,7 @@ warmup off; `Warmup Auto-Restore`, if it's on, puts it back.
 | `Report Log` | both | yes | Switch; one-file bug-report capture of the raw MQTT stream — see [Diagnostics](#diagnostics) |
 | `Start new MQTT capture` | the first valve, or the first controller on an account without one | yes | Button; starts a fresh file for the raw MQTT capture, which is off unless switched on — see [Captures and journals](#captures-and-journals) |
 | `Hex` | valve | no | The current command word for that zone — copy it into `send_valve_hex`. `Hex 1` / `Hex 2` on a two-zone valve; see [Multi-zone naming](#multi-zone-naming) |
-| `Preset Active` | valve | yes | Whether a stored preset is driving the valve |
+| `Preset Active` | valve | yes | Whether a stored preset is driving the valve. Stays off for the default shower `Shower on` starts, as it does for Simple Start in the app |
 | `Interface Firmware` | valve | no | The touchscreen's own version — what the Konnect app calls the interface firmware |
 | `Valve Firmware` | valve | no | The valve's own version |
 | `Second Valve Firmware` | valve | no | The second valve body's version, on two-zone valves only — each zone has its own |
@@ -827,6 +827,12 @@ Two other limits can end a shower sooner:
   and shown by the controller's `Max Shower Duration` sensor. The shorter of the two wins.
 * **A favorite** stored on the valve carries its own run time. When it is shorter, it ends a
   shower started from that favorite.
+
+The valve's default shower is stored the same way as a favorite, with a hidden 30-minute run
+time, but neither the Konnect app nor `Shower on` uses it: only Max Shower Duration ends that
+shower. Before 1.08, `Shower on` ran it as a favorite, so that hidden run time applied, and
+setup quietly raised it to 60 minutes. Nothing uses it now, and the Konnect app sets it back to
+30 minutes the next time you change your default settings.
 
 While water runs, `System Status` (and `Shower Active` on a two-zone valve) shows
 `flowing_for_seconds` and `seconds_remaining` until the valve's limit.

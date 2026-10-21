@@ -18,7 +18,7 @@ from custom_components.kohler_konnect.konnect.const import (
     MSG_HUB_FAVORITE,
     MSG_HUB_SHOWER_VALVE,
 )
-from custom_components.kohler_konnect.konnect.gcs import GcsDevice, plan_preset_timer
+from custom_components.kohler_konnect.konnect.gcs import GcsDevice
 from custom_components.kohler_konnect.konnect.hub import (
     HubCapabilities,
     HubDevice,
@@ -207,52 +207,17 @@ def test_capabilities_from_a_wrong_shaped_reply_are_unread_not_empty(configurati
 
 
 @pytest.mark.parametrize("payload", [[{"presetId": "1"}], "x", 5])
-def test_a_preset_read_of_the_wrong_shape_plans_nothing(payload):
-    assert plan_preset_timer(payload, 1, 600).reason == "absent"
+def test_a_preset_read_of_the_wrong_shape_reads_nothing(payload):
+    state = GcsState(SINGLE)
+    assert state.apply_preset_list(payload) is False
+    assert state.presets == {}
 
 
 def test_a_preset_whose_valve_details_are_not_a_list_is_read_without_them():
     record = {"presetId": "1", "title": "Default", "time": "0", "valveDetails": 5}
-    plan = plan_preset_timer({"gcsPresetExperienceDetails": [record]}, 1, 600)
-    assert (plan.reason, plan.name, plan.valves) == ("rewrite", "Default", {})
-
-
-# --------------------------------------------------------------------------- #
-# 4. The preset-1 timer rewrite never blanks a name
-# --------------------------------------------------------------------------- #
-def _preset(**fields: Any) -> dict[str, Any]:
-    return {
-        "gcsPresetExperienceDetails": [
-            {
-                "presetId": "1",
-                "time": "1800",
-                "valveDetails": [{"valveIndex": "Valve1", "hexString": "018448"}],
-                **fields,
-            }
-        ]
-    }
-
-
-def test_a_preset_named_only_by_logical_name_keeps_that_name_on_rewrite():
-    plan = plan_preset_timer(_preset(logicalName="Default Shower"), 1, 600)
-    assert (plan.reason, plan.name) == ("rewrite", "Default Shower")
-
-
-def test_title_outranks_logical_name_which_outranks_name():
-    plan = plan_preset_timer(_preset(title="T", logicalName="L", name="N"), 1, 600)
-    assert plan.name == "T"
-    plan = plan_preset_timer(_preset(title="", logicalName="L", name="N"), 1, 600)
-    assert plan.name == "L"
-
-
-def test_a_preset_with_words_but_no_readable_name_is_never_rewritten():
-    """`name: ""` is how `writepreset` deletes a slot."""
-    client = _Client(_preset())
-    device = GcsDevice(client, "gcs-x", "Celsius", SINGLE)  # type: ignore[arg-type]
-    plan = asyncio.run(device.async_sync_preset_timer(1, 600))
-    assert plan.reason == "unnamed"
-    assert not plan.needed
-    assert client.sent == []
+    state = GcsState(SINGLE)
+    state.apply_preset_list({"gcsPresetExperienceDetails": [record]})
+    assert (state.presets[1].name, state.presets[1].valve_words) == ("Default", ())
 
 
 # --------------------------------------------------------------------------- #

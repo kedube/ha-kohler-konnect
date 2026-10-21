@@ -471,6 +471,54 @@ def test_preset_pushes_create_rename_and_delete_slots():
     assert state.preset_by_name("morning") is None
 
 
+def test_a_preset_push_carries_the_default_showers_new_words():
+    """A default changed in the Konnect app rewrites preset 1, and the push says so.
+
+    `Valve1`/`Valve2` are capitalised on the push; slots 3-8 hold junk and are not read.
+    """
+    state = GcsState(DOUBLE)
+    state.apply_preset_list(
+        {
+            "gcsPresetExperienceDetails": [
+                {
+                    "presetId": "1",
+                    "title": "Default shower",
+                    "valveDetails": [
+                        {"valveIndex": "Valve1", "hexString": "018448"},
+                        {"valveIndex": "Valve2", "hexString": "05849C"},
+                    ],
+                }
+            ]
+        }
+    )
+    pushed = {
+        "presetId": "1",
+        "name": "Default shower",
+        "time": "1800",
+        "Valve1": "0189c8",
+        "Valve2": "0589c8",
+        "Valve3": "0000c0",
+        "Valve4": "080020",
+    }
+    assert state.apply_envelope(envelope(MSG_GCS_PRESET_STATUS, pushed))
+    assert state.presets[1].valve_words == ("0189C8", "0589C8")
+
+
+def test_a_preset_push_without_valve_keys_keeps_the_words_held():
+    """An absent key says nothing about the words; dropping them would stop the switch."""
+    state = GcsState(SINGLE)
+    state.apply_envelope(
+        envelope(
+            MSG_GCS_PRESET_STATUS,
+            {"presetId": "1", "name": "Default shower", "Valve1": "05849C"},
+        )
+    )
+    state.apply_envelope(
+        envelope(MSG_GCS_PRESET_STATUS, {"presetId": "1", "name": "Default shower"})
+    )
+    assert state.presets[1].valve_words == ("05849C", "")
+
+
 def test_outlet_announcements_with_unreadable_bounds_are_skipped():
     """A guessed bound would widen a flow slider past what the outlet accepts."""
     state = GcsState(SINGLE)

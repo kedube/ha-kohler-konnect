@@ -172,10 +172,12 @@ async def test_a_rejected_sign_in_during_a_shower_command_asks_to_sign_in_again(
     kohler.token_queue.append(
         (400, {"error": "invalid_grant", "error_description": "AADB2C90080: expired"})
     )
+    # Off, which always sends: this fake has no presets, so On would be refused before
+    # reaching Kohler at all.
     with pytest.raises(HomeAssistantError, match="rejected the saved sign-in"):
         await hass.services.async_call(
             "switch",
-            "turn_on",
+            "turn_off",
             {"entity_id": "switch.anthem_valve_shower_on"},
             blocking=True,
         )

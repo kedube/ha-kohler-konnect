@@ -95,6 +95,33 @@ def _preset_id_or_none(value: object) -> int | None:
     return number or None
 
 
+#: The preset valve slots that are zones: ``Valve1`` and ``Valve2``, as ``primaryValve1`` and
+#: ``secondaryValve1`` are the only populated words of a ``solowritesystem``. The push carries
+#: eight slots, and the later ones hold junk (``0000c0``, ``080020`` on one system).
+PRESET_ZONE_SLOTS = 2
+
+
+def _preset_words(by_valve: dict[int, Any]) -> tuple[str, ...]:
+    """A preset's 3-byte valve words in valve order — index 0 is ``Valve1``.
+
+    ``by_valve`` maps a 1-based valve number to the word as read. Both zone slots are kept
+    whatever the model: the preset read runs alongside the one that settles the model
+    (`Valve._seed_independent_reads`), so the model may not be known yet, and the send picks
+    by model anyway (`preset_words_to_pair`). Upper-cased, so the REST read and the push
+    compare equal; a missing word is ``""``, so the other keeps its place. ``()`` when
+    neither slot holds anything.
+
+    **Kept as read, not validated here.** A malformed word is checked where it would become
+    a command (`check_preset_word`), which refuses the whole shower; blanking it here would
+    read as "nothing on that zone" and quietly run the other one alone.
+    """
+    words = tuple(
+        str(by_valve.get(number) or "").strip().upper()
+        for number in range(1, PRESET_ZONE_SLOTS + 1)
+    )
+    return words if any(words) else ()
+
+
 def _zone_status(value: object) -> str | None:
     """A HUB zone's ``status``, upper-cased like every other HUB on/off field.
 
@@ -314,11 +341,17 @@ class GcsPreset:
 
     ``name`` is empty for a free slot — that is exactly how a deletion is reported, so an
     empty name means "this slot holds nothing", not "unnamed preset".
+
+    ``valve_words`` holds the stored 3-byte valve words, upper-case, in valve order — index
+    0 is ``Valve1`` — for both zone slots, as read (validated only when sent), ``""`` where
+    one was missing; ``()`` when none was read. Preset 1's are what the Shower switch sends
+    (`preset_words_to_pair`). Part of ``==``, so a changed word is a changed preset.
     """
 
     preset_id: int
     name: str
     is_experience: bool = False
+    valve_words: tuple[str, ...] = ()
 
     @property
     def is_empty(self) -> bool:
@@ -803,8 +836,15 @@ class GcsState:
         The device pushes one of these on every create, edit, rename, and delete, and all
         ten slots after a reboot — so nothing has to poll for preset changes. A delete
         arrives as the same ``presetId`` with an empty name.
+
+        The valve words come from the ``Valve1`` and ``Valve2`` keys — capitalised here, where
+        ``writepreset`` sends them lowercase. A push carrying neither keeps the words already
+        held, the way ``is_experience`` is kept: an absent key says nothing about the words,
+        and dropping them would leave the Shower switch with nothing to send until the next
+        full read.
         """
         changed = False
+        slots = range(1, PRESET_ZONE_SLOTS + 1)
         for attribute in envelope.attributes:
             if not isinstance(attribute, dict):
                 continue
@@ -813,16 +853,20 @@ class GcsState:
                 preset_id = int(str(raw_id))
             except (TypeError, ValueError):
                 continue
+            held = self.presets.get(preset_id)
+            if any(f"Valve{n}" in attribute for n in slots):
+                valve_words = _preset_words(
+                    {n: attribute.get(f"Valve{n}") for n in slots}
+                )
+            else:
+                valve_words = held.valve_words if held is not None else ()
             preset = GcsPreset(
                 preset_id=preset_id,
                 name=str(attribute.get("name") or "").strip(),
                 # The push carries no experience flag; the REST list does. Preserve what a
                 # previous seed established rather than silently demoting one to a preset.
-                is_experience=(
-                    self.presets[preset_id].is_experience
-                    if preset_id in self.presets
-                    else False
-                ),
+                is_experience=held.is_experience if held is not None else False,
+                valve_words=valve_words,
             )
             if self.presets.get(preset_id) != preset:
                 self.presets[preset_id] = preset
@@ -1001,12 +1045,23 @@ class GcsState:
                 preset_id = int(str(entry.get("presetId")))
             except (TypeError, ValueError):
                 continue
+            # `valveDetails[{valveIndex: "Valve1", hexString}]`, keyed by its index so the
+            # list's order does not matter; an entry with an odd index is skipped.
+            by_valve: dict[int, Any] = {}
+            valve_details = entry.get("valveDetails")
+            for detail in valve_details if isinstance(valve_details, list) else ():
+                if not isinstance(detail, dict):
+                    continue
+                index = str(detail.get("valveIndex") or "").strip()
+                if index.lower().startswith("valve") and index[5:].isdigit():
+                    by_valve[int(index[5:])] = detail.get("hexString")
             presets[preset_id] = GcsPreset(
                 preset_id=preset_id,
                 name=str(entry.get("title") or entry.get("logicalName") or "").strip(),
                 # Kohler sends this as the string "True"/"False", so `bool(value)` would be
                 # true for both.
                 is_experience=str(entry.get("isExperience")).strip().lower() == "true",
+                valve_words=_preset_words(by_valve),
             )
         if presets == self.presets:
             return False

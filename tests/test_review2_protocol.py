@@ -8,7 +8,6 @@ no Home Assistant, no network.
 
 from __future__ import annotations
 
-import asyncio
 import math
 import time
 from types import MethodType, SimpleNamespace
@@ -22,7 +21,6 @@ from custom_components.kohler_konnect.konnect.const import (
     MSG_HUB_FAVORITE,
     MSG_HUB_SHOWER_VALVE,
 )
-from custom_components.kohler_konnect.konnect.gcs import GcsDevice, plan_preset_timer
 from custom_components.kohler_konnect.konnect.hub import HubCapabilities, outlet_flags
 from custom_components.kohler_konnect.konnect.models import get_valve_model
 from custom_components.kohler_konnect.konnect.mqtt import Envelope
@@ -37,8 +35,10 @@ from custom_components.kohler_konnect.konnect.topology import (
 )
 from custom_components.kohler_konnect.konnect.valve_hex import (
     VALVE1_PREFIX,
+    ValveHexError,
     decode_word,
     encode_word,
+    preset_words_to_pair,
 )
 
 SINGLE = get_valve_model("K-28210")  # 3 outlets, one zone
@@ -293,7 +293,7 @@ def test_a_real_configuration_after_a_degraded_one_is_read():
 
 
 # --------------------------------------------------------------------------- #
-# 4. A preset holding a word that fails validation is never rewritten
+# 4. A default shower holding a word that fails validation is never sent
 # --------------------------------------------------------------------------- #
 def _default_preset(*words: tuple[str, Any]) -> dict[str, Any]:
     return {
@@ -301,7 +301,7 @@ def _default_preset(*words: tuple[str, Any]) -> dict[str, Any]:
             {
                 "presetId": "1",
                 "title": "Default Shower",
-                "time": "900",
+                "time": "1800",
                 "valveDetails": [
                     {"valveIndex": index, "hexString": word} for index, word in words
                 ],
@@ -310,24 +310,10 @@ def _default_preset(*words: tuple[str, Any]) -> dict[str, Any]:
     }
 
 
-class _Client:
-    """Records every request; the stand-in `GcsDevice` talks to."""
-
-    tenant_id = "tenant-guid"
-
-    def __init__(self, payload: Any) -> None:
-        self.sent: list[tuple[str, str, Any]] = []
-        self.payload = payload
-
-    async def async_tenant_id(self) -> str:
-        return self.tenant_id
-
-    async def async_request(self, method: str, path: str, json_body: Any = None):
-        self.sent.append((method, path, json_body))
-        return {"correlationId": "x"}
-
-    async def async_get_gcs_presets(self, device_id: str) -> Any:
-        return self.payload
+def _default_words(model: Any, *words: tuple[str, Any]) -> tuple[str, ...]:
+    state = GcsState(model)
+    state.apply_preset_list(_default_preset(*words))
+    return state.presets[1].valve_words
 
 
 @pytest.mark.parametrize(
@@ -339,27 +325,27 @@ class _Client:
         "0584",
     ],
 )
-def test_a_preset_with_an_invalid_stored_word_is_not_rewritten(bad):
-    """Rewritten without it, that valve went out as `000000`: zone 2 left the preset."""
-    payload = _default_preset(("Valve1", "018448"), ("Valve2", bad))
-    plan = plan_preset_timer(payload, 1, 3600)
-    assert plan.reason == "unsafe"
-    assert not plan.needed
-    assert plan.valves == {1: "018448"}
+def test_a_default_shower_with_an_invalid_stored_word_is_not_sent(bad):
+    """Preset 1's words become a command, so one that fails stops it whole.
 
-    client = _Client(payload)
-    device = GcsDevice(client, "gcs-x", "Celsius", DOUBLE)  # type: ignore[arg-type]
-    assert asyncio.run(device.async_sync_preset_timer(1, 3600)).reason == "unsafe"
-    assert client.sent == []
+    Read as "nothing on that zone", a bad zone 2 word would have run zone 1 alone.
+    """
+    words = _default_words(DOUBLE, ("Valve1", "05849C"), ("Valve2", bad))
+    with pytest.raises(ValveHexError):
+        preset_words_to_pair(DOUBLE, words)
 
 
-def test_unused_valve_words_still_do_not_block_the_rewrite():
+def test_unused_valve_words_close_their_zone_at_the_other_zones_setpoint():
     """`000000` and an empty field are how a preset says "not this valve"."""
-    payload = _default_preset(
-        ("Valve1", "018448"), ("Valve2", "000000"), ("Valve3", ""), ("Valve4", None)
-    )
-    plan = plan_preset_timer(payload, 1, 3600)
-    assert (plan.reason, plan.valves) == ("rewrite", {1: "018448"})
+    for unused in ("000000", "", None):
+        words = _default_words(
+            DOUBLE, ("Valve1", "05849C"), ("Valve2", unused), ("Valve3", "18ec00")
+        )
+        zone1, zone2 = (decode_word(w) for w in preset_words_to_pair(DOUBLE, words))
+        assert (zone1.outlet_mask, zone1.temperature_celsius) == (0b001, 38.8)
+        # Addressed and closed — never 0 °C, which is what `000000` decodes to.
+        assert (zone2.prefix, zone2.outlet_mask) == (0x11, 0)
+        assert zone2.temperature_celsius == 38.8
 
 
 # --------------------------------------------------------------------------- #

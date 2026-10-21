@@ -236,56 +236,6 @@ async def test_creating_a_preset_is_flat_with_no_wrapper_and_no_preset_id(
     ]
 
 
-async def test_a_preset_timer_sync_reads_once_and_writes_back_all_but_the_time(
-    valve: GcsDevice, kohler: FakeKohler
-) -> None:
-    """`writepreset` replaces the record, so a sync that dropped the name renames it to ""."""
-    record = {
-        "presetId": "1",
-        "title": "Default shower",
-        "time": "1800",
-        "volume": "12",
-        "valveDetails": [
-            {"valveIndex": "Valve1", "hexString": "018448"},
-            {"valveIndex": "Valve2", "hexString": "05849C"},
-        ],
-    }
-    kohler.fail_api(
-        f"/gcs-preset/{VALVE_ID}", (200, {"gcsPresetExperienceDetails": [record]})
-    )
-
-    plan = await valve.async_sync_preset_timer(1, 900)
-
-    assert plan.reason == "rewrite"
-    assert sent(kohler) == [
-        ("GET", f"{DEVICES}/gcs-preset/{VALVE_ID}", None),
-        (
-            "POST",
-            f"{COMMANDS}/gcs/writepreset",
-            {
-                **GCS,
-                "gcsPresetControlModel": {
-                    "presetId": "1",
-                    "name": "Default shower",
-                    "time": "900",
-                    "volume": "12",
-                    "valve1": "018448",
-                    "valve2": "05849c",
-                    **{f"valve{n}": "000000" for n in range(3, 9)},
-                },
-            },
-        ),
-    ]
-
-    # Idempotent: given a fresh read that already holds the target, nothing is sent.
-    record["time"] = "900"
-    plan = await valve.async_sync_preset_timer(
-        1, 900, presets={"gcsPresetExperienceDetails": [record]}
-    )
-    assert plan.reason == "already"
-    assert len(sent(kohler)) == 2
-
-
 async def test_warmup_sends_the_mode_and_refuses_a_blank_one_before_sending(
     valve: GcsDevice, kohler: FakeKohler
 ) -> None:

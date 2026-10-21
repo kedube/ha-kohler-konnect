@@ -976,53 +976,34 @@ def test_check_preset_word_refuses_a_malformed_word(word):
         check_preset_word(word)
 
 
-def test_preset_timer_plan_drops_a_scalding_stored_word():
-    """`writepreset` replaces the record whole, so a stored word is echoed back verbatim.
+def test_a_scalding_default_shower_word_is_never_sent():
+    """Preset 1's stored words become the Shower switch's command, so they are checked.
 
-    The scalding word is never echoed. Nor is the preset rewritten without it (2026-10-16):
-    that sent the unused-valve word in its place, deleting the valve from the preset, so the
-    plan is `unsafe` and nothing is written.
+    Not dropped either: that zone would go out closed and the other run alone.
     """
-    from custom_components.kohler_konnect.konnect.gcs import plan_preset_timer
+    from custom_components.kohler_konnect.konnect.models import get_valve_model
+    from custom_components.kohler_konnect.konnect.valve_hex import (
+        ValveHexError,
+        preset_words_to_pair,
+    )
 
-    payload = {
-        "gcsPresetExperienceDetails": [
-            {
-                "presetId": "1",
-                "title": "Default shower",
-                "time": "0",
-                "valveDetails": [
-                    {"valveIndex": "Valve1", "hexString": "03FFC8"},
-                    {"valveIndex": "Valve2", "hexString": "0589C8"},
-                ],
-            }
-        ]
-    }
-    plan = plan_preset_timer(payload, 1, 600)
-    assert 1 not in plan.valves, "a 102.3 C word must not be echoed back"
-    assert plan.valves[2] == "0589c8", "the sound word is preserved byte for byte"
-    assert plan.reason == "unsafe" and not plan.needed
+    with pytest.raises(ValveHexError, match=r"102\.3"):
+        preset_words_to_pair(get_valve_model("K-28212"), ("03FFC8", "0589C8"))
 
 
-def test_preset_timer_plan_preserves_normal_words():
-    """The guard must be invisible on every real record."""
-    from custom_components.kohler_konnect.konnect.gcs import plan_preset_timer
+def test_the_scald_guard_passes_every_real_default_shower():
+    """The guard must be invisible on every real record — 120 °F from the app included."""
+    from custom_components.kohler_konnect.konnect.models import get_valve_model
+    from custom_components.kohler_konnect.konnect.valve_hex import (
+        decode_word,
+        preset_words_to_pair,
+    )
 
-    payload = {
-        "gcsPresetExperienceDetails": [
-            {
-                "presetId": "1",
-                "title": "Default shower",
-                "time": "0",
-                "valveDetails": [
-                    {"valveIndex": "Valve1", "hexString": "018448"},
-                    {"valveIndex": "Valve2", "hexString": "05849C"},
-                ],
-            }
-        ]
-    }
-    plan = plan_preset_timer(payload, 1, 600)
-    assert plan.valves == {1: "018448", 2: "05849c"}
+    model = get_valve_model("K-28212")
+    for words in (("018448", "05849C"), ("0189C8", "0589C8"), ("1DE9C8", "05E9C8")):
+        sent = [decode_word(word) for word in preset_words_to_pair(model, words)]
+        # 48.9 °C stored by the app is sent as the valve's own 48.8 °C ceiling.
+        assert all(word.temperature_celsius <= 48.8 for word in sent)
 
 
 # --------------------------------------------------------------------------- #
@@ -2218,7 +2199,6 @@ def _seed_valve(client):
     valve.usage_daily = {}
     valve._usage_seeded_month = None
     valve.about_parts = {}
-    valve._seeded_presets = None
     valve._topology_checked = True
     valve._push_serials = Counter()
     valve._reported_at = {}

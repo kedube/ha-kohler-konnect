@@ -11,6 +11,19 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Fixed**
+
+- **`Shower on` no longer changes a setting on your valve.** Setup used to rewrite the hidden
+  run time of the valve's default shower to 60 minutes, without asking, whenever it was
+  anything else. That was because `Shower on` ran the default shower as a favorite, so its
+  hidden 30 minutes could end the shower early. `Shower on` now starts the default shower the
+  way Simple Start in the Konnect app does: the default outlets at the default temperature
+  and flow, in one command, with nothing written to the valve. Only `Max Shower Duration`
+  ends it, and `Preset Active` stays off while it runs. If the valve hasn't reported its
+  defaults, the switch says so and sends nothing. A run time an earlier version raised is
+  left as it is: nothing uses it, and the Konnect app sets its own 30 minutes again the next
+  time you change your default settings.
+
 ## 1.07 — 2026-10-17
 
 **Documentation**

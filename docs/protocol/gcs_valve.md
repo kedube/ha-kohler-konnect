@@ -131,10 +131,21 @@ All are under `/platform/api/v1/commands/gcs/`. Every body starts `{deviceId, sk
 
 - **A preset word is 3 bytes:** `[byte0][temp low][flow]`.
 - **Byte 0 carries the outlets at different bit positions from a command word**: `0x04` outlet 1, `0x08` outlet 2, `0x10` outlet 3, plus `0x01` for the temperature high bit (live).
-- **Ids share one space.** Presets are 1-11 and experiences are 17 and up (`db0/c.java`). Slot 1 is the mandatory default shower.
+- **Ids share one space.** Presets are 1-11 and experiences are 17 and up (`db0/c.java`). Slot 1 is the mandatory default shower (§3.4).
 - **A preset's °F temperature is arithmetic**, `(F − 32) × 0.5555` formatted to one decimal. So 102 °F → 389 (0x185), 100 °F → 378 and 120 °F → 489. That disagrees with the solo-write table at 13 of the 29 values from 92 to 120. A running preset's temperature then shows up in the valve word, so a 389 in a `GCS_SOLO_STS` can come from a favorite.
 - **A preset's flow** is outlet 0's `defaultFlowrate` × 4, not a fixed 100% (app).
-- **A preset carries its own `time`**, a second limit independent of `maximumRunTime`. The lower of the two stops the shower (live).
+- **A preset carries its own `time`**, a second limit independent of `maximumRunTime`. The lower of the two stops the shower (live) — but only for a session that preset started; see §3.4 for why that excludes preset 1.
+
+### 3.4 Preset 1, the default shower
+
+Most of this was established by the [kohler-anthem-plus](https://github.com/frozenmartini/kohler-anthem-plus) project (its 0.4.7, 2026-10-19, `docs/gcs/api.md`, "Preset 1 is a stored template"); "live" below means live on that project's hardware unless it says otherwise.
+
+- **Preset 1 is a stored template, not a scene Kohler runs.** The valve has no place of its own for its default outlets, so the setup wizard keeps them, with the default temperature and flow, in preset 1 "Default shower". Every client hides it from its preset lists (`p315jj/h.java:1913-1918`, Konnect 3.0.1) (app).
+- **Starting the default shower sends preset 1's words as a direct write.** The app defaults its start screen to preset `"1"` (`Pi/A.java:472`) and builds a `solowritesystem` from preset 1's outlets plus the on-screen temperature and flow (`Pi/A.java:787`) (app, 3.0.1). Simple Start on the valve's card, pressed 2026-10-19: `presetOrExperienceId` `0` throughout, warm-up first, then exactly preset 1's outlets (`Valve1 0184c8` none, `Valve2 0584c8` outlet 1) (live). Not yet captured on this integration's own reference install.
+- **So preset 1's `time` is never used.** It holds Kohler's `1800`. It only ends a shower when preset 1 is *run as a preset* (`controlpresetorexperience {preset: "1"}`): two such runs on 2026-08-17 paused at 30:00 with every outlet at `maximumRunTime` 3600 (live).
+- **The app rewrites preset 1 on every default change.** Setting the default temperature to 103 °F rewrote its words (`0189c8` / `0589c8`) and its `time` to `1800`, replacing a stored `3600` (live, 2026-10-19). Only a temperature change was tested.
+- **What this integration does since 1.08:** reads preset 1's words from `gcs-preset` and from every `GCS_PRESET_STS` push, and the `Shower on` switch sends them as one `solowritesystem`. A zone the preset opens nothing on goes as an addressed word with mask `0x00` (§3.1), and a word failing the scald check refuses the whole start. It never activates or writes preset 1, so `presetOrExperienceId` stays `0` and only `maximumRunTime` ends that shower.
+- **Up to 1.07 it did both:** `Shower on` activated preset 1, which woke the 1800 s timer, and setup rewrote that `time` to `3600` whenever it differed. An install that ran those versions may still hold `3600`; nothing reads it, and the app puts `1800` back at the next default change.
 
 ## 4. Settings ranges (what the app offers)
 
@@ -161,7 +172,7 @@ How the valve's Max Shower Duration (`maximumRunTime`) actually ends a shower. A
 - **Three limits can end a shower, and the shortest wins:**
   - the valve's `maximumRunTime`, which pauses (`0x40`);
   - the **Anthem Plus controller's** own `maxShowerDuration` ([hub_controller.md](hub_controller.md)), also timed per zone, which **stops** (`0x00`) and fires slightly late (+0.20 to +1.00 s);
-  - a **preset's `time`** (§3.3), for a session that preset started.
+  - a **preset's `time`** (§3.3), for a session that preset started — never the default shower, which no client runs as a preset (§3.4).
 - **Who stops how:** the valve's timer, the Konnect app and the first-generation touchscreen use `0x40` (the touchscreen on both zones). The controller and this integration use `0x00`. So a `0x40` pause near the limit cannot be told apart from an app stop at the same moment.
 
 ## 5. Warmup
@@ -205,7 +216,7 @@ Dispatch on `data.code` (see [platform §4.3](platform.md#43-message-envelope)).
 | Code | Attributes | Notes |
 |---|---|---|
 | `GCS_SOLO_STS` | `primaryValve1`, `secondaryValve1` (16-hex words); `currentSystemState`; `presetOrExperienceId`; `warmUpStatus`; `totalFlow`, `totalVolume`; `firmwareUpdate`, `BLEPairing`, `BLEConnected`, `IoTActive`, `IoTProvision`; `configChangeIndent` | The live valve word (live). `presetOrExperienceId` latches for the session, is cleared by pause **and** stop, and is never set during warmup |
-| `GCS_PRESET_STS` | `presetId`, `name` | Pushed on every create, edit, rename and delete, and for all slots after a reboot. A delete arrives as an empty name (live) |
+| `GCS_PRESET_STS` | `presetId`, `name`, `time`, `volume`, `Valve1`…`Valve8` (3-byte preset words) | Pushed on every create, edit, rename and delete, and for all slots after a reboot. A delete arrives as an empty name (live). The valve keys are capitalised here, where `writepreset` sends them lowercase, and slots 3-8 carry stale junk (`0000c0`, `080020`) — read `Valve1` and `Valve2` only (live, kohler-anthem-plus) |
 | `GCS_WARM_STS` | `warmup` (all lowercase, unlike REST's `warmUp`) | live |
 | `READ_GCS_OUTLET_CONFIG_CFG` | One outlet record, MQTT spelling (§2.1) | Unprompted, about twice a session, one outlet per message (live) |
 | `READ_GCS_UI_CFG` | One UI record (§6) | live (shape: app) |
@@ -244,6 +255,7 @@ The shapes and install flow are in [platform §7](platform.md#7-firmware). The c
 |---|---|
 | Outlet switches, zone temperature (`COLD` to max) and flow, `custom_shower`, `send_valve_hex` | ✅ |
 | Presets (start), warmup, outlet settings (12-key write) | ✅ |
+| Default shower from preset 1's words, never activating or writing it (§3.4) | ✅ since 1.08 |
 | Time-left attributes (zone clock against `maximumRunTime`, §4.1) | ✅ |
 | Endless Shower (restart a shower the valve's timer ended) | removed 2026-10-08 |
 | Experiences (start/stop via `controlpresetorexperience`) | ✅ app-confirmed only |

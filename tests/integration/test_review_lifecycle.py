@@ -702,26 +702,6 @@ async def test_a_faucets_first_read_does_not_wait_for_the_showers(
     assert hass.states.get("switch.kitchen_water") is not None
 
 
-async def test_each_valves_preset_timer_is_checked_alongside_the_others(
-    hass: HomeAssistant, shower_entry: MockConfigEntry, kohler: LifecycleKohler
-) -> None:
-    kohler.add_valve(RIGHT, "Tub")
-    for device_id in (LEFT, RIGHT):
-        kohler.valve_presets[device_id] = {
-            "gcsPresetExperienceDetails": [
-                {"presetId": "1", "title": "Default", "time": "1800", "volume": "0"}
-            ]
-        }
-    gate = kohler.hold("/writepreset")
-    setup = hass.async_create_task(
-        hass.config_entries.async_setup(shower_entry.entry_id)
-    )
-    await kohler.until_held("/writepreset", count=2)
-    gate.set()
-    assert await setup
-    assert {body["deviceId"] for body in kohler.posted("/writepreset")} == {LEFT, RIGHT}
-
-
 # =========================================================================== #
 # 7. The valve's fault log reaches its Problem sensor
 # =========================================================================== #

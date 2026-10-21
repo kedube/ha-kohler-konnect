@@ -141,21 +141,28 @@ OPTIMISTIC_GRACE_SECONDS = 12.0
 # ---------------------------------------------------------------------------
 # Shower switch
 # ---------------------------------------------------------------------------
-# Turning `switch.anthem_valve_shower_on` on activates this preset. The valve has no "run my
-# default" command, so a whole-shower start has to name a stored preset — see ShowerSwitch.
+# The preset whose stored words `switch.anthem_valve_shower_on` sends. The valve has no
+# "run my default" command and no place of its own for its default outlets, so the setup
+# wizard and the Konnect app keep them — with the default temperature and flow — in preset 1,
+# "Default shower". Every Kohler client hides it and none runs it as a preset: the touchscreen
+# and Simple Start on the app's valve card read its words and send them as a plain
+# `solowritesystem`. The Shower switch does the same (`Valve.async_start_default_shower`): it
+# never activates or writes preset 1, so only the outlets' `maximumRunTime` ends that shower.
+# The preset's own `time` (1800 s, rewritten with every default change in the app) is never
+# used. See `docs/protocol/gcs_valve.md` §3.4.
 #
-# Preset ids are positional and the app hides preset 1 from its own list, so the id shown in
-# the app is not this id. Adding a preset appends (a new one became id 3, leaving 1 and 2
-# alone), but a deletion is expected to renumber, exactly as HUB favorites do. If a start
-# ever runs the wrong scene, re-read the preset list before assuming the valve misbehaved.
+# Until 1.08 the switch activated preset 1 instead, which brought that hidden 30-minute timer
+# into play, and setup rewrote the timer to 3600 s to keep it out of the way — a change to the
+# owner's valve nobody asked for, and one the app undid at the next default change.
+#
+# The app hides preset 1 from its own list, so the id shown in the app is not this id.
 SHOWER_ON_PRESET_ID = 1
 
 # Presets never offered to the user as a choosable scene.
 #
-# Preset 1 is the valve's mandatory default-shower configuration and the Konnect app hides it
-# from its own list, so surfacing it would show something the app does not. It stays
-# reachable — it is exactly what `SHOWER_ON_PRESET_ID` above activates — but it is the
-# shower switch's business, not an entry in a preset picker.
+# Preset 1 is the valve's stored default-shower template and the Konnect app hides it from
+# its own list, so surfacing it would show something the app does not. Its words are what
+# the Shower switch sends (`SHOWER_ON_PRESET_ID` above); it is never run as a preset.
 PRESET_HIDDEN_IDS: frozenset[int] = frozenset({1})
 
 # ---------------------------------------------------------------------------
@@ -221,45 +228,6 @@ CONF_REPORT_LOG_FILE = "report_log_file"
 # development install the directory is gitignored.
 REPORT_LOG_DIR_NAME = "reports"
 REPORT_LOG_MAX_BYTES = 8 * 1024 * 1024
-
-# ---------------------------------------------------------------------------
-# Preset 1's hidden timer — normalised once at setup
-# ---------------------------------------------------------------------------
-# A GCS preset carries its own `time`, a second run-time limit independent of the outlets'
-# `maximumRunTime`. Whichever is lower stops the shower, and nothing ever re-syncs the preset
-# to the hardware value: `time` is only ever what the last writer sent. Full protocol detail
-# in `docs/protocol/gcs_valve.md`, "two independent timers".
-#
-# That is a problem for **preset 1 specifically, and only preset 1**, because it is hidden
-# from the owner in both the first-generation touchscreen and the Konnect app. Its timer is
-# whatever the setup wizard happened to store when the preset was created — on this install,
-# 1800 s, frozen at a factory reset on 2026-08-14 and then stranded when `maximumRunTime`
-# went to 3600 s. The owner has no interface anywhere that can correct it.
-#
-# So the integration sets it once, to `DEFAULT_PRESET_TIMER_SECONDS`, and then leaves it
-# alone. The intent is not to manage the timer but to take it *out* of the way, so the
-# hardware gate is the thing that limits a shower — one limit, in one place, that the owner
-# can actually see and change.
-#
-# **Every other preset is deliberately untouched.** Presets 2-10 are visible and editable in
-# the Konnect app, their timers are the owner's choice, and on the first-generation
-# touchscreen that timer is also the countdown shown during a run. Normalising those would
-# overwrite a deliberate setting and change what the panel displays. Preset 1 is exempt from
-# that reasoning precisely because it is the one the owner cannot see.
-#
-# Why a constant rather than following `maximumRunTime`: the hardware limit cannot be read on
-# demand *over MQTT*, which is where this runs: `READ_GCS_OUTLET_CONFIG_CFG` arrives unprompted,
-# one outlet at a time, so at setup the value is frequently not known yet. (It **is** readable
-# over REST from `gcsadvancestate` — corrected 2026-08-17 — but this sync deliberately does not
-# depend on a second network read succeeding.) A fixed target that is at or above every observed hardware value
-# leaves the gate to the hardware in every case.
-SYNC_DEFAULT_PRESET_TIMER = True
-# Preset 1 is "Default shower" on every install seen: created by the setup wizard, and the
-# slot the app hides.
-DEFAULT_PRESET_ID = 1
-# 3600 s is the highest `maximumRunTime` observed on this hardware (900/1800/3600). Setting
-# the preset at the ceiling means the outlet limit is always the binding constraint.
-DEFAULT_PRESET_TIMER_SECONDS = 3600
 
 # ---------------------------------------------------------------------------
 # What a config-entry change has to be before it is worth a reload

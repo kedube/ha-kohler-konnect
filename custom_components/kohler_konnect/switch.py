@@ -51,7 +51,6 @@ from .const import (
     OPTIMISTIC_GRACE_SECONDS,
     OUTLET_TYPE_NAMES,
     OUTLET_TYPE_VARIANTS,
-    SHOWER_ON_PRESET_ID,
     WARMUP_AUTO_RESTORE_DELAY_SECONDS,
     WARMUP_AUTO_RESTORE_NO_TARGET,
     WARMUP_AUTO_RESTORE_ON,
@@ -254,21 +253,24 @@ class ShowerSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
     to ``0x00`` on 2026-08-13 so a stop could never be mistaken for the valve's own run-time
     cutoff, which also pauses; see ``async_stop_shower()`` for why it stays.
 
-    **On activates preset ``SHOWER_ON_PRESET_ID``** — one call, no valve write. The valve has
-    no "run my default", so a whole-shower start has to name a stored scene; the preset
-    supplies the outlets, temperature, and flow that this entity cannot.
+    **On runs the default shower from preset 1's stored words** —
+    ``Valve.async_start_default_shower()``, one ``solowritesystem``. The valve has no "run
+    my default" and no place of its own for its default outlets, so they live, with the
+    default temperature and flow, in preset 1: a hidden template that the touchscreen and
+    Simple Start on the Konnect app's valve card send as a plain valve write, never run as a
+    preset. This switch does the same, so it neither activates nor writes preset 1, Preset
+    Active stays off while it runs, and only the outlets' ``maximumRunTime`` ends it. Until
+    1.08 it activated preset 1, whose hidden 30-minute timer then ended the shower early.
 
     **Not redundant with the outlet switches, despite both running water.** They answer
     different questions. An outlet switch opens *one* outlet at whatever temperature the
     zone already holds — manual control, one outlet at a time. This runs the shower the
-    owner configured: outlets, temperature and flow together, in a single command, from a
-    preset edited in the Konnect app rather than in this integration. Change that preset
-    and this switch starts something different with no code change. The redundancy is only
+    owner configured: outlets, temperature and flow together, in a single command, from
+    defaults set in the Konnect app rather than in this integration. The redundancy is only
     at the *off* end, where both stop the water.
 
-    Which means **what "on" does is stored on the valve, not here.** Edit the preset in the
-    Konnect app and this switch starts something different, with no code change — the reason
-    the id is a constant rather than a hardcoded literal.
+    Which means **what "on" does is stored on the valve, not here.** Change the defaults in
+    the Konnect app and this switch starts something different, with no code change.
     """
 
     _attr_icon = "mdi:shower"
@@ -298,10 +300,8 @@ class ShowerSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
         return {"paused": state.is_paused}
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Start the preset — one call, no valve write."""
-        await self._async_switch(
-            True, self._valve.async_activate_preset(SHOWER_ON_PRESET_ID)
-        )
+        """Run the default shower — one valve write, from preset 1's stored words."""
+        await self._async_switch(True, self._valve.async_start_default_shower())
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop with mask 0x00 on both zones."""
@@ -526,7 +526,7 @@ class HubShowerSwitch(OptimisticSwitchMixin, KohlerControllerEntity, SwitchEntit
     **The only bare on/off in the whole system.** It works because the controller stores its
     own default water configuration, so "on" has a meaning without naming a scene. The GCS
     valve has no equivalent — every start there must specify the complete valve state, which
-    is why the valve's shower switch activates a preset instead.
+    is why the valve's shower switch sends the default outlets stored in its preset 1 instead.
 
     Off stops **water only**, leaving music, steam, and lighting untouched. For a true
     system-wide stop use the System switch, which calls ``stopall``.

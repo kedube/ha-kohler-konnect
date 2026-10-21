@@ -2,7 +2,9 @@
 
 The GCS valve is addressed directly and has **no "run my default"** — every start must
 specify the complete valve state as a hex command word. There is no bare on/off command,
-which is the fundamental difference from the Anthem Plus HUB.
+which is the fundamental difference from the Anthem Plus HUB. The default outlets live in
+preset 1, and Kohler's own clients start the default shower by sending its words as a
+direct write (`valve_hex.preset_words_to_pair`).
 
 All direct writes go through ``solowritesystem``. Presets are a stored layer on top:
 ``controlpresetorexperience`` with ``{preset, action}`` starts one by itself — the valve
@@ -14,7 +16,6 @@ two-command path was removed 2026-08-21.)
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 from typing import Any
 
 from .client import KohlerClient, KohlerError
@@ -39,7 +40,6 @@ from .valve_hex import (
     VALVE1_PREFIX,
     VALVE2_PREFIX,
     ValveHexError,
-    check_preset_word,
     encode_pair,
     encode_word,
     pause_pair,
@@ -58,146 +58,6 @@ SECONDARY_SLOTS = tuple(f"secondaryValve{n}" for n in range(2, 8))
 #: `valve8` with this on both `createpreset` and `writepreset` (`mc0/n.java`); this
 #: integration sent `""` until 2026-10-07 on a misreading that the app did.
 UNUSED_PRESET_WORD = "000000"
-
-
-@dataclass(frozen=True)
-class PresetTimerPlan:
-    """What, if anything, to do about one preset's stored ``time``.
-
-    ``reason`` is one of:
-
-    ``absent``
-        No such preset slot in the read. Nothing to do.
-    ``empty``
-        The slot exists but holds no name and no valve words — an unconfigured slot.
-        **Deliberately left alone**: writing a timer into a blank slot would half-create a
-        preset the owner never asked for.
-    ``unnamed``
-        The slot holds valve words but no name under any key this reads. **Also left
-        alone**: the rewrite would send ``name: ""``, which is exactly how ``writepreset``
-        deletes a slot — and the coordinator runs this on preset 1 at every setup.
-    ``unsafe``
-        A stored valve word that is not the unused word failed ``check_preset_word``:
-        malformed — an 8-character command word where a 6-character preset word belongs,
-        say — or hotter than the Konnect app can store. **Left alone too** (2026-10-16):
-        the record is replaced whole, so the rewrite could only echo that word to the valve
-        or send ``000000`` in its place, and ``000000`` takes that valve out of the preset
-        for good — a dropped ``valve2`` word removed zone 2 from the default shower. Either
-        is a bigger change to the owner's shower than the timer this exists to fix.
-        ``valves`` holds only the words that passed.
-    ``already``
-        The stored timer already matches the target. Nothing to write.
-    ``rewrite``
-        The timer differs and should be written.
-    """
-
-    reason: str
-    name: str = ""
-    volume: str = "0"
-    valves: dict[int, str] = field(default_factory=dict)
-    previous: int | None = None
-
-    @property
-    def needed(self) -> bool:
-        """Whether a ``writepreset`` should actually be sent."""
-        return self.reason == "rewrite"
-
-
-def _preset_record(payload: Any, preset_id: int) -> dict[str, Any] | None:
-    """Find one slot in a ``gcs-preset`` read.
-
-    The client hands this payload over as the cloud sent it, so anything but an object —
-    a list, a string — is no read at all rather than an `AttributeError` the setup-time
-    caller, which catches only `KohlerError`, would let fail setup.
-    """
-    if not isinstance(payload, dict):
-        return None
-    details = payload.get("gcsPresetExperienceDetails")
-    if not isinstance(details, list):
-        return None
-    for entry in details:
-        if not isinstance(entry, dict):
-            continue
-        try:
-            if int(str(entry.get("presetId"))) == preset_id:
-                return entry
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
-def plan_preset_timer(
-    payload: Any, preset_id: int, target_seconds: int
-) -> PresetTimerPlan:
-    """Decide whether a preset's stored timer needs rewriting, and with what.
-
-    ``writepreset`` **replaces the whole record**, so an omitted field is a silent edit.
-    That is why this reads the raw REST payload rather than the parsed state model: only
-    the payload still carries the name, volume and per-valve ``hexString`` that have to be
-    written straight back unchanged. Everything except ``time`` is preserved byte for byte.
-
-    Kept pure — no I/O, no Home Assistant — so the offline suite can prove the exact
-    payload for a write that reconfigures the owner's shower.
-    """
-    record = _preset_record(payload, preset_id)
-    if record is None:
-        return PresetTimerPlan("absent")
-
-    valves: dict[int, str] = {}
-    unsafe = False
-    details = record.get("valveDetails")
-    for detail in details if isinstance(details, list) else ():
-        if not isinstance(detail, dict):
-            continue
-        index = str(detail.get("valveIndex") or "")
-        word = str(detail.get("hexString") or "").strip().lower()
-        if not index.lower().startswith("valve") or not word or set(word) == {"0"}:
-            continue
-        # **Validate before echoing.** This word came from the cloud and is about to be
-        # written back verbatim, because `writepreset` replaces the record whole. The
-        # ceiling admits every value the Konnect app can store; see
-        # `PRESET_ECHO_MAX_TENTHS`. A word that fails stops the whole rewrite (the plan's
-        # `unsafe`): it used to be dropped while the rewrite went ahead, which sent the
-        # unused-valve word in its place and so deleted that valve from the preset.
-        try:
-            word = check_preset_word(word)
-        except ValveHexError:
-            _LOGGER.warning(
-                "Leaving preset %s's timer alone: its stored %s word %r is malformed or "
-                "out of range, and rewriting the preset would replace it",
-                preset_id,
-                index,
-                word,
-            )
-            unsafe = True
-            continue
-        try:
-            valves[int(index[5:])] = word
-        except ValueError:
-            continue
-
-    # The keys the read path names a preset by (`GcsState.apply_preset_list`), with `name`
-    # last as before. This read only `title` or `name` until 2026-10-16, so a record naming
-    # itself by `logicalName` alone planned a rewrite with an empty name.
-    name = str(
-        record.get("title") or record.get("logicalName") or record.get("name") or ""
-    ).strip()
-    if unsafe:
-        return PresetTimerPlan("unsafe", name, valves=valves)
-    if not name and not valves:
-        return PresetTimerPlan("empty")
-    if not name:
-        return PresetTimerPlan("unnamed", valves=valves)
-
-    try:
-        previous: int | None = int(str(record.get("time")))
-    except (TypeError, ValueError):
-        previous = None
-
-    volume = str(record.get("volume") or "0")
-    if previous == target_seconds:
-        return PresetTimerPlan("already", name, volume, valves, previous)
-    return PresetTimerPlan("rewrite", name, volume, valves, previous)
 
 
 def validate_outlet_record(
@@ -557,44 +417,6 @@ class GcsDevice:
         return await self._client.async_request(
             "POST", GCS_WRITE_OUTLET_CONFIG, json_body=payload
         )
-
-    async def async_sync_preset_timer(
-        self, preset_id: int, target_seconds: int, *, presets: Any = None
-    ) -> PresetTimerPlan:
-        """Read one preset and, if its stored timer differs, write the target in.
-
-        Read-then-conditionally-write, so it is idempotent: run it a hundred times and it
-        sends at most one write, the first time. Everything except ``time`` is written back
-        exactly as read — see :func:`plan_preset_timer` for why that matters.
-
-        Returns the plan, whose ``reason`` says what happened. Raises whatever the client
-        raises; the caller decides whether a failure is worth failing setup over.
-
-        ``presets`` is an already-fetched ``gcs-preset`` payload, to save re-reading an
-        endpoint the caller just read. Added 2026-08-21: the coordinator seeds state at
-        setup and then calls this on the next line, which read the same endpoint twice.
-
-        ⚠️ **Whatever is passed here is written back to the owner's shower.**
-        ``writepreset`` replaces the whole record, so the name, volume and per-valve
-        ``hexString`` in this payload are echoed verbatim — a stale payload silently reverts
-        the preset to whatever it held when the payload was taken. **Pass only a read from
-        moments ago, in the same setup pass. When in doubt, pass nothing and let it read.**
-        """
-        payload = (
-            presets
-            if presets is not None
-            else await self._client.async_get_gcs_presets(self.device_id)
-        )
-        plan = plan_preset_timer(payload, preset_id, target_seconds)
-        if plan.needed:
-            await self.async_write_preset(
-                preset_id,
-                plan.name,
-                plan.valves,
-                time_seconds=target_seconds,
-                volume=plan.volume,
-            )
-        return plan
 
     async def async_create_preset(
         self,

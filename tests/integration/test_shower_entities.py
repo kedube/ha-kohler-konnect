@@ -109,9 +109,21 @@ WRITE_OUTLET = "gcs/writeoutletconfig"
 SET_WARMUP = "gcs/warmup"
 
 # Shaped like the "gcsPresetExperienceDetails" a real valve returns: the hidden default
-# shower in slot 1, two favorites, a free slot, and an experience the app added.
+# shower in slot 1, two favorites, a free slot, and an experience the app added. The
+# default shower's words open the rainhead at 38.8 °C and 78 % flow; its timer is Kohler's
+# 1800 s, which nothing reads.
+DEFAULT_SHOWER = [
+    {"valveIndex": "Valve1", "hexString": "05849C"},
+    {"valveIndex": "Valve2", "hexString": "000000"},
+]
 PRESETS = [
-    {"presetId": "1", "title": "Default", "time": "3600", "isExperience": "False"},
+    {
+        "presetId": "1",
+        "title": "Default",
+        "time": "1800",
+        "isExperience": "False",
+        "valveDetails": DEFAULT_SHOWER,
+    },
     {"presetId": "2", "title": "Morning", "isExperience": "False"},
     {"presetId": "3", "title": "", "isExperience": "False"},
     {"presetId": "4", "title": "Evening", "isExperience": "False"},
@@ -454,18 +466,97 @@ def ids_by_unique_id(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, s
 async def test_shower_on_runs_the_valves_hidden_default_shower(
     hass: HomeAssistant, config_entry: MockConfigEntry, kohler: ShowerKohler
 ) -> None:
-    """On names preset 1, so the outlets and temperature come from the valve, not here."""
+    """On sends preset 1's stored words, as Simple Start in the Konnect app does.
+
+    One valve write and nothing else: preset 1 is never activated — its hidden 30-minute
+    timer would end the shower — and never written.
+    """
     await setup(hass, config_entry)
 
     await call(hass, SWITCH_DOMAIN, SERVICE_TURN_ON, SHOWER_ON)
 
-    assert [(b["preset"], b["action"]) for b in kohler.sent(CONTROL_PRESET)] == [
-        ("1", "On")
-    ]
-    # One call, no valve write: the valve runs the preset itself.
-    assert kohler.sent(SOLO) == []
+    [(zone1, zone2)] = kohler.words()
+    assert (zone1.outlet_mask, zone1.temperature_celsius, zone1.flow_percent) == (
+        0b001,
+        38.8,
+        78.0,
+    )
+    assert not zone1.paused
+    assert zone2 is None  # a single-zone valve
+    assert kohler.sent(CONTROL_PRESET) == []
+    assert kohler.sent("gcs/writepreset") == []
     # Shown at once, before the valve has said anything.
     assert state(hass, SHOWER_ON).state == STATE_ON
+
+
+async def test_shower_on_follows_a_default_changed_in_the_app(
+    hass: HomeAssistant, config_entry: MockConfigEntry, kohler: ShowerKohler
+) -> None:
+    """The app rewrites preset 1 on every default change, and the push carries the words."""
+    kohler.valve_outlets = (3, 3)
+    await setup(hass, config_entry)
+    await report(
+        hass,
+        "GCS_PRESET_STS",
+        {
+            "presetId": "1",
+            "name": "Default",
+            "time": "1800",
+            "Valve1": "018448",
+            "Valve2": "1190c8",
+        },
+    )
+
+    await call(hass, SWITCH_DOMAIN, SERVICE_TURN_ON, SHOWER_ON)
+
+    [(zone1, zone2)] = kohler.words()
+    # Zone 1 opens nothing but is still an addressed word, never the all-zero sentinel.
+    assert (zone1.prefix, zone1.outlet_mask, zone1.temperature_celsius) == (
+        0x01,
+        0,
+        38.8,
+    )
+    assert zone2 is not None
+    assert (zone2.outlet_mask, zone2.temperature_celsius) == (0b100, 40.0)
+
+
+@pytest.mark.parametrize(
+    "presets",
+    [
+        [],  # preset 1 never read
+        [{"presetId": "1", "title": "Default", "time": "1800"}],  # no valve words
+        [  # a word that fails the scald check
+            {
+                "presetId": "1",
+                "title": "Default",
+                "valveDetails": [{"valveIndex": "Valve1", "hexString": "07FFC8"}],
+            }
+        ],
+        [  # words that open nothing
+            {
+                "presetId": "1",
+                "title": "Default",
+                "valveDetails": [{"valveIndex": "Valve1", "hexString": "018448"}],
+            }
+        ],
+    ],
+)
+async def test_shower_on_sends_nothing_without_a_usable_default_shower(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    kohler: ShowerKohler,
+    presets: list[dict[str, Any]],
+) -> None:
+    """Refused rather than guessed at, and never by falling back to running the preset."""
+    kohler.gcs_presets = presets
+    await setup(hass, config_entry)
+
+    with pytest.raises(HomeAssistantError, match="default shower"):
+        await call(hass, SWITCH_DOMAIN, SERVICE_TURN_ON, SHOWER_ON)
+
+    assert kohler.sent(SOLO) == []
+    assert kohler.sent(CONTROL_PRESET) == []
+    assert state(hass, SHOWER_ON).state == STATE_OFF
 
 
 async def test_shower_on_follows_the_valve_once_it_reports(
@@ -528,7 +619,7 @@ async def test_a_refused_shower_command_puts_the_switch_back(
 ) -> None:
     """A state the valve never reached must not stay on the dashboard."""
     await setup(hass, config_entry)
-    kohler.fail_api("/gcs/controlpresetorexperience", (200, {"statusCode": "900"}))
+    kohler.fail_api("/gcs/solowritesystem", (200, {"statusCode": "900"}))
 
     with pytest.raises(HomeAssistantError, match="valve is offline"):
         await call(hass, SWITCH_DOMAIN, SERVICE_TURN_ON, SHOWER_ON)

@@ -68,8 +68,6 @@ from .const import (
     CONF_ZONE_GROUPING,
     CONF_ZONE_OUTLETS,
     DEFAULT_FLOW_PERCENT,
-    DEFAULT_PRESET_ID,
-    DEFAULT_PRESET_TIMER_SECONDS,
     DEFAULT_ZONE_GROUPING,
     DEVICE_NAME_CONTROLLER,
     DEVICE_NAME_FAUCET,
@@ -90,7 +88,7 @@ from .const import (
     REPORT_LOG_DIR_NAME,
     REPORT_LOG_MAX_BYTES,
     SCAN_INTERVAL,
-    SYNC_DEFAULT_PRESET_TIMER,
+    SHOWER_ON_PRESET_ID,
     USAGE_REFRESH_DELAY_SECONDS,
     USAGE_RETRY_DELAY_SECONDS,
     VALVE_OFFLINE,
@@ -161,6 +159,7 @@ from .konnect.valve_hex import (
     flow_byte_to_percent,
     flow_percent_to_byte,
     normalize_word,
+    preset_words_to_pair,
 )
 from .konnect.warmup_resume import (
     RESUME_DEADLINE_SECONDS,
@@ -868,11 +867,6 @@ class Valve:
         # inside the cloud's catch-up window cannot put the old values back. See
         # `_outlet_limits_settled`.
         self._outlet_written_at: float | None = None
-        # The raw `gcs-preset` payload from the most recent seed, for
-        # `_async_sync_default_preset_timer`, which runs once, at setup. Cleared when it is
-        # taken — it feeds a write path, and a stale payload is a silent edit; a reconnect's
-        # reseed refills it, and it then sits unused.
-        self._seeded_presets: Any = None
         # How long each zone has been running, for the time-left attributes. The valve
         # times each zone against its `maximumRunTime` and reports nothing about the clock,
         # so this keeps one from the messages. See `konnect/zone_clock.py`.
@@ -2188,10 +2182,6 @@ class Valve:
             presets = await self.client.async_get_gcs_presets(self.gcs_device.device_id)
             self.gcs_state.apply_preset_list(presets)
             self._presets_read = True
-            # Kept for `_async_sync_default_preset_timer`, which needs the *raw* record
-            # — title, volume and each valve's `hexString` — none of which survive
-            # `apply_preset_list`; `GcsPreset` keeps only id, name and is_experience.
-            self._seeded_presets = presets
         except KohlerError as err:
             _LOGGER.debug("Could not read GCS presets: %s", err)
 
@@ -2539,65 +2529,6 @@ class Valve:
             if record is not None and record.maximum_run_time is not None:
                 result[outlet] = record.maximum_run_time
         return result
-
-    async def _async_sync_default_preset_timer(self) -> None:
-        """Take the hidden default preset's own timer out of the way, once.
-
-        Preset 1 carries a `time` the owner cannot see or edit — it appears in neither the
-        touchscreen nor the Konnect app — and it silently overrides the outlet limit whenever
-        it is lower. Normalising it here leaves the hardware `maximumRunTime` as the single
-        thing that ends a shower. `SYNC_DEFAULT_PRESET_TIMER` in `const.py` carries the full
-        reasoning, including why presets 2-10 are deliberately left alone.
-
-        **This never fails setup.** It is a convenience, not a prerequisite: the integration
-        works fine against a preset with the wrong timer, so a Kohler outage, a rejected
-        write, or an unexpected payload is logged and stepped over. Nothing downstream reads
-        its result.
-        """
-        if not SYNC_DEFAULT_PRESET_TIMER:
-            return
-        # Consume the seed's payload rather than re-reading `gcs-preset`, which
-        # `_async_seed_state` fetched on the line before this one — the second read of the
-        # same endpoint per start, folded 2026-08-21.
-        #
-        # ⚠️ **Taken and cleared in one step, deliberately.** This payload is echoed back to
-        # the valve verbatim for every field except `time`, so it must never be reused on a
-        # later pass; `None` here simply means this reads for itself, which is always safe.
-        presets, self._seeded_presets = self._seeded_presets, None
-        try:
-            plan = await self.gcs.async_sync_preset_timer(
-                DEFAULT_PRESET_ID, DEFAULT_PRESET_TIMER_SECONDS, presets=presets
-            )
-        except (KohlerError, AuthError) as err:
-            _LOGGER.debug(
-                "Could not check preset %s's run timer (harmless, setup continues): %s",
-                DEFAULT_PRESET_ID,
-                err,
-            )
-            return
-        if plan.needed:
-            _LOGGER.info(
-                "Preset %s (%s) had a hidden %ss run timer that would stop a shower before "
-                "the valve's own limit; rewrote it to %ss so the outlet limit is the only "
-                "thing that ends a shower",
-                DEFAULT_PRESET_ID,
-                plan.name or "unnamed",
-                plan.previous,
-                DEFAULT_PRESET_TIMER_SECONDS,
-            )
-        elif plan.reason == "unsafe":
-            # `plan_preset_timer` has said which word failed; this records the outcome.
-            _LOGGER.debug(
-                "Preset %s run timer left alone: a stored valve word failed validation, "
-                "and a rewrite would send it back as no word at all",
-                DEFAULT_PRESET_ID,
-            )
-        else:
-            _LOGGER.debug(
-                "Preset %s run timer needs no change (%s)",
-                DEFAULT_PRESET_ID,
-                plan.reason,
-            )
 
     def _zone_limits(self) -> dict[int, tuple[int, ...]]:
         """The distinct `maximumRunTime` values configured for each zone's outlets.
@@ -3445,6 +3376,50 @@ class Valve:
             with self.coordinator.command_errors(VALVE_OFFLINE):
                 await self.gcs.async_activate_preset(preset_id, True)
 
+    async def async_start_default_shower(self) -> None:
+        """Run the default shower from preset 1's stored valve words. **This runs water.**
+
+        Preset 1 is where the valve keeps its default outlets, temperature and flow, and
+        Kohler's own clients never run it as a preset: Simple Start in the Konnect app
+        reads its words and sends them as one ``solowritesystem`` (see
+        `SHOWER_ON_PRESET_ID`). This does the same — one write, built by
+        `preset_words_to_pair` at the stored flow, so nothing activates or writes preset 1
+        and only the outlets' ``maximumRunTime`` ends the shower.
+
+        The words come from the setup read and every ``GCS_PRESET_STS`` push; nothing is
+        read when this is called. Not read yet, opening no outlet, or failing validation:
+        refused, and nothing is sent.
+
+        A whole shower like `async_custom_shower`'s, so it is never built on the valve's
+        last report and goes out during a warm-up too. Like every write, it steps aside for
+        a Stop asked for after it (`async_stop_shower`).
+        """
+        requested = self._stop_generation
+        preset = self.gcs_state.presets.get(SHOWER_ON_PRESET_ID)
+        try:
+            word1, word2 = preset_words_to_pair(
+                self.model, preset.valve_words if preset is not None else ()
+            )
+        except ValveHexError as err:
+            raise HomeAssistantError(
+                f"{self.name}'s default shower (preset {SHOWER_ON_PRESET_ID}) cannot be "
+                f"sent: {err}. Nothing was sent; reload the integration to read it again."
+            ) from err
+        if not any(decode_word(word).outlet_mask for word in (word1, word2)):
+            raise HomeAssistantError(
+                f"{self.name}'s default shower opens no outlet, so nothing was sent. Set "
+                "the default outlets in the Konnect app."
+            )
+        async with self._valve_write_lock:
+            self._refuse_if_stopped_since(requested)
+            _LOGGER.debug(
+                "Default shower from preset %s's stored words: zone1=%s, zone2=%s",
+                SHOWER_ON_PRESET_ID,
+                word1,
+                word2,
+            )
+            await self._async_send_words(word1, word2)
+
     async def async_restart(self) -> None:
         """Reboot the valve — the app's Restart Product. **Stops any running water.**
 
@@ -3959,16 +3934,6 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._reseed_task = self.hass.async_create_task(
                 self._async_reseed_after_connect()
             )
-        # Each valve's own preset, so the valves need not take turns. Every exception is
-        # collected before any is raised, so a failure cannot leave a sibling writing to its
-        # valve after setup has given up.
-        _raise_first(
-            await asyncio.gather(
-                *(valve._async_sync_default_preset_timer() for valve in self.valves),
-                return_exceptions=True,
-            )
-        )
-        self._raise_if_closed()
         self._persist_refresh_token()
 
         # Waited for rather than awaited: an unload cancels it, which is not this setup
@@ -5034,7 +4999,7 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ``valvecontrol {valveOnOff}`` — the controller's one direct water command, and the
         only place in the system where a bare on/off exists. It works because the controller
         stores its own default configuration; the GCS valve has no equivalent, which is why
-        the valve's shower switch has to name a preset instead.
+        the valve's shower switch sends the default outlets stored in its preset 1 instead.
 
         Off stops the water only, leaving music, steam, and lighting running. Use
         :meth:`async_stop_hub` to idle everything.

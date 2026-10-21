@@ -520,10 +520,13 @@ class ValvePresetActiveSensor(KohlerValveEntity, BinarySensorEntity):
     * It is cleared by **both pause and stop** — any `0x40` or `00`/`00`.
 
     Opening an outlet directly leaves this off with water flowing, which is the normal case
-    for anything driven from Home Assistant.
+    for anything driven from Home Assistant — the Shower switch included: it sends preset
+    1's stored words as a plain valve write and no longer starts a preset (1.08), so this
+    stays off while that default shower runs, as it does for Simple Start in the app.
 
     It also has a bearing on the run-time cutoff: a cutoff during a preset-driven session
-    pauses *every* zone the preset owns, not only the one that expired.
+    (a favorite or experience, however started) pauses *every* zone the preset owns, not
+    only the one that expired.
 
     **Known false negative: a preset started during warm-up.** The valve applies the preset's
     valve word but never sets `presetOrExperienceId`, so this reads OFF while the preset is

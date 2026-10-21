@@ -48,7 +48,6 @@ from custom_components.kohler_konnect.const import (
     CONF_WATER_UNITS,
     CONF_ZONE_GROUPING,
     CONF_ZONE_OUTLETS,
-    DEFAULT_PRESET_TIMER_SECONDS,
     DOMAIN,
     FIRMWARE_CHECK_INTERVAL,
     device_issue_key,
@@ -295,7 +294,11 @@ class ShowerKohler(FakeKohler):
                     {
                         "presetId": "1",
                         "title": "Default",
-                        "time": str(DEFAULT_PRESET_TIMER_SECONDS),
+                        # Kohler's own 30 minutes, which setup must leave alone.
+                        "time": "1800",
+                        "valveDetails": [
+                            {"valveIndex": "Valve1", "hexString": "05849C"}
+                        ],
                     },
                     {"presetId": "2", "title": "Morning", "isExperience": "False"},
                     {"presetId": "20", "title": "Cool Down", "isExperience": "True"},
@@ -1641,46 +1644,22 @@ async def test_a_firmware_check_rejected_by_kohler_asks_to_sign_in_again(
 
 
 # =========================================================================== #
-# Preset 1's hidden timer
+# Preset 1, the default shower
 # =========================================================================== #
 
 
-async def test_the_hidden_default_preset_timer_is_rewritten_once_at_setup(
+async def test_setup_never_writes_the_default_preset(
     hass: HomeAssistant, shower_entry: MockConfigEntry, kohler: ShowerKohler
 ) -> None:
-    """Everything but `time` goes back exactly as read; `writepreset` replaces the record."""
-    kohler.valve_presets[LEFT] = {
-        "gcsPresetExperienceDetails": [
-            {
-                "presetId": "1",
-                "title": "Default Shower",
-                "time": "1800",
-                "volume": "0",
-                "valveDetails": [{"valveIndex": "Valve1", "hexString": "018448"}],
-            }
-        ]
-    }
+    """Preset 1's 1800 s timer stays as Kohler wrote it, at setup and on a reconnect.
+
+    Until 1.08 setup rewrote it to 3600 s, unasked. Nothing runs preset 1 as a preset any
+    more, so nothing needs its timer out of the way.
+    """
     coordinator = await start(hass, shower_entry)
-    (body,) = kohler.posted("/writepreset")
-    model = body["gcsPresetControlModel"]
-    assert model["presetId"] == "1"
-    assert model["name"] == "Default Shower"
-    assert model["time"] == str(DEFAULT_PRESET_TIMER_SECONDS)
-    assert "018448" in model.values()
-
-    # A reconnect reseeds the presets but never rewrites from that payload.
     await reconnect(hass, coordinator)
-    assert len(kohler.posted("/writepreset")) == 1
-
-
-async def test_a_failed_preset_timer_rewrite_does_not_fail_setup(
-    hass: HomeAssistant, shower_entry: MockConfigEntry, kohler: ShowerKohler
-) -> None:
-    """A convenience, not a prerequisite: the shower works with the timer as it was."""
-    kohler.valve_presets[LEFT]["gcsPresetExperienceDetails"][0]["time"] = "1800"
-    kohler.fail_api("/writepreset", (500, {"message": "Something went wrong"}))
-    await start(hass, shower_entry)
-    assert shower_entry.state is ConfigEntryState.LOADED
+    assert kohler.posted("/writepreset") == []
+    assert kohler.posted("/controlpresetorexperience") == []
 
 
 # =========================================================================== #
