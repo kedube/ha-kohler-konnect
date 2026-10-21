@@ -11,6 +11,8 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+## 1.08 — 2026-10-21
+
 **Fixed**
 
 - **`Shower on` no longer changes a setting on your valve.** Setup used to rewrite the hidden
