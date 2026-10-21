@@ -9,6 +9,12 @@ written once, here, as mixins. A valve or faucet sensor adds only the device it 
 Everything below was written for the valves first, and the comments still speak of
 showers; a faucet's series behaves the same way, refreshed on its own poll and after the
 water stops rather than when a shower ends.
+
+The duration totals (`Duration Used Today` … `This Year`) are written the same way, over
+`onDuration` — the seconds the water ran, riding beside `volume` in every bucket — and
+published in minutes, the unit the Konnect app charts duration in. They read the same
+two series the water totals already fetch, so they cost no call of their own, and each
+one follows its water twin's period exactly.
 """
 
 from __future__ import annotations
@@ -24,7 +30,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfVolume
+from homeassistant.const import UnitOfTime, UnitOfVolume
 from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.util import dt as dt_util
 
@@ -56,14 +62,43 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _bucket_figures(entry: dict[str, Any], figure: str) -> dict[str, float] | None:
+    """One bucket's figures for a `_month_totals` run keyed by ``figure``.
+
+    The water totals keep both figures a bucket carries — a month held by its litres
+    still knows how long the water ran, which `Water Used This Month` shows as its
+    `running_minutes` attribute. The duration totals hold only `onDuration`: their
+    record's litres would be a partial sum wherever the daily window starts mid-month,
+    so the litres are left out rather than carried misleadingly. A bucket without the
+    figure the run is built on is dropped from its months entirely — a month Kohler
+    never gave a duration for cannot be summed into a year of them.
+    """
+    value = _finite(entry.get(figure))
+    if value is None:
+        return None
+    figures = {figure: value}
+    if figure == "volume":
+        duration = _finite(entry.get("onDuration"))
+        if duration is not None:
+            figures["onDuration"] = duration
+    return figures
+
+
 def _month_totals(
     usage: dict[str, Any] | None,
     usage_daily: dict[str, Any] | None,
     *,
     peaks: dict[str, dict[str, float]] | None = None,
     this_month: str | None = None,
+    figure: str = "volume",
 ) -> dict[str, dict[str, float]]:
     """Each calendar month's usage (`YYYY-MM` -> `volume` litres, `onDuration` seconds).
+
+    ``figure`` is the number a month is compared and held by: `volume` for the water
+    totals, `onDuration` for the duration ones. Every record carries both figures
+    whenever Kohler reports them, so the water sensors can show a month's running
+    minutes and the duration ones could show its litres — only the comparison, and
+    the months that qualify to be compared at all, follow ``figure``.
 
     Built from both series. A month takes whichever figure is larger: Kohler's own monthly
     bucket, or the sum of that month's daily buckets.
@@ -85,30 +120,25 @@ def _month_totals(
     totals: dict[str, dict[str, float]] = {}
     for entry in usage_series(usage):
         month = entry.get("intervalKey")
-        volume = _finite(entry.get("volume"))
+        figures = _bucket_figures(entry, figure)
         if not (isinstance(month, str) and _MONTH_KEY.fullmatch(month)):
             continue
-        if volume is None:
+        if figures is None:
             continue
-        totals[month] = {"volume": volume}
-        duration = _finite(entry.get("onDuration"))
-        if duration is not None:
-            totals[month]["onDuration"] = duration
+        totals[month] = figures
 
     daily: dict[str, dict[str, float]] = {}
     for entry in usage_series(usage_daily):
         bucket = _usage_bucket_date(entry.get("intervalKey"))
-        volume = _finite(entry.get("volume"))
-        if bucket is None or volume is None:
+        figures = _bucket_figures(entry, figure)
+        if bucket is None or figures is None:
             continue
-        record = daily.setdefault(bucket.strftime("%Y-%m"), {"volume": 0.0})
-        record["volume"] += volume
-        duration = _finite(entry.get("onDuration"))
-        if duration is not None:
-            record["onDuration"] = record.get("onDuration", 0.0) + duration
+        record = daily.setdefault(bucket.strftime("%Y-%m"), {figure: 0.0})
+        for key, value in figures.items():
+            record[key] = record.get(key, 0.0) + value
 
     for month, record in daily.items():
-        if month not in totals or record["volume"] >= totals[month]["volume"]:
+        if month not in totals or record[figure] >= totals[month][figure]:
             totals[month] = record
 
     # **A month that has ended never reads lower than it has** (2026-10-16). Both of its
@@ -125,9 +155,7 @@ def _month_totals(
             if month >= this_month:
                 continue
             record, peak = totals.get(month), peaks.get(month)
-            if peak is not None and (
-                record is None or peak["volume"] > record["volume"]
-            ):
+            if peak is not None and (record is None or peak[figure] > record[figure]):
                 totals[month] = dict(peak)
             elif record is not None:
                 peaks[month] = dict(record)
@@ -154,11 +182,13 @@ def _daily_spans_the_year(usage_daily: dict[str, Any] | None, this_month: str) -
 
 @dataclass(frozen=True)
 class _Borrowed(ExtraStoredData):
-    """What `Water Used Today` reported out of tomorrow's UTC bucket, kept over a restart.
+    """What a `Used Today` sensor reported out of tomorrow's UTC bucket, over a restart.
 
-    See `DailyWaterUsage._rendered` for why it is owed, and `async_added_to_hass` for when
-    it is taken back. Home Assistant's restore-state store keeps it: written when the entity
-    is removed for a reload, at shutdown, and every fifteen minutes in between.
+    The wire figure — litres for the water twins, seconds for the duration ones — each
+    sensor keeps its own; one entity's restore-state record is never read by another.
+    See `DailyWaterUsage._rendered` for why it is owed, and `async_added_to_hass` for
+    when it is taken back. Home Assistant's restore-state store keeps it: written when
+    the entity is removed for a reload, at shutdown, and every fifteen minutes in between.
     """
 
     day: date
@@ -199,6 +229,12 @@ class WaterUsage(SensorEntity):
     _attr_device_class = SensorDeviceClass.WATER
     _attr_state_class = SensorStateClass.TOTAL
 
+    #: Which bucket figure this total is built over: `volume` (litres on the wire) for the
+    #: water totals, `onDuration` (seconds on the wire) for the duration ones. Every period
+    #: rule below — the bucketing, the borrow, the peaks, `last_reset` — is written once,
+    #: over this, so a duration total follows its water twin's period exactly.
+    _figure = "volume"
+
     def _usage_series(self) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         """This device's (monthly, daily) usage payloads."""
         raise NotImplementedError
@@ -214,6 +250,51 @@ class WaterUsage(SensorEntity):
     @property
     def native_unit_of_measurement(self) -> str:
         return UnitOfVolume.LITERS if self._metric else UnitOfVolume.GALLONS
+
+    def _published(self, raw: float) -> float:
+        """One figure, in the wire's unit, as this sensor publishes it.
+
+        Litres become the account's unit for the water totals; seconds become minutes for
+        the duration ones — the conversion the Konnect app's own chart makes, as
+        `konnect/usage.py` records. Rounded to one decimal, as every total here is.
+        """
+        if self._figure == "volume":
+            value = raw if self._metric else usage_volume_gallons(raw)
+        else:
+            value = raw / 60
+        return round(value, 1)
+
+    def _figure_value(self, entry: dict[str, Any]) -> float | None:
+        """One entry's figure as this sensor publishes it, or None if it is not a number."""
+        raw = entry.get(self._figure)
+        if not isinstance(raw, (int, float)):
+            return None
+        return self._published(float(raw))
+
+
+class DurationUsage(WaterUsage):
+    """The `Duration Used` twin of the water totals, over `onDuration` instead of `volume`.
+
+    Same series, same periods, same rules — this changes only what is summed and what it
+    is published as. `onDuration` is **seconds on the wire**, the time the water was
+    actually running, and minutes is what a shower is measured in and what the Konnect
+    app charts (it divides by 60), so these publish minutes: `native_value` is rounded to
+    one decimal exactly as the water totals round theirs.
+
+    `duration` rather than `water` as the device class keeps them out of the Energy
+    dashboard's water picker, which lists water sensors only — a duration is not a
+    volume, and pointing the dashboard at one would be a mistake. `TOTAL` and each
+    period's `last_reset` follow the water twins; see those classes for why.
+    """
+
+    _figure = "onDuration"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        # Minutes everywhere: `waterUnits` decides the display of litres, not of time.
+        return self._attr_native_unit_of_measurement
 
 
 class MonthlyWaterUsage(WaterUsage):
@@ -269,41 +350,37 @@ class MonthlyWaterUsage(WaterUsage):
         if self._month_peaks is None:
             self._month_peaks = {}
         totals = _month_totals(
-            usage, usage_daily, peaks=self._month_peaks, this_month=month
+            usage,
+            usage_daily,
+            peaks=self._month_peaks,
+            this_month=month,
+            figure=self._figure,
         )
         current = totals.get(month)
         if current is None and usage_series(usage_daily):
             # The daily series spans every day of this month and has nothing in it, so
             # nothing has been used yet: 0, as `Water Used Today` reads before the day's
             # first shower, rather than unknown.
-            current = {"volume": 0.0}
+            current = {self._figure: 0.0}
 
         attributes: dict[str, Any] = {}
         history: dict[str, float | None] = {
-            key_: self._volume(record) for key_, record in sorted(totals.items())
+            key_: self._figure_value(record) for key_, record in sorted(totals.items())
         }
         if current is not None:
-            history[month] = self._volume(current)
+            history[month] = self._figure_value(current)
         if history:
             attributes["history"] = history
         if current is not None:
             attributes["month"] = month
             duration = current.get("onDuration")
-            if isinstance(duration, (int, float)):
+            if self._figure == "volume" and isinstance(duration, (int, float)):
                 # Seconds on the wire; minutes is what a shower is measured in.
                 attributes["running_minutes"] = round(float(duration) / 60, 1)
 
         self._cache_key = (usage, usage_daily, month)
         self._cached = (current, attributes)
         return self._cached
-
-    def _volume(self, entry: dict[str, Any]) -> float | None:
-        """One entry's volume in the account's unit, or None when it is not a number."""
-        litres = entry.get("volume")
-        if not isinstance(litres, (int, float)):
-            return None
-        value = float(litres) if self._metric else usage_volume_gallons(float(litres))
-        return round(value, 1)
 
     @property
     def _current(self) -> dict[str, Any] | None:
@@ -312,7 +389,7 @@ class MonthlyWaterUsage(WaterUsage):
     @property
     def native_value(self) -> float | None:
         entry = self._current
-        return None if entry is None else self._volume(entry)
+        return None if entry is None else self._figure_value(entry)
 
     @property
     def last_reset(self) -> datetime:
@@ -389,34 +466,27 @@ class YearlyWaterUsage(WaterUsage):
         if self._month_peaks is None:
             self._month_peaks = {}
         months = {
-            month: record["volume"]
+            month: record[self._figure]
             for month, record in _month_totals(
-                usage, usage_daily, peaks=self._month_peaks, this_month=this_month
+                usage,
+                usage_daily,
+                peaks=self._month_peaks,
+                this_month=this_month,
+                figure=self._figure,
             ).items()
             if month.startswith(f"{this_year}-") and month <= this_month
         }
 
         if months:
             ordered = sorted(months)
-            litres = sum(months[key_] for key_ in ordered)
-            value = litres if self._metric else usage_volume_gallons(litres)
-            total = round(value, 1)
+            total_raw = sum(months[key_] for key_ in ordered)
+            total = self._published(total_raw)
             attributes = {
                 "year": this_year,
                 "months_counted": len(ordered),
                 "first_month": ordered[0],
                 "last_month": ordered[-1],
-                "per_month": {
-                    key_: round(
-                        (
-                            months[key_]
-                            if self._metric
-                            else usage_volume_gallons(months[key_])
-                        ),
-                        1,
-                    )
-                    for key_ in ordered
-                },
+                "per_month": {key_: self._published(months[key_]) for key_ in ordered},
             }
         elif usage_series(usage) or usage_series(usage_daily):
             # Kohler answered, and nothing in it falls in this year: none used yet. 0 on
@@ -531,11 +601,11 @@ class DailyWaterUsage(WaterUsage, RestoreEntity):
         # day over at the wrong hour for most of the world.
         wanted = [local_today - timedelta(days=offset) for offset in range(self._days)]
 
-        litres = 0.0
+        raw_total = 0.0
         days: dict[str, float] = {}
-        volumes: dict[date, float] = {}
-        # `numberOfTimesValveSwitchedOn` rides in every bucket beside `volume` — how many
-        # times the shower was turned on that day. A plain count, so published as is.
+        figures: dict[date, float] = {}
+        # `numberOfTimesValveSwitchedOn` rides in every bucket beside the figure — how
+        # many times the shower was turned on that day. A plain count, so published as is.
         # (`averageBlendTemperature` rides there too, but nothing — the app included —
         # states its unit, so it is left out rather than shown in a guessed one.)
         starts: dict[date, int] = {}
@@ -544,10 +614,10 @@ class DailyWaterUsage(WaterUsage, RestoreEntity):
             bucket = _usage_bucket_date(interval)
             if bucket is None:
                 continue
-            volume = _finite(entry.get("volume"))
-            if volume is None:
+            value = _finite(entry.get(self._figure))
+            if value is None:
                 continue
-            volumes[bucket] = volumes.get(bucket, 0.0) + volume
+            figures[bucket] = figures.get(bucket, 0.0) + value
             count = entry.get("numberOfTimesValveSwitchedOn")
             # Finite first, as every figure here: `int()` of a JSON `NaN` raises, which
             # took the whole sensor's value with it.
@@ -585,45 +655,41 @@ class DailyWaterUsage(WaterUsage, RestoreEntity):
         turned_on: int | None = None
         for day in wanted:
             bucket = day
-            volume = volumes.get(day)
+            value = figures.get(day)
             if (
                 day == local_today
                 and borrowed is not None
                 and borrowed[0] == day
-                and volume is not None
+                and value is not None
             ):
-                counted_already = min(borrowed[1], volume)
-                volume -= counted_already
+                counted_already = min(borrowed[1], value)
+                value -= counted_already
             if (
                 day == local_today
                 and utc_today > local_today
-                and not volume
-                and volumes.get(utc_today, 0.0) > 0
+                and not value
+                and figures.get(utc_today, 0.0) > 0
             ):
                 bucket = utc_today
-                volume = volumes[utc_today]
+                value = figures[utc_today]
                 counted_already = 0.0
                 if self._days == 1:
-                    self._borrowed = (utc_today, volume)
+                    self._borrowed = (utc_today, value)
             elif day == local_today and borrowed is not None and borrowed[0] > day:
                 # Today stopped borrowing — its own bucket filled in — so the figure it
                 # reports no longer includes tomorrow's water, and tomorrow owes nothing.
                 self._borrowed = None
-            if volume is None:
+            if value is None:
                 continue
             if bucket in starts:
                 turned_on = (turned_on or 0) + starts[bucket]
-            litres += volume
-            days[bucket.isoformat()] = round(
-                volume if self._metric else usage_volume_gallons(volume),
-                1,
-            )
+            raw_total += value
+            days[bucket.isoformat()] = self._published(value)
 
         total: float | None = None
         attributes: dict[str, Any] = {}
         if days:
-            value = litres if self._metric else usage_volume_gallons(litres)
-            total = round(value, 1)
+            total = self._published(raw_total)
             attributes = {"days_counted": len(days)}
             if turned_on is not None:
                 attributes["times_turned_on"] = turned_on
@@ -633,18 +699,13 @@ class DailyWaterUsage(WaterUsage, RestoreEntity):
                     attributes["bucket_date"] = bucket_date
                 if counted_already:
                     # Left out of today because yesterday already reported it; see above.
-                    attributes["counted_yesterday"] = round(
-                        counted_already
-                        if self._metric
-                        else usage_volume_gallons(counted_already),
-                        1,
-                    )
+                    attributes["counted_yesterday"] = self._published(counted_already)
             if self._days > 1:
                 # The per-day breakdown is the point of a rolling window: it says which day
                 # the water went, which a single figure cannot.
                 attributes["per_day"] = dict(sorted(days.items()))
                 attributes["window_days"] = self._days
-        elif volumes:
+        elif figures:
             # A valid daily series is present from Kohler, and no bucket exists in the
             # requested window yet (e.g. after midnight before the day's first shower).
             total = 0.0
@@ -670,3 +731,35 @@ class DailyWaterUsage(WaterUsage, RestoreEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return self._rendered()[1]
+
+
+class MonthlyDurationUsage(MonthlyWaterUsage, DurationUsage):
+    """How long the water ran this calendar month, in minutes.
+
+    `MonthlyWaterUsage` over `onDuration`: the same month-bucketing, the same daily-series
+    rollup keeping the current month live after every shower, the same ended-month peaks —
+    every rule, with the figure swapped. Its `history` attribute carries each month's
+    minutes rather than litres. See `MonthlyWaterUsage` and `DurationUsage`.
+    """
+
+
+class YearlyDurationUsage(YearlyWaterUsage, DurationUsage):
+    """How long the water ran this calendar year (Jan 1 – today), in minutes.
+
+    `YearlyWaterUsage` over `onDuration`: the same calendar-year sum from `_month_totals`,
+    the same unknown-rather-than-partial guard while the monthly series is missing, and
+    `per_month` in minutes. A month Kohler never reported a duration for is left out of
+    the sum entirely, exactly as a month without `volume` is for the water twin. See
+    `YearlyWaterUsage` and `DurationUsage`.
+    """
+
+
+class DailyDurationUsage(DailyWaterUsage, DurationUsage):
+    """How long the water ran today, or over the last seven days, in minutes.
+
+    `DailyWaterUsage` over `onDuration`: the same local-midnight day and rolling-week
+    windows, summed over each bucket's seconds and published in minutes — the same UTC
+    borrow and `counted_yesterday` discipline included, so an evening's minutes are
+    counted on the right day and only once, exactly as the water twin's litres are. See
+    `DailyWaterUsage` and `DurationUsage`.
+    """
