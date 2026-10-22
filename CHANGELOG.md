@@ -11,6 +11,8 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+## 1.12 — 2026-10-22
+
 **Added**
 
 - **The same four duration sensors for each Konnect faucet:** `Duration used today`,
