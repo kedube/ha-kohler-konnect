@@ -83,7 +83,10 @@
         "name": "Erogazione"
       },
       "connected": {
-        "name": "Connesso"
+        "name": "Connessione al cloud"
+      },
+      "mqtt_connection": {
+        "name": "Connessione MQTT"
       }
     },
     "button": {
@@ -159,6 +162,9 @@
       },
       "last_dispense": {
         "name": "Ultima erogazione"
+      },
+      "last_update": {
+        "name": "Ultimo aggiornamento"
       },
       "water_today": {
         "name": "Consumo d'acqua oggi"

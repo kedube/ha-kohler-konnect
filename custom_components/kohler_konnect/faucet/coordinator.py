@@ -286,6 +286,10 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._firmware_due = False
         self.connection_state: str | None = None
         self.last_connected: Any = None
+        #: When the faucet last reported something new (epoch seconds): a stream message
+        #: about it, or a poll whose state differs from the last. Not every poll, which
+        #: says only when we asked.
+        self.last_report: float | None = None
         self.seen_values: dict[str, set[str]] = {
             field: set() for field in (*TRACKED_FIELDS, "connectionState")
         }
@@ -550,6 +554,8 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass, self.async_request_refresh(), f"{DOMAIN} faucet re-read"
             )
         self._check_push_announced(state)
+        if state != self.data:
+            self.last_report = time.time()
         self._polled_at = polled_at
         self.connection_state = snapshot.connection_state
         self.last_connected = snapshot.last_connected
@@ -1348,6 +1354,7 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._async_save_soon("instant updates")
             self.push_restored = False
             self.push_messages += 1
+            self.last_report = time.time()
             if _may_change_config(event):
                 self._config_due = True  # a leak, an install, a new preset...
         else:
@@ -1355,6 +1362,8 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # polls may say so again until the stream next reports it running
             # (`_may_lag_stream`).
             self._feed_saw_running = False
+            # The MQTT connection entity shows it now; the refresh can wait on its cooldown.
+            self.async_update_listeners()
         if event is not None:
             self._note_event(event)
         self.config_entry.async_create_task(

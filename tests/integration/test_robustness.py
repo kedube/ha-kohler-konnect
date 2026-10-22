@@ -66,7 +66,7 @@ async def test_offline_faucet(
     setup_entry: MockConfigEntry,
     kohler: FakeKohler,
 ) -> None:
-    assert hass.states.get("binary_sensor.kitchen_connected").state == "on"
+    assert hass.states.get("binary_sensor.kitchen_cloud_connection").state == "on"
 
     kohler.connection = "Disconnected"
     await _advance(hass, freezer, FAUCET_SCAN_INTERVAL_IDLE)
@@ -75,7 +75,7 @@ async def test_offline_faucet(
     for entity_id in (STATUS, SWITCH, "button.kitchen_dispense_250_ml"):
         assert hass.states.get(entity_id).state == STATE_UNAVAILABLE, entity_id
     # Cloud-side and local entities stay usable.
-    assert hass.states.get("binary_sensor.kitchen_connected").state == "off"
+    assert hass.states.get("binary_sensor.kitchen_cloud_connection").state == "off"
     assert hass.states.get("binary_sensor.kitchen_leak").state == "off"
     assert hass.states.get("number.kitchen_dispense_amount").state != STATE_UNAVAILABLE
 
@@ -96,7 +96,9 @@ async def test_connection_state_not_reported(
 ) -> None:
     kohler.connection = None
     assert await hass.config_entries.async_setup(config_entry.entry_id)
-    assert hass.states.get("binary_sensor.kitchen_connected").state == STATE_UNKNOWN
+    assert (
+        hass.states.get("binary_sensor.kitchen_cloud_connection").state == STATE_UNKNOWN
+    )
     assert hass.states.get(STATUS).state == "off"  # assume online
 
 

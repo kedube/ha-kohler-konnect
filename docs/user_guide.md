@@ -405,9 +405,9 @@ warmup off; `Warmup Auto-Restore`, if it's on, puts it back.
 
 | Entity | Device | Enabled | What it does |
 |---|---|---|---|
-| `MQTT Connection` | both | no | Whether the push stream is connected — **our** link to Kohler. Off for as long as a drop lasts |
+| `MQTT Connection` | all | no | Whether the push stream is connected — **our** link to Kohler. Off for as long as a drop lasts. A faucet's (`MQTT connection`) also says whether the stream has proven it reports that faucet (`verified`), which is what lets its polling slow down |
 | `Cloud Connection` | valve | yes | Whether **Kohler's cloud** can reach the valve. A different question, and the one behind "the app says my valve is offline" — see [When the valve drops off the cloud](#when-the-valve-drops-off-the-cloud) |
-| `Last Update` | both | no | Timestamp of the most recent message |
+| `Last Update` | all | no | Timestamp of the most recent message. A faucet's (`Last update`) is its latest message, or the latest poll that found a change |
 | `Report Log` | both | yes | Switch; one-file bug-report capture of the raw MQTT stream — see [Diagnostics](#diagnostics) |
 | `Start new MQTT capture` | the first valve, or the first controller on an account without one | yes | Button; starts a fresh file for the raw MQTT capture, which is off unless switched on — see [Captures and journals](#captures-and-journals) |
 | `Hex` | valve | no | The current command word for that zone — copy it into `send_valve_hex`. `Hex 1` / `Hex 2` on a two-zone valve; see [Multi-zone naming](#multi-zone-naming) |
@@ -467,11 +467,13 @@ the showers'.
 | `Duration used this year` | sensor | Calendar year to date, in minutes |
 | `Firmware status` | update | Whether Kohler has newer firmware for the faucet, checked twice a day and after an install. **Read-only** — install from the Konnect app. Shows a firmware download in progress |
 | `Handle` | sensor | Diagnostic. The manual handle's position: `open` or `closed` |
-| `Connected` | binary sensor | Diagnostic. Whether Kohler's cloud can reach the faucet; `last_connected` attribute |
+| `Cloud connection` | binary sensor | Diagnostic. Whether Kohler's cloud can reach the faucet; `last_connected` attribute |
+| `MQTT connection` | binary sensor | Diagnostic, disabled by default. Whether the push stream is connected, and whether it has proven it reports this faucet (`verified`), which lets polling slow down |
+| `Last update` | sensor | Diagnostic, disabled by default. When the faucet last reported something new |
 | `Firmware download` | sensor | Diagnostic, disabled by default. Kohler's `progress` field, which follows a firmware download, not the water |
 | `Gateway firmware` | sensor | Diagnostic. The firmware version the Konnect app shows as the faucet's *Gateway firmware* |
 
-While `Connected` is off, the entities that show or control the live faucet are
+While `Cloud connection` is off, the entities that show or control the live faucet are
 unavailable; the leak, usage, firmware and settings entities stay available.
 
 `Dispense amount` and `Preset` are settings for their buttons, so the device page lists them
@@ -1239,7 +1241,7 @@ which removed it. The right response was to leave the repair alone: after updati
 itself and the sensor's long-term statistics carry on — nothing was recorded while 1.03 ran.
 
 **A faucet refuses to dispense.** Check its `Handle` sensor: a closed handle blocks remote
-water, as it does in the app. Also check `Connected`, and whether `Firmware status` shows a
+water, as it does in the app. Also check `Cloud connection`, and whether `Firmware status` shows a
 download in progress. See [When a faucet refuses](#when-a-faucet-refuses).
 
 **A faucet's changes take up to 30 seconds to appear.** The stream has not yet delivered a

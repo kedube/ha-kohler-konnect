@@ -11,7 +11,21 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Added**
+
+- **`MQTT connection` and `Last update` diagnostics for each faucet,** disabled by default,
+  as the showers have. `MQTT connection` also shows whether the stream has proven it
+  reports that faucet, which is what lets its polling slow down. `Last update` is the
+  faucet's latest message, or the latest poll that found a change.
+
+**Changed**
+
+- **The faucet's `Connected` is now `Cloud connection`,** matching the showers' `Cloud
+  Connection`. Existing installs keep their entity ID.
+
 ## 1.13 — 2026-10-22
+
+**Added**
 
 - **Faucet diagnostics count the usage buckets that carry a duration,** so a report shows
   why the faucet's duration totals read unknown.

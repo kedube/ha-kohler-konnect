@@ -83,7 +83,10 @@
         "name": "Distribution"
       },
       "connected": {
-        "name": "Connecté"
+        "name": "Connexion au cloud"
+      },
+      "mqtt_connection": {
+        "name": "Connexion MQTT"
       }
     },
     "button": {
@@ -159,6 +162,9 @@
       },
       "last_dispense": {
         "name": "Dernière distribution"
+      },
+      "last_update": {
+        "name": "Dernière mise à jour"
       },
       "water_today": {
         "name": "Consommation d'eau aujourd'hui"

@@ -1,4 +1,4 @@
-"""Faucet binary sensors: leak, dispensing, and whether Kohler can reach the faucet."""
+"""Faucet binary sensors: leak, dispensing, and the faucet's two connections."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.const import EntityCategory
 
+from ..coordinator import KohlerKonnectCoordinator
+from ..mqtt_connection import MqttConnectionMixin
 from .coordinator import FaucetCoordinator, leak_time
 from .entity import KohlerFaucetEntity
 
@@ -20,6 +22,7 @@ def faucet_binary_sensors(coordinator: FaucetCoordinator) -> list[BinarySensorEn
         FaucetLeakSensor(coordinator),
         FaucetDispensingSensor(coordinator),
         FaucetConnectedSensor(coordinator),
+        FaucetMqttConnectionSensor(coordinator),
     ]
 
 
@@ -106,3 +109,35 @@ class FaucetConnectedSensor(KohlerFaucetEntity, BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"last_connected": self.coordinator.last_connected}
+
+
+class FaucetMqttConnectionSensor(
+    MqttConnectionMixin, KohlerFaucetEntity, BinarySensorEntity
+):
+    """The faucet's copy of the MQTT-health diagnostic; see `MqttConnectionMixin`.
+
+    A faucet is polled whatever the stream does, but polling relaxes only while the
+    stream is connected and verified for this faucet, which the attributes show.
+    """
+
+    _requires_online = False
+    _attr_translation_key = "mqtt_connection"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator: FaucetCoordinator) -> None:
+        super().__init__(coordinator, "mqtt_connection")
+
+    @property
+    def _account(self) -> KohlerKonnectCoordinator:
+        return self.coordinator.account
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        faucet = self.coordinator
+        return {
+            **super().extra_state_attributes,
+            "verified": faucet.push_verified,
+            "faucet_messages": faucet.push_messages,
+            "missed_changes": faucet.push_missed,
+        }

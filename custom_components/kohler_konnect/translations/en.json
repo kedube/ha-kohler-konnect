@@ -83,7 +83,10 @@
         "name": "Dispensing"
       },
       "connected": {
-        "name": "Connected"
+        "name": "Cloud connection"
+      },
+      "mqtt_connection": {
+        "name": "MQTT connection"
       }
     },
     "button": {
@@ -159,6 +162,9 @@
       },
       "last_dispense": {
         "name": "Last dispensed"
+      },
+      "last_update": {
+        "name": "Last update"
       },
       "water_today": {
         "name": "Water used today"

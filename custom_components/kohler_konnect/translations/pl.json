@@ -83,7 +83,10 @@
         "name": "Nalewanie"
       },
       "connected": {
-        "name": "Połączenie"
+        "name": "Połączenie z chmurą"
+      },
+      "mqtt_connection": {
+        "name": "Połączenie MQTT"
       }
     },
     "button": {
@@ -159,6 +162,9 @@
       },
       "last_dispense": {
         "name": "Ostatnio nalano"
+      },
+      "last_update": {
+        "name": "Ostatnia aktualizacja"
       },
       "water_today": {
         "name": "Zużycie wody dzisiaj"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -76,6 +77,7 @@ def faucet_sensors(coordinator: FaucetCoordinator) -> list[SensorEntity]:
     entities += [
         FaucetGatewayFirmwareSensor(coordinator),
         FaucetLastDispenseSensor(coordinator),
+        FaucetLastUpdateSensor(coordinator),
         FaucetDailyWaterSensor(coordinator),
         FaucetWeeklyWaterSensor(coordinator),
         FaucetMonthlyWaterSensor(coordinator),
@@ -181,6 +183,25 @@ class FaucetLastDispenseSensor(KohlerFaucetEntity, RestoreSensor):
         if liters is None:
             return None
         return round(from_ml(liters * 1000, self._unit), 2)
+
+
+class FaucetLastUpdateSensor(KohlerFaucetEntity, SensorEntity):
+    """When the faucet last reported something new. See `FaucetCoordinator.last_report`."""
+
+    _requires_online = False
+    _attr_translation_key = "last_update"
+    _attr_icon = "mdi:clock-check-outline"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator: FaucetCoordinator) -> None:
+        super().__init__(coordinator, "last_update")
+
+    @property
+    def native_value(self) -> datetime | None:
+        reported = self.coordinator.last_report
+        return None if reported is None else datetime.fromtimestamp(reported, tz=UTC)
 
 
 class _FaucetWater(KohlerFaucetEntity):

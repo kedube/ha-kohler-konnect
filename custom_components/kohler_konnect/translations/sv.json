@@ -83,7 +83,10 @@
         "name": "Tappning"
       },
       "connected": {
-        "name": "Ansluten"
+        "name": "Molnanslutning"
+      },
+      "mqtt_connection": {
+        "name": "MQTT-anslutning"
       }
     },
     "button": {
@@ -159,6 +162,9 @@
       },
       "last_dispense": {
         "name": "Senast tappat"
+      },
+      "last_update": {
+        "name": "Senaste uppdatering"
       },
       "water_today": {
         "name": "Vattenförbrukning i dag"

@@ -83,7 +83,10 @@
         "name": "Dispensando"
       },
       "connected": {
-        "name": "Conectado"
+        "name": "Conexión a la nube"
+      },
+      "mqtt_connection": {
+        "name": "Conexión MQTT"
       }
     },
     "button": {
@@ -159,6 +162,9 @@
       },
       "last_dispense": {
         "name": "Último dispensado"
+      },
+      "last_update": {
+        "name": "Última actualización"
       },
       "water_today": {
         "name": "Consumo de agua hoy"

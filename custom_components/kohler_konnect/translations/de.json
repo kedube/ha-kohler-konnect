@@ -83,7 +83,10 @@
         "name": "Dosierung"
       },
       "connected": {
-        "name": "Verbunden"
+        "name": "Cloud-Verbindung"
+      },
+      "mqtt_connection": {
+        "name": "MQTT-Verbindung"
       }
     },
     "button": {
@@ -159,6 +162,9 @@
       },
       "last_dispense": {
         "name": "Zuletzt dosiert"
+      },
+      "last_update": {
+        "name": "Letzte Aktualisierung"
       },
       "water_today": {
         "name": "Wasserverbrauch heute"

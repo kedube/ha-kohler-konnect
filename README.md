@@ -247,7 +247,7 @@ written so other Kohler integrations can reuse it.
 This project builds on [frozenmartini/kohler-anthem-plus](https://github.com/frozenmartini/kohler-anthem-plus)
 and [kenyonj/kohler-konnect-ha](https://github.com/kenyonj/kohler-konnect-ha). Credit to both
 for the original work. The faucet support began as a separate integration,
-[kedube/ha-kohler-sensate](https://github.com/kedube/ha-kohler-sensate), which this one now
+[jose-gonzalez-valdez/kohler-sensate-ha](https://github.com/jose-gonzalez-valdez/kohler-sensate-ha), which this one now
 replaces.
 
 ## Licence and trademarks
