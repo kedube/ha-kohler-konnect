@@ -3386,30 +3386,21 @@ class Valve:
         `preset_words_to_pair` at the stored flow, so nothing activates or writes preset 1
         and only the outlets' ``maximumRunTime`` ends the shower.
 
-        The words come from the setup read and every ``GCS_PRESET_STS`` push; nothing is
-        read when this is called. Not read yet, opening no outlet, or failing validation:
-        refused, and nothing is sent.
+        The words are `default_shower_words`'; when there are none, refused with its
+        reason, and nothing is sent.
 
         A whole shower like `async_custom_shower`'s, so it is never built on the valve's
         last report and goes out during a warm-up too. Like every write, it steps aside for
         a Stop asked for after it (`async_stop_shower`).
         """
         requested = self._stop_generation
-        preset = self.gcs_state.presets.get(SHOWER_ON_PRESET_ID)
         try:
-            word1, word2 = preset_words_to_pair(
-                self.model, preset.valve_words if preset is not None else ()
-            )
+            word1, word2 = self.default_shower_words()
         except ValveHexError as err:
             raise HomeAssistantError(
-                f"{self.name}'s default shower (preset {SHOWER_ON_PRESET_ID}) cannot be "
-                f"sent: {err}. Nothing was sent; reload the integration to read it again."
+                f"{self.name} cannot start its default shower (preset "
+                f"{SHOWER_ON_PRESET_ID}), so nothing was sent: {err}."
             ) from err
-        if not any(decode_word(word).outlet_mask for word in (word1, word2)):
-            raise HomeAssistantError(
-                f"{self.name}'s default shower opens no outlet, so nothing was sent. Set "
-                "the default outlets in the Konnect app."
-            )
         async with self._valve_write_lock:
             self._refuse_if_stopped_since(requested)
             _LOGGER.debug(
@@ -3419,6 +3410,28 @@ class Valve:
                 word2,
             )
             await self._async_send_words(word1, word2)
+
+    def default_shower_words(self) -> tuple[str, str]:
+        """The two command words `Shower on` sends: preset 1's stored words, ready to go.
+
+        From the setup read and every ``GCS_PRESET_STS`` push; nothing is read here. Raises
+        `ValveHexError` saying why there are none — preset 1 not reported, holding no word,
+        a word failing validation, or opening no outlet. The reason never names the valve:
+        it is also the diagnostics report's `refused_because`, and a report never copies a
+        name the owner chose. Shared by `async_start_default_shower` and that report, so
+        the report says exactly what the switch would do.
+        """
+        preset = self.gcs_state.presets.get(SHOWER_ON_PRESET_ID)
+        if preset is None:
+            raise ValveHexError(
+                "the valve has not reported it; reloading the integration reads it again"
+            )
+        word1, word2 = preset_words_to_pair(self.model, preset.valve_words)
+        if not any(decode_word(word).outlet_mask for word in (word1, word2)):
+            raise ValveHexError(
+                "it opens no outlet; the default outlets are set in the Konnect app"
+            )
+        return word1, word2
 
     async def async_restart(self) -> None:
         """Reboot the valve — the app's Restart Product. **Stops any running water.**

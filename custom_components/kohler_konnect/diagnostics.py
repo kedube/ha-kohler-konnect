@@ -55,10 +55,12 @@ from .const import (
     DOMAIN,
     OUTLET_TYPE_NAMES,
     PRESET_HIDDEN_IDS,
+    SHOWER_ON_PRESET_ID,
 )
 from .coordinator import Controller, KohlerKonnectCoordinator, Valve
 from .faucet.diagnostics import faucet_report
-from .konnect import AuthError
+from .konnect import AuthError, GcsState
+from .konnect.valve_hex import ValveHexError, decode_word
 
 # Entry.data/options keys whose VALUES are secrets or identity. Everything else in the
 # entry is validation-relevant configuration (model choice, outlet split, units, per-valve
@@ -398,6 +400,59 @@ def _cloud_watch_report(valve: Valve) -> dict[str, Any]:
     return attributes
 
 
+def _default_shower_report(valve: Valve) -> dict[str, Any]:
+    """Preset 1's stored words, and what the `Shower on` switch would send from them now.
+
+    Added in 1.09. From 1.08 the switch sends preset 1's words rather than running the
+    preset, and 1.08's reports could not say whether it would start or refuse: preset 1
+    showed only as a count. `refused_because` is the switch's own reason, from the same
+    `Valve.default_shower_words`; otherwise `would_send` holds each zone's command word and
+    its reading. Outlets are named by the valve's type codes, never by anything the owner
+    chose.
+    """
+    gcs = valve.gcs_state
+    preset = gcs.presets.get(SHOWER_ON_PRESET_ID)
+    report: dict[str, Any] = {
+        "preset_id": SHOWER_ON_PRESET_ID,
+        # As Kohler stores them, `Valve1` first. None when the valve has not reported
+        # preset 1 at all, [] when it reported one with no words.
+        "stored_words": None if preset is None else list(preset.valve_words),
+    }
+    try:
+        words = valve.default_shower_words()
+    except ValveHexError as err:
+        report["refused_because"] = str(err)
+        return report
+    # The model's zones only: a single-zone valve's second word is the unused sentinel.
+    report["would_send"] = {
+        str(zone): _default_shower_zone(gcs, zone, words[zone - 1])
+        for zone in valve.model.zones
+    }
+    return report
+
+
+def _default_shower_zone(gcs: GcsState, zone: int, word: str) -> dict[str, Any]:
+    """One zone of the default shower: the command word, its outlets and setpoints."""
+    decoded = decode_word(word)
+    outlets = []
+    for bit in range(3):
+        if decoded.outlet_mask >> bit & 1:
+            # Each zone owns three `outLetId` slots, whatever the model populates.
+            limits = gcs.outlet_limits.get((zone - 1) * 3 + bit)
+            name = (
+                None
+                if limits is None or limits.outlet_type is None
+                else OUTLET_TYPE_NAMES.get(limits.outlet_type)
+            )
+            outlets.append(name or f"outlet {bit + 1}")
+    return {
+        "word": word,
+        "outlets": outlets,
+        "temperature_celsius": decoded.temperature_celsius,
+        "flow_percent": decoded.flow_percent,
+    }
+
+
 def _valve_report(valve: Valve) -> dict[str, Any]:
     """One valve's state, limits, run-time clocks and warm-up settings."""
     gcs = valve.gcs_state
@@ -446,6 +501,7 @@ def _valve_report(valve: Valve) -> dict[str, Any]:
             "experiences": sum(1 for p in gcs.presets.values() if p.is_experience),
             "empty": sum(1 for p in gcs.presets.values() if p.is_empty),
         },
+        "default_shower": _default_shower_report(valve),
         # Keyed by the device's own 0-based outLetId. Fills in gradually over MQTT
         # and REST; a missing outlet means "never announced", not zero.
         "outlet_limits": {

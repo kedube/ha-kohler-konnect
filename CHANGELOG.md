@@ -11,6 +11,13 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Added**
+
+- **Diagnostics show the valve's default shower.** Each valve's report has a
+  `default_shower` section: the outlets, temperature and flow `Shower on` would start, or why
+  it would refuse. 1.08's reports only counted it among the presets, so they couldn't say
+  whether `Shower on` would work.
+
 ## 1.08 — 2026-10-21
 
 **Fixed**

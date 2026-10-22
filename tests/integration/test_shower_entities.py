@@ -64,6 +64,7 @@ from custom_components.kohler_konnect.const import (
     DOMAIN,
     device_issue_key,
 )
+from custom_components.kohler_konnect.diagnostics import _default_shower_report
 from custom_components.kohler_konnect.konnect.valve_hex import (
     AT_TEMP_BIT,
     VALVE_ERROR_FLAG,
@@ -547,16 +548,50 @@ async def test_shower_on_sends_nothing_without_a_usable_default_shower(
     kohler: ShowerKohler,
     presets: list[dict[str, Any]],
 ) -> None:
-    """Refused rather than guessed at, and never by falling back to running the preset."""
+    """Refused rather than guessed at, and never by falling back to running the preset.
+
+    The diagnostics report gives the same reason, without the valve's name.
+    """
     kohler.gcs_presets = presets
     await setup(hass, config_entry)
 
-    with pytest.raises(HomeAssistantError, match="default shower"):
+    with pytest.raises(HomeAssistantError, match="default shower") as refused:
         await call(hass, SWITCH_DOMAIN, SERVICE_TURN_ON, SHOWER_ON)
 
     assert kohler.sent(SOLO) == []
     assert kohler.sent(CONTROL_PRESET) == []
     assert state(hass, SHOWER_ON).state == STATE_OFF
+    valve = account(hass, config_entry).valves[0]
+    report = _default_shower_report(valve)
+    assert report["refused_because"] in str(refused.value)
+    assert valve.name not in report["refused_because"]
+    assert "would_send" not in report
+
+
+async def test_diagnostics_show_what_shower_on_would_send(
+    hass: HomeAssistant, config_entry: MockConfigEntry, kohler: ShowerKohler
+) -> None:
+    """1.08's reports showed preset 1 only as a count, so they could not say this."""
+    await setup(hass, config_entry)
+
+    report = _default_shower_report(account(hass, config_entry).valves[0])
+
+    assert report == {
+        "preset_id": 1,
+        "stored_words": ["05849C", "000000"],
+        # A single-zone valve: zone 1 only, its outlet named by the valve's type code.
+        "would_send": {
+            "1": {
+                "word": "01849C01",
+                "outlets": ["Rainhead"],
+                "temperature_celsius": 38.8,
+                "flow_percent": 78.0,
+            }
+        },
+    }
+    await call(hass, SWITCH_DOMAIN, SERVICE_TURN_ON, SHOWER_ON)
+    sent = kohler.sent(SOLO)[0]["gcsValveControlModel"]["primaryValve1"]
+    assert sent == report["would_send"]["1"]["word"]
 
 
 async def test_shower_on_follows_the_valve_once_it_reports(

@@ -789,7 +789,7 @@ def preset_words_to_pair(model: ValveModel, words: Sequence[str]) -> tuple[str, 
         if text and text.strip("0"):
             stored[zone] = decode_preset_word(check_preset_word(text))
     if not stored:
-        raise ValveHexError("The preset holds no valve word for any zone")
+        raise ValveHexError("the preset holds no valve word for any zone")
     fallback = stored[min(stored)]
 
     def command(zone: int, prefix: int) -> str:

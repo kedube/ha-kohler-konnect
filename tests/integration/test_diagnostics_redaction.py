@@ -293,12 +293,20 @@ class AccountKohler(FakeKohler):
     def _gcs_presets(self, device_id: str) -> dict[str, Any]:
         return {
             "gcsPresetExperienceDetails": [
+                # The default shower, whose words the report decodes.
+                {
+                    "presetId": "1",
+                    "title": "Default shower",
+                    "isExperience": "False",
+                    "deviceId": device_id,
+                    "valveDetails": [{"valveIndex": "Valve1", "hexString": "05849C"}],
+                },
                 {
                     "presetId": "3",
                     "title": "Kids Bath",
                     "isExperience": "False",
                     "deviceId": device_id,
-                }
+                },
             ]
         }
 
@@ -610,8 +618,12 @@ async def test_names_the_owner_chose_are_counted_not_copied(
     document = await _get_diagnostics_for_config_entry(hass, hass_client, whole_account)
     report = document["data"]
 
-    assert report["valves"][0]["presets"]["slots_seen"] == 1
+    assert report["valves"][0]["presets"]["slots_seen"] == 2
     assert report["controller"]["favorites_count"] == 1
+    # The default shower is described by its words and the valve's outlet types alone.
+    default_shower = report["valves"][0]["default_shower"]
+    assert default_shower["stored_words"] == ["05849C", ""]
+    assert default_shower["would_send"]["1"]["word"] == "01849C01"
 
 
 # --------------------------------------------------------------------------- #

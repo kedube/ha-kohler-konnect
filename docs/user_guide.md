@@ -967,7 +967,9 @@ too.
 ### Diagnostics
 
 Every device page and the integration card have a **Download diagnostics** button, producing
-one redacted JSON report of the whole installation. For raw traffic, see
+one redacted JSON report of the whole installation. Each valve's `default_shower` section says
+what `Shower on` would start — its outlets, temperature and flow — or why it would refuse. For
+raw traffic, see
 [`mqtt/capture_runbook.md`](mqtt/capture_runbook.md) for the full walkthrough.
 
 In short: turn on the **Report Log** switch on a valve or controller page to capture a
