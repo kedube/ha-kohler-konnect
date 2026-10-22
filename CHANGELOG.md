@@ -11,6 +11,14 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+- **Faucet diagnostics count the usage buckets that carry a duration,** so a report shows
+  why the faucet's duration totals read unknown.
+
+**Removed**
+
+- **The `running_minutes` attribute on `Water Used This Month`.** `Duration Used This
+  Month` has the month's running time as a sensor of its own; point templates there.
+
 ## 1.12 — 2026-10-22
 
 **Added**
