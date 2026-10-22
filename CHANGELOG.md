@@ -11,6 +11,8 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+## 1.10 — 2026-10-22
+
 **Fixed**
 
 - **A Report Log with an unreadable saved name no longer starts a new file at every
