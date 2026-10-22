@@ -3,9 +3,9 @@
 Values here are app-global — baked into the Konnect Android app and identical across
 accounts. Nothing in this module is a per-user secret.
 
-Originally recovered from Konnect Android 3.0.1 and re-checked against **3.0.6** (version
-code 260) on 2026-10-07. ``docs/protocol/`` is the developer reference for everything here —
-what each endpoint takes and returns, which facts are app-confirmed and which live-verified.
+Checked against Konnect Android 3.0.6. ``docs/protocol/`` is the developer reference for
+everything here — what each endpoint takes and returns, which facts are app-confirmed and
+which live-verified.
 """
 
 from __future__ import annotations
@@ -15,21 +15,17 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 API_BASE = "https://api-kohler-us.kohler.io"
 
-# The APIM subscription key identifies the app to Kohler's API gateway. It is app-global and
-# stable (verified identical across sessions and accounts), not a per-user credential.
-# api-kohler-us.kohler.io does NOT require mTLS — the client certificate in the APK is only
-# for the alternate *.kohlerkonnect-apim.azure-api.net gateway, which this client never uses.
+# The APIM subscription key identifies the app to Kohler's API gateway: app-global and
+# stable, not a per-user credential. This host needs no mTLS; the APK's client certificate
+# is only for the alternate gateway (`docs/protocol/platform.md` §2).
 APIM_SUBSCRIPTION_KEY = "429ecb1d0b5e4258aa0a2bfadd82a493"
 
 # ---------------------------------------------------------------------------
 # Azure AD B2C auth
 # ---------------------------------------------------------------------------
-# Anthem writes to /commands/* are only accepted for tokens issued by the B2C_1A_signin
-# policy. ROPC-policy tokens get HTTP 403 on them; reads accept either. That is why sign-in
-# drives the custom policy rather than posting a username and password. The Sensate faucet
-# also accepts ROPC tokens for its commands (live, in the old `kohler_sensate`), so the
-# restriction is per product — and one B2C_1A_signin token, which is what the Konnect app
-# itself holds, covers every product.
+# Anthem `/commands/*` accept only tokens from the B2C_1A_signin policy (ROPC tokens get
+# 403; reads accept either), so sign-in drives the custom policy server-side. One such
+# token, as the Konnect app holds, covers every product. See `docs/protocol/platform.md` §1.
 CLIENT_ID = "8caf9530-1d13-48e6-867c-0f082878debc"
 API_RESOURCE = "f5d87f3d-bdeb-4933-ab70-ef56cc343744"
 B2C_TENANT = "konnectkohler.onmicrosoft.com"
@@ -41,17 +37,9 @@ B2C_AUTHORIZE_URL = f"{B2C_AUTHORITY}/oauth2/v2.0/authorize"
 B2C_TOKEN_URL = f"{B2C_AUTHORITY}/oauth2/v2.0/token"
 B2C_SCOPE = f"openid offline_access https://{B2C_TENANT}/{API_RESOURCE}/apiaccess"
 
-# The registered redirect URI. Probed against B2C 2026-08-11: this exact value is accepted
-# and near misses are not (msauth.com.example.fake://auth, msauth.com.kohler.hermoth://other
-# and .../auth/extra all return AADB2C90006), so validation is strict and this is a genuine
-# registration rather than loose scheme matching.
-#
-# The older APK-derived URI "msauth://com.kohler.hermoth/2DuDM2vGmcL4bKPn2xKzKpsy68k%3D" is
-# NO LONGER REGISTERED — B2C rejects it outright. Any flow still using it is broken before
-# the browser is even involved.
-#
-# Nothing ever navigates here. The sign-in runs server-side and reads the code out of the
-# 302 Location header, so the unresolvable custom scheme never reaches a browser.
+# The registered redirect URI, which B2C validates strictly; the older APK-derived
+# `msauth://com.kohler.hermoth/...` is no longer registered. Nothing navigates here:
+# sign-in runs server-side and reads the code from the 302 Location header.
 B2C_REDIRECT_URI = "msauth.com.kohler.hermoth://auth"
 
 # Server-side sign-in endpoints (B2C custom-policy "SelfAsserted" flow).
@@ -63,8 +51,8 @@ B2C_CONFIRMED_URL = f"{B2C_POLICY_BASE}/api/CombinedSigninAndSignup/confirmed"
 ERROR_BAD_CREDENTIALS = "AADB2C90053"
 ERROR_REDIRECT_NOT_REGISTERED = "AADB2C90006"
 
-# B2C rotates the refresh token on every silent refresh; dropping the new one strands the
-# account until the next interactive sign-in. Refresh tokens last up to ~90 days.
+# Seconds before expiry to renew the access token. B2C rotates the refresh token on every
+# refresh; dropping the new one strands the account until the next interactive sign-in.
 TOKEN_EXPIRY_MARGIN_SECONDS = 300
 
 # ---------------------------------------------------------------------------
@@ -77,7 +65,7 @@ TOKEN_EXPIRY_MARGIN_SECONDS = 300
 SKU_GCS = "GCS"
 SKU_HUB = "HUB"
 # The Sensate kitchen faucet, and a second Konnect faucet (almost certainly the Setra) that
-# Konnect 3.0.6 handles identically everywhere. Commands carry the device's own SKU.
+# the app handles identically everywhere. Commands carry the device's own SKU.
 SKU_SENSATE = "SEN"
 SKU_SETRA = "SET"
 FAUCET_SKUS = frozenset({SKU_SENSATE, SKU_SETRA})
@@ -101,40 +89,24 @@ GCS_STATE = f"{DEVICE_API}/gcs-state/{{device_id}}"
 # The valve's settings block — the only source of outlet topology that does not need a
 # controller. Distinct from gcs-configuration, which is null on a controller-attached valve.
 GCS_ADVANCE_STATE = f"{DEVICE_API}/gcs-state/gcsadvancestate/{{device_id}}"
-# The valve's own configuration record. **Not** the source of outlet topology — on a
-# controller-attached valve every structural field comes back null and `GCS_ADVANCE_STATE`
-# above is what to read instead. This is here for `about` (firmware) and to settle whether
-# a GCS-only install populates the rest, which no capture has ever covered.
+# The valve's own configuration record, read for `about` (firmware). Not a topology source:
+# on a controller-attached valve every structural field is null; read `GCS_ADVANCE_STATE`.
 GCS_CONFIGURATION = f"{DEVICE_API}/gcs-configuration/{{device_id}}"
-# Gateway, valve and touch-interface identity — `{gatewayConfigInfo: {firmware, installDate,
-# model, serialNo}, valvesConfigInfo: [{firmware, model, name, serialNo, status}],
-# interfacesConfigInfo: [{firmware, name, status}]}`. A separate route from the plain
-# configuration read (Konnect 3.0.6 `GET_ANTHEM_ABOUT_API`), and the one place serial
-# numbers and model names for each part are published.
+# Per-part identity — gateway, valves and touch interfaces, with models and serial numbers
+# (`docs/protocol/gcs_valve.md` §2).
 GCS_ABOUT = f"{DEVICE_API}/gcs-configuration/{{device_id}}/about"
-# The valve's fault log — `{deviceId, errorDetails: [{errorCode, title, description, details,
-# errorState, isActive, timestamp, valveId, component, area, ...}]}`. The app hides entries
-# whose `errorCode` is `"0"` or empty and shows the server's own text; there is no local
-# code table. Read on demand for diagnostics, never polled.
+# The valve's fault log (`docs/protocol/platform.md` §8). Read on demand for diagnostics,
+# never polled.
 GCS_DIAGNOSTICS = f"{DEVICE_API}/gcs-diagnostics/{{device_id}}"
-# The valve's own experience programs — the catalogue the app offers to add, not the ones
-# stored on this valve (those come back in `gcs-preset` with `isExperience: "True"`).
+# The catalogue of experience programs the app offers to add, not the ones stored on this
+# valve (those come back in `gcs-preset` with `isExperience: "True"`).
 GCS_EXPERIENCE_CATALOGUE = f"{DEVICE_API}/gcs-experience"
-# **Water usage history — the endpoint behind the Konnect app's charts.**
-#
-# `?FromDate=…&ToDate=…&Interval=…` — PascalCase query parameters, unlike every other
-# endpoint. What Konnect 3.0.6 sends (`rg0/t0.java` `b0()`, the view model every device type
-# shares): dates as `MM-dd-yyyy`, and `Interval` as `Day` for its Week and Month tabs and
-# `Month` for its Year tab. **It never sends `WEEK` or `YEAR`**, which is why `WEEK` is refused
-# with a 400 at every range: it is not an interval the server knows. The app builds its week
-# view from seven daily buckets, exactly as `ValveWeeklyWaterSensor` does.
-#
-# This integration sends ISO dates and uppercase `DAY` / `MONTH`, both verified live on the
-# owner's account (2026-09-10/11) — the server accepts either form, so the working request
-# was left alone rather than rewritten to match the app byte for byte.
-#
-# The response also carries per-bucket `averageBlendTemperature` and
-# `numberOfTimesValveSwitchedOn`; see `docs/protocol/platform.md` §Water usage.
+# Water usage history — the endpoint behind the Konnect app's charts. Query parameters are
+# PascalCase: `?FromDate=…&ToDate=…&Interval=…`. The app sends `MM-dd-yyyy` dates and
+# `Day`/`Month`, and never sends `WEEK` (the server refuses it with a 400), so a week is
+# seven daily buckets, as in `ValveWeeklyWaterSensor`. This client sends ISO dates and
+# uppercase `DAY`/`MONTH`, which the server also accepts. See
+# `docs/protocol/platform.md` §6.
 GCS_USAGE = f"{DEVICE_API}/gcs-usage/{{device_id}}"
 
 # Faucets (`SEN`/`SET`). See `docs/protocol/sensate_faucet.md`.
@@ -158,13 +130,9 @@ CUSTOMER_EXPERIENCE = f"{DEVICE_API}/customer-experience/{{tenant_id}}"
 # ---------------------------------------------------------------------------
 # Firmware — /platform/api/v1/firmware/
 # ---------------------------------------------------------------------------
-# `GET …?releasetarget=Public` answers `{currentFirmware, firmware (the latest),
-# firmwareUpdateAvailable, mandatoryUpdate, otaStatus, skip, estimatedTimeForOTA,
-# fileSizeInMb, url, configuration}`. The app decides "update available" from
-# `firmwareUpdateAvailable` alone. A `POST` to the same path without the query starts an
-# install (`{tenantId, firmwareNumber, releaseTarget: "Public"}`); this integration only
-# reads — installing is left to the app, which refuses while water runs or the device is
-# `Disconnected`.
+# Version checks (`docs/protocol/platform.md` §7): "update available" is
+# `firmwareUpdateAvailable` alone. This integration only reads; installing is left to the
+# app.
 GCS_FIRMWARE = f"{FIRMWARE_API}/gcs/{{device_id}}?releasetarget=Public"
 GCS_GATEWAY_FIRMWARE = f"{FIRMWARE_API}/gcs/gateway/{{device_id}}?releasetarget=Public"
 HUB_FIRMWARE = f"{FIRMWARE_API}/hub/{{device_id}}?releasetarget=Public"
@@ -181,28 +149,26 @@ GCS_SOLOWRITESYSTEM = f"{COMMANDS}/gcs/solowritesystem"
 GCS_CONTROL_PRESET = f"{COMMANDS}/gcs/controlpresetorexperience"
 GCS_START_PRESET = f"{COMMANDS}/gcs/startpreset"
 GCS_WRITE_PRESET = f"{COMMANDS}/gcs/writepreset"
-# Whole-record replace of one outlet's configuration — eleven string keys, one call per
-# outlet, chained on success. See `docs/protocol/gcs_valve.md` §2.1, and `GcsDevice.async_write_outlet_config`
-# for the guards this endpoint needs.
+# Whole-record replace of one outlet's configuration, one call per outlet, chained on
+# success (`docs/protocol/gcs_valve.md` §2.1). See `GcsDevice.async_write_outlet_config`
+# for the guards it needs.
 GCS_WRITE_OUTLET_CONFIG = f"{COMMANDS}/gcs/writeoutletconfig"
 GCS_CREATE_PRESET = f"{COMMANDS}/gcs/createpreset"
 GCS_WARMUP = f"{COMMANDS}/gcs/warmup"
-# Restart the valve: `{deviceId, sku, tenantId, reset: "productRestart"}` — the app's
-# Settings → Restart Product, behind "Are you sure you want to restart this product?". The
-# valve reboots, so any running water stops. It cannot revive a valve that has dropped off
-# the cloud: that valve never receives the command.
+# Restart the valve: `{deviceId, sku, tenantId, reset: "productRestart"}`, the app's
+# Settings → Restart Product. Any running water stops. It cannot revive a valve that has
+# dropped off the cloud: that valve never receives the command.
 GCS_VALVE_RESET = f"{COMMANDS}/gcs/valvereset"
 GCS_RESET_RESTART = "productRestart"
 
-# Preset and experience ids share `presetOrExperienceId`. Konnect 3.0.6 treats 1-11 as
-# presets and 17 and up as experiences (`db0/c.java`), and starts **both** with the same
-# `controlpresetorexperience {preset, action}` body.
+# Preset and experience ids share `presetOrExperienceId`: 1-11 are presets and 17 and up
+# experiences, and both start with the same `controlpresetorexperience {preset, action}`.
 GCS_EXPERIENCE_MIN_ID = 17
 
 # HUB: favorite-centric. There is no direct "set outlet/temp/flow now" command —
 # `valvecontrol` and `steamcontrol` take only an on/off toggle and run the controller's own
-# defaults. Konnect 3.0.6 has exactly the nine HUB command paths below plus
-# `hub/factoryreset`; there is no light, music, volume or temperature command anywhere.
+# defaults. The app has exactly the nine HUB command paths below plus `hub/factoryreset`;
+# there is no light, music, volume or temperature command anywhere.
 HUB_VALVE_CONTROL = f"{COMMANDS}/hub/valvecontrol"
 HUB_STEAM_CONTROL = f"{COMMANDS}/hub/steamcontrol"
 HUB_FAVORITE_CONTROL = f"{COMMANDS}/hub/favorite/control"
@@ -212,14 +178,14 @@ HUB_SHOWER_EXPERIENCE = f"{COMMANDS}/hub/shower/experience/control"
 HUB_STEAM_EXPERIENCE = f"{COMMANDS}/hub/steam/experience/control"
 HUB_ICESHOWER_EXPERIENCE = f"{COMMANDS}/hub/iceshower/experience/control"
 
-# All three experience endpoints share one body; the path is chosen by the category the
-# experience came from in the experiences read. Sending a shower experience to the steam
-# path does not work.
 # Faucets: a measured dispense `{deviceId, quantity (litres), sku, tenantId}` and plain
 # water on/off `{action: "ON"|"OFF", deviceId, sku, tenantId}`. Both live-verified.
 FAUCET_DISPENSE = f"{COMMANDS}/faucet/dispense"
 FAUCET_ONOFF = f"{COMMANDS}/faucet/onoff"
 
+# All three HUB experience endpoints share one body; the path is chosen by the category the
+# experience came from in the experiences read. Sending a shower experience to the steam
+# path does not work.
 EXPERIENCE_ENDPOINTS = {
     "showerExperiences": HUB_SHOWER_EXPERIENCE,
     "steamExperiences": HUB_STEAM_EXPERIENCE,
@@ -229,9 +195,9 @@ EXPERIENCE_ENDPOINTS = {
 # ---------------------------------------------------------------------------
 # Response status codes
 # ---------------------------------------------------------------------------
-# Kohler returns these inside the response body, not only as HTTP status. Konnect models
-# `statusCode` as a **string** and translates it only when the HTTP status is 400
-# (`oy0/b.java`), so compare as strings — an int comparison misses `"900"`.
+# Kohler returns these inside the response body, not only as HTTP status. `statusCode` is
+# a string (`docs/protocol/platform.md` §2.1), so compare as strings — an int comparison
+# misses `"900"`.
 STATUS_DEVICE_OFFLINE = "900"
 # Editing a favorite while the system is running is rejected. Activating one is not. The
 # app shows the same text for 901.
@@ -260,21 +226,16 @@ STATUS_MESSAGES = {
 # ---------------------------------------------------------------------------
 # GCS warmup modes
 # ---------------------------------------------------------------------------
-# Warmup is a mode toggle, not a run-now command: the command IS the enable/disable. Once
-# enabled it runs automatically per the chosen mode. The library this replaces sent no
-# warmUp field at all, so the device accepted the request (200) and ignored it.
+# Warm-up is a stored mode, not a run-now command: writing the mode is the enable/disable,
+# and an enabled mode runs by itself. A `warmup` command without a `warmUp` field returns
+# 200 and is ignored. See `docs/protocol/gcs_valve.md` §5.
 WARMUP_DISABLED = "warmUpDisabled"
 WARMUP_ALL_OUTLETS_NOW = "warmUpAllOutletsWithNoStartDelay"
 WARMUP_ALL_OUTLETS = "warmUpAllOutlets"
 WARMUP_SELECTED_OUTLETS_NOW = "warmUpSelectedOutletsWithNoStartDelay"
 WARMUP_SELECTED_OUTLETS = "warmUpSelectedOutlets"
 
-#: The three the **current** Konnect app offers, and the only ones anything should write.
-#: Owner-established 2026-08-20 against the app in their hands. A 2026-08-20 decompile of
-#: Konnect Android 3.0.1 had reported only two — disabled and all-outlets — and called
-#: selected-outlets unverified; this install's own captures settle it, because the valve
-#: held `warmUpSelectedOutletsWithNoStartDelay` three separate times on 2026-08-13 with no
-#: other client in play. **The app moved on; the decompile was of an older build.**
+#: The three modes the current Konnect app writes, and the only ones anything should write.
 WARMUP_MODES_CURRENT = (
     WARMUP_DISABLED,
     WARMUP_ALL_OUTLETS_NOW,
@@ -282,20 +243,11 @@ WARMUP_MODES_CURRENT = (
 )
 
 #: The two delayed-start variants, kept because the firmware still parses them and a valve
-#: could be holding one. **Decodable, not writable**: nothing defines what their delay is —
-#: the app has no control that sets one, and "delay" appears nowhere in its string
-#: resources. See `docs/protocol/gcs_valve.md` §5.
+#: can be holding one. Decodable, not writable: nothing defines what their delay is.
 WARMUP_MODES_LEGACY = (WARMUP_ALL_OUTLETS, WARMUP_SELECTED_OUTLETS)
 
 #: Every value the firmware recognises.
 WARMUP_MODES = WARMUP_MODES_CURRENT + WARMUP_MODES_LEGACY
-
-# Konnect 3.0.6 confirms all of the above (`jc0/o.java`): it writes only the three current
-# modes, reads the delayed pair as plain "enabled", and echoes `delayStart` from the panel's
-# UI config without ever interpreting it. One coupling worth knowing: the app picks the
-# **selected-outlets** mode whenever its selected-outlets option is on **or** the panel's
-# `waterSavingMode` is `Enabled` — so a valve in water-saving mode warms only selected
-# outlets whatever else was chosen.
 
 # warmUpState carries two independent axes: `warmUp` is the mode above, `state` is whether
 # it is running right now.
@@ -310,56 +262,44 @@ MOBILE_SETTINGS = "/platform/api/v1/mobile/settings"
 # ---------------------------------------------------------------------------
 # MQTT — Azure IoT Hub
 # ---------------------------------------------------------------------------
-# Status arrives as direct-method messages. The confirmed write path is HTTPS /commands/*:
-# neither the app nor this client publishes control over MQTT.
-#
-# ⚠️ **The app is not entirely silent, though.** Konnect 3.0.6 (`qy0/a.java`) publishes one
-# device-to-cloud telemetry event every time it connects, on `devices/{id}/messages/events`:
-# `{type: "MOBILECONNECT", sku: "MOBILE", deviceid, tenantid, timestamp, ver: "1.0",
-# protocol: "MQTT", ttl: "5000", durable: "true", simulated: "false"}`. This client does not
-# send it. Whether its absence is what makes a fresh registration silent for the first
-# minute (`MQTT_WARMUP_SECONDS`) is an untested hypothesis — see `docs/protocol/platform.md`.
+# Status arrives as direct-method messages; all writes go over HTTPS `/commands/*`. The
+# app also publishes a `MOBILECONNECT` telemetry event on every connect, which this client
+# does not send (`docs/protocol/platform.md` §4.2).
 MQTT_PORT = 8883
 # Direct methods must be answered here or the service treats them as unhandled.
 MQTT_RESPONSE_TOPIC = "$iothub/methods/res/200/?$rid={rid}"
 
-# ONE topic carries everything. Across 856 messages in 20 capture logs, 100% arrived on
-# `$iothub/methods/POST/ExecuteControlCommand/?$rid=N` and none on any other topic. The
-# device-scoped topics some clients also subscribe to (devices/<id>/messages/events/# and
-# .../devicebound/#) are acknowledged but have never delivered anything.
+# Every message arrives on `$iothub/methods/POST/ExecuteControlCommand/?$rid=N`; the
+# device-scoped topics some clients also subscribe to deliver nothing.
 MQTT_SUBSCRIBE_TOPIC = "$iothub/methods/POST/#"
 
-# A fresh registration receives NOTHING for roughly the first minute, despite a clean
+# A fresh registration receives nothing for roughly the first minute, despite a clean
 # CONNECT and granted SUBACKs. Register once, hold the connection, and treat early silence
-# as meaningless. Reconnecting per command guarantees receiving nothing at all.
+# as meaningless; reconnecting per command receives nothing at all.
 MQTT_WARMUP_SECONDS = 60
 
-# The direct-method subscription is account-level, so a session opened for one device
-# receives messages for both. Filter on payload deviceid and sku.
+# The direct-method subscription is account-level, so a session receives every device's
+# messages. Filter on payload deviceid and sku.
 MSG_GCS_SOLO_STATUS = "GCS_SOLO_STS"
 MSG_GCS_PRESET_STATUS = "GCS_PRESET_STS"
 MSG_GCS_WARMUP_STATUS = "GCS_WARM_STS"
 MSG_GCS_EXPERIENCE_STATUS = "READ_GCS_EXPERIENCE_STS"
 MSG_GCS_OUTLET_CONFIG = "READ_GCS_OUTLET_CONFIG_CFG"
-# One record per touch interface: units, haptics, accessibility, `waterSavingMode`,
-# language… The app writes it back whole via `/commands/gcs/writeuiconfig`; this integration
-# only treats it as a sign of life. Fields are listed in `docs/protocol/gcs_valve.md`.
+# One record per touch interface (`docs/protocol/gcs_valve.md` §6). This integration only
+# treats it as a sign of life.
 MSG_GCS_UI_CONFIG = "READ_GCS_UI_CFG"
 MSG_GCS_REBOOT = "DEVICE_REBOOT_STS"
-# Seen live but **not in Konnect 3.0.6 at all** — nothing in the app handles it, so its shape
-# is known only from captures.
+# Seen live but not handled anywhere in the app, so its shape is known only from captures.
 MSG_FIRMWARE_VERSIONS = "READ_ALL_INTERFACES_FIRMWARE_VERSION_STATUS_INFO"
-# Two the app handles that this integration only records as proof of life:
-# `GCS_DELETE_PROFILE_STS` (`attributes[0].status == "true"` after Remove Product) and
-# `READ_DISPENSED_WATER_VOLUME_STS` (`attributes[0].volume`, a running counter the app's
-# bath-fill setup samples before and after filling — requested via
-# `/commands/gcs/bathfillervolume {index: "0"}`).
+# Two the app handles that this integration only records as proof of life: the Remove
+# Product confirmation and the dispensed-volume counter `bathfillervolume` requests
+# (`docs/protocol/gcs_valve.md` §7-8).
 MSG_GCS_DELETE_PROFILE = "GCS_DELETE_PROFILE_STS"
 MSG_GCS_DISPENSED_VOLUME = "READ_DISPENSED_WATER_VOLUME_STS"
 
-#: `currentSystemState` values. The first two are the only ones ever captured; Konnect 3.0.6
-#: also acts on the last two — `error` (case-insensitive) is a valve fault, and
-#: `FirmwareUpdate` means an update is installing (the app sends the user away from controls).
+#: `currentSystemState` values. Only the first two have been captured; the app also acts
+#: on `error` (case-insensitive; a valve fault) and `FirmwareUpdate` (an install is
+#: running).
 SYSTEM_STATE_NORMAL = "normalOperation"
 SYSTEM_STATE_SHOWER = "showerInProgress"
 SYSTEM_STATE_ERROR = "error"
@@ -371,13 +311,9 @@ MSG_HUB_MUSIC = "MUSIC_STS"
 MSG_HUB_LIGHT = "LIGHT_STS"
 MSG_HUB_FAVORITE = "FAVORITE_STS"
 MSG_HUB_SYSTEM = "SYSTEM_STS"
-# Carries the whole favorites list rather than a delta. Pushed after **every** create,
-# edit, and delete (9 of 9 in the captures) as well as on reboot, so it is the favorite
-# refresh mechanism and no polling is needed.
-#
-# The CREATE_FAVORITE_STS / UPDATE_FAVORITE_STS / DELETE_FAVORITE_STS acknowledgements are
-# deliberately not modelled: each is followed 1-3 s later by this snapshot carrying the full
-# list, so handling them would be work for a delta we are about to receive in full.
+# The whole favorites list, pushed after every create, edit and delete and on reboot, so it
+# is the only favorite refresh needed. The CREATE/UPDATE/DELETE_FAVORITE_STS acks are not
+# modelled: this snapshot follows each of them 1-3 s later.
 MSG_HUB_FAVORITES_SNAPSHOT = "FAVORITES_SNAPSHOT"
 # Experience run state, one code per category — `{code, name, ready, status}` per attribute,
 # where `name` is the experience title and `status` is `ON`/`OFF`.
@@ -401,22 +337,18 @@ MSG_FIRMWARE_INSTALL = "INSTALL_FIRMWARE_STS"
 #: clean is in progress. Please stay out of your shower." Neither ON nor OFF.
 HUB_STEAM_POWERCLEAN = "POWERCLEAN"
 
-#: Device `connectionState` values. Only `Connected` has ever been captured; Konnect 3.0.6
-#: (`mc0/n.java`, `ui/ota/f.java`) uses `Disconnected` as the negative and treats a device as
-#: online unless the value is exactly that.
+#: Device `connectionState` values. Only `Connected` has been captured; the app treats a
+#: device as online unless the value is exactly `Disconnected`
+#: (`docs/protocol/platform.md` §5).
 CONNECTION_CONNECTED = "Connected"
 CONNECTION_DISCONNECTED = "Disconnected"
 
 # ---------------------------------------------------------------------------
 # HUB local LAN API
 # ---------------------------------------------------------------------------
-# Setup, configuration, and diagnostics only — this surface cannot actuate anything on
-# firmware 2.88. water_test_start runs a fixed zone1/outlet1 ~5s plumbing self-test and
-# ignores any temperature/flow/outlet fields. Real control is cloud-side.
-#
-# Konnect 3.0.6 never calls this API itself: it opens the controller's own web page (the
-# "Embedded Server Page") in a WebView, at the address `hub-configuration` publishes as
-# `configuration.about.hub.wlan.ip`. That is also how a client can find the host.
+# Setup, configuration and diagnostics only: this surface cannot actuate anything, so real
+# control is cloud-side. The host is `hub-configuration`'s
+# `configuration.about.hub.wlan.ip`. See `docs/protocol/hub_controller.md` §6.
 LOCAL_API_BASE = "http://{host}/web/api/v1/device"
 LOCAL_LOGIN = "request_user_login"
 LOCAL_COMMAND = "req_update_command"

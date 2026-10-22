@@ -10,7 +10,9 @@ because they come from Gson `@SerializedName` models and Retrofit annotations.
 Value ranges and meanings come from app logic, and the server may accept more
 or less than the app sends. Items marked **live check** still need to be
 confirmed against a real faucet. "Not found in the decompile" means just that;
-the behaviour may still exist server-side.
+the behaviour may still exist server-side. The commands and reads this
+integration uses (`onoff`, `dispense`, `faucet-state`, `faucet-configuration`,
+`customer-experience`) were live-verified by its predecessor, `kohler_sensate`.
 
 Shared mechanics (auth, API base and APIM key, `customer-device`, mobile
 registration, the IoT Hub MQTT transport, the response-body `statusCode` table,
@@ -100,12 +102,17 @@ the same value as the literal paths of R3 and P1. Every model below is under
 | `state.status` | String | `"On"` / `"Off"` (compared case-insensitively). A null status is treated as Off (`bh0/n.java:360-380`). |
 | `state.handleState` | String | `"OPEN"` / `"CLOSED"`. **`CLOSED` disables remote control** (§5.2). |
 | `state.progress` | String | **Firmware download state, not dispense progress.** `"Downloading"` while `Connected` makes the app show "Firmware Upgrade is in progress" and disable controls (`bh0/j.java:367-400` `U2()`; `hh0/n.java:736-752` `l0()`, where a null value defaults to `"Completed"`). |
-| `state.quantity` | Double | Never read by the app. |
+| `state.quantity` | Double | Never read by the app. Present only while a dispense is running (live). |
 | `lastConnected`, `updatedTimestamp`, `createdTimestamp` | Long | Not used by faucet code. |
 | `id`, `deviceId`, `ioTHub`, `lastUpdatedSource`, `deviceConnectionEventSequenceNumber` | String | Declared but not used by faucet code. Values of `lastUpdatedSource` are not found in the decompile. |
 
 After an onoff or dispense, if MQTT is **not** connected, the app re-reads R1
 3 s later (`bh0/n.java` `e0()` uses `sleepTime3sec`; `ah0/r.java:505-519` `c0()` uses `3000L`).
+
+**R1 can lag a command by tens of seconds.** A read 30 s after an `onoff` ON
+still said `Off`; the faucet showed as running about 45 s after the command
+(live). A read just after an ON can equally show `On` from a run that ended
+just before it (inferred). Neither is proof of what the command did.
 
 **R2 `faucet-configuration`.** Model:
 `device/model/configuration/DeviceConfigurationResponse.java`.
@@ -126,6 +133,8 @@ name is PascalCase `DeviceIds`. Response `PresetListResponse`:
 `{ faucetExperienceList: [ FaucetExperienceListModel ] }`, where
 `FaucetExperienceListModel` = `{ id, customerId, deviceId, sku, updatedTimestamp, experience: [ExperienceListModel] }`.
 The app only reads `faucetExperienceList[0].experience` (`zg0/v.java:234` `R()`).
+A 404 is taken to mean "no presets", by analogy with the controller's favorites
+read (inferred; **live check**).
 
 `ExperienceListModel` (`platform/model/preset/ExperienceListModel.java`):
 
@@ -153,7 +162,8 @@ declares `faucetPresetsExperiences`, `recentlyUsedPresetsExperiences`, `dtv…`,
 `lastUsedTime`, `createdTime`, `isExperience`, …).
 **`sensateExperiences` is not read by 3.0.6.** It is declared only in
 `device/anthem/model/AnthemExperienceResponseModel.java:45`, a model that no
-Retrofit method returns.
+Retrofit method returns. The server still returns it, and it still carries
+presets deleted in the app (live).
 
 **R6 `faucet-usage`.** The request format is shared (platform.md); the 3.0.6 app
 sends `MM-dd-yyyy` with `Day`/`Month`. Response `device/model/WaterUsageModel.java`.

@@ -13,6 +13,7 @@ The controller is a Linux box in front of one or two valves. It adds music (with
   - read: `water.zoneN.outlets` is a **count** and `outletState` a 6-slot array;
   - write: `water.zoneN.outlets` is a list of **0-based positions** to open.
 - **Message arrival is not evidence of hardware.** The controller emits `STEAM_STS` and `LIGHT_STS` even on a system where `parts` reports neither (live).
+- `parts` reports the amplifier under `amplifier`; `parts.music` is null (live).
 
 ## 2. Reads
 
@@ -24,10 +25,10 @@ All are under `/devices/api/v1/device-management/`.
 | `hub-configuration/{id}` | `configuration.{parts, zoneone, zonetwo, systemSettings, steamSettings, amplifierSettings, lightSettings[], about, valve1Settings, valve2Settings, systemConfiguration, otaInProgress, …}` — §2.1 | live (parts, zones); app (settings) |
 | `hub-experience/{id}/favorites` | `favorites[] {id, title, isExperience, water, steam, music, light, …}`. **404 when no favorites are saved**, not an empty list | live |
 | `hub-experience/{id}/experiences` | `experiences {showerExperiences[], steamExperiences[], iceShowerExperiences[]}`, each item `{id, title, state, isActive, duration, experienceDurationMinutes/Seconds, description, isExperienceInError}` | app |
-| `hub-diagnostics/{id}` (GET/DELETE), `hub-diagnostics/{id}/active` | Fault log / active faults, see [platform §8](platform.md#8-diagnostics-fault-logs). The DELETE is declared, but no app screen was found to use it; the integration's `Clear Error Log` button sends it, untried on hardware | app |
+| `hub-diagnostics/{id}` (GET/DELETE), `hub-diagnostics/{id}/active` | Fault log / active faults, see [platform §8](platform.md#8-diagnostics-fault-logs). The app shows an active fault as "`<title>` error `<errorCode>` detected". The DELETE is declared, but no app screen was found to use it; the integration's `Clear Error Log` button sends it, untried on hardware | app |
 | `hub-usage/{id}` | See [platform §6](platform.md#6-water-usage). `AnthemHubWaterUsageModel`: buckets in `anthemHubUsageDataDetailsList[] {intervalKey, volume, onDuration, averageBlendTemperature, maximumHotInletTemperature, minimumHotInletTemperature}` — no per-bucket switch-on count. Summary fields are `avg`/`min`/`max` of `Volume`, `OnDuration`, `AverageBlendTemperature`, `MaximumHotInletTemperature` and `MinimumHotInletTemperature`, plus `maxNumberOfTimesValveSwitchedOn`. **The app charts only volume and on-time**; it never displays the inlet temperatures, so their unit is unknown. The water is the same water the valve's `gcs-usage` counts | app |
 
-Favorite names arrive under **two different keys**: REST `title`, MQTT `FAVORITES_SNAPSHOT` `name`. Read both. Favorite ids are **reassigned when a favorite is deleted**, so always resolve by name (live).
+Favorite names arrive under **two different keys**: REST `title`, MQTT `FAVORITES_SNAPSHOT` `name`. Read both. Favorite ids are **reassigned when a favorite is deleted**, so always resolve by name (live). `hub-state` carries no favorite run state, so a missed `FAVORITE_STS` stop is not corrected by any read (inferred).
 
 ### 2.1 `hub-configuration` settings (app, `com/utils/.../configuration/*`)
 
@@ -76,7 +77,7 @@ App rules:
 - Shower and steam cannot run at the same time.
 - Favorites cannot be edited or deleted while running.
 
-Experiences run from zone 1's first outlet ("Experiences will run from the fitting connected to the first port of zone 1").
+Experiences run from zone 1's first outlet ("Experiences will run from the fitting connected to the first port of zone 1"). They carry no outlet or curve data in the API: the program lives in the firmware (app).
 
 ## 4. Favorites
 
@@ -101,7 +102,7 @@ The write schema (app, `…/favorite/updatefavorite/*`):
 - **Temperatures are whole °F on the wire, whatever the account's unit** (app). A Celsius account's entry is converted with `round(c × 1.8 + 32)` before sending (`nc0/z.java` `G0()` → `F()`, at every zone and steam setter). It is converted back only for display.
 - **Unused components are omitted, not nulled.** The app serialises with Gson defaults: `water` only when a zone has outlets, `zone2` only when used, `steam` only when steam is ON, `music` only with an amplifier source, `light` only for active groups. An all-null `music` object fails with HTTP 400 (live).
 - **`water.duration`** is minutes as a string: `"0.5"` and `"0.75"` mean 30 and 45 s, then 1-10, 15, 20, 25, 30, 45, 60, and `"180"` means off (no limit). It defaults to `systemSettings.maxShowerDuration` (180 if missing), and a value above that is refused ("…adjust the Max Shower Duration from the Embedded Server Page"). **Shown only on controller firmware above 2.88.**
-- **Music:** `source` is `Aux` or `SdCard` (no Bluetooth); `songID` and `musicRepeat` are `""`; volume runs 0-100 in steps of 5 and defaults to stereo, then mono, volume.
+- **Music:** `source` is `Aux` or `SdCard` (no Bluetooth); `songID` and `musicRepeat` are `""` (they matter only for Kohler Playlist streaming); volume runs 0-100 in steps of 5 and defaults to stereo, then mono, volume.
 - **Light:**
   - up to 3 groups;
   - `color` is a **display name** from an 11-colour palette: Warm White, Neutral White, Cool White, Red, Orange, Yellow, Green, Light Blue, Blue, Purple, Pink;
@@ -110,7 +111,7 @@ The write schema (app, `…/favorite/updatefavorite/*`):
   - a group with `multiColor=false` is white only.
 - **Bounds:**
   - zone temperature 59 °F to `showerMaxTemperature`;
-  - flow 10-100, editable only when `flowRateEnable == "1"`;
+  - flow 10-100, editable only when `flowRateEnable == "1"` — the controller has no flow of its own and passes it to the valve (inferred);
   - steam temperature 90 °F to `steamSettings.maxTemperature`, timer 1-20.
 - **Limits:** at most **9 favorites**. Names must be non-empty, contain no special characters, and be at most two words (they are used for voice commands).
 - **Lumiwave** `{animation, brightness, color, spray}` appears in `FAVORITES_SNAPSHOT` items, but nothing writes it.
@@ -121,15 +122,17 @@ Dispatch on `data.code`. Accessory messages also carry `favoriteid` and `experie
 
 | Code | Attributes | Notes |
 |---|---|---|
-| `SHOWER_VALVE_STS` | Per zone `{zone\|component, status, outlets[6], temperature, flowrate, errorcode, errorstate}`; `data.showerwarmup` | live. Reports valve-driven sessions only patchily (51 of 95 immediately, 12 late, 32 never; preset-driven sessions never) |
-| `STEAM_STS` | `{status: ON\|OFF\|POWERCLEAN, temperature, starttime, totaltime, errorcode, errorstate, …}`; `data.steamwarmup` | `POWERCLEAN` = "Power clean is in progress. Please stay out of your shower." The app treats a message as default steam only when `favoriteid` and `experienceid` are both `"0"` |
-| `MUSIC_STS` | `{component: amplifier, status, errorcode, errorstate}` | On/off only (live) |
-| `LIGHT_STS` | `{component: lightgroupA\|B\|C, name, status, state {brightness, colorinfo {color, hue, saturation}, colortemperature}, errorstate, errorcode}` | **One group per message**; the app reads only the first attribute. On the reference system it arrives with an empty array (no lights) |
-| `FAVORITE_STS` | `{id, name, status}` | The favorite's own run state. Start and stop carry the same id and differ only in `status` (live) |
-| `FAVORITES_SNAPSHOT` | The whole favorites list (`name`, not `title`) | Pushed after every create, edit and delete, and on reboot (live) |
+| `SHOWER_VALVE_STS` | Per zone `{zone\|component, status, outlets[6], temperature, flowrate, errorcode, errorstate}`; `data.showerwarmup` | live. Reports valve-driven sessions only patchily (51 of 95 immediately, 12 late, 32 never; preset-driven sessions never, and three preset openings published `OFF` while water ran). When it does, it trails the valve's word by 0.3–2 s, up to about 5 s; once 176.77 s with no valve message at all. Per-zone `status` is only `ON` or `OFF`: the controller has no pause (466 messages). `temperature` is °F on a Fahrenheit account (live); on a Celsius account it is uncaptured, so this integration places a reading by range — above 50 it can only be °F. `showerwarmup` is `"0"`/`"1"`, null on non-shower messages; it was set 9 times, always with both zones `ON`, and never at the same moment as the valve's own `warmUpStatus` (0 of 80) |
+| `STEAM_STS` | `{status: ON\|OFF\|POWERCLEAN, temperature, starttime, totaltime, errorcode, errorstate, …}`; `data.steamwarmup` | `POWERCLEAN` = "Power clean is in progress. Please stay out of your shower." `temperature` is °F (app). The app treats a message as default steam only when `favoriteid` and `experienceid` are both `"0"` |
+| `MUSIC_STS` | `{component: amplifier, status, errorcode, errorstate}` | On/off only (live). A favorite without music never appears here (live) |
+| `LIGHT_STS` | `{component: lightgroupA\|B\|C, name, status, state {brightness, colorinfo {color, hue, saturation}, colortemperature}, errorstate, errorcode}` | **One group per message**; the app reads only the first attribute. On the reference system it arrives with an empty array (no lights). MQTT names a group by letter where REST may use its display name (inferred) |
+| `FAVORITE_STS` | `{id, name, status}` | The favorite's own run state. Start and stop carry the same id and differ only in `status` (live). Arrives about 1.5 s after `favorite/control`, often after unrelated `STEAM_STS` or `MUSIC_STS`; an accessory message's `favoriteid` drops to `"0"` about 0.6 s before the `OFF` (live) |
+| `FAVORITES_SNAPSHOT` | The whole favorites list (`name`, not `title`) | Pushed after every create, edit and delete, and on reboot (live). Items carry no `isExperience`, unlike the REST list. After the last favorite is deleted it arrives with `attributes: []` (live) |
 | `CREATE_FAVORITE_STS`, `UPDATE_FAVORITE_STS`, `DELETE_FAVORITE_STS` | ack | The app refetches only on create; the snapshot follows 1-3 s later (live) |
 | `SHOWER_EXP_STS`, `STEAM_EXP_STS`, `ICE_SHOWER_EXP_STS` | `{code, name (title), ready, status}` | Experience run state (app) |
 | `SYSTEM_STS`, `STATUS_SNAPSHOT`, `LUMIWAVE_STS`, `*_EXP_SNAPSHOT` | — | The app ignores them; they are still proof of life |
+
+**Card-set bursts.** During favorite activity the controller republishes its whole card set — `MUSIC_STS`, `SHOWER_VALVE_STS`, `STEAM_STS`, `FAVORITE_STS`, `LIGHT_STS` — within one second, and every `SHOWER_VALVE_STS` in such a burst reads all zones `OFF` with no valve action behind it (live). Don't read those as a stop.
 
 ## 6. Local LAN API
 
@@ -137,7 +140,7 @@ The controller serves a web UI and an API at `http://{host}/web/api/v1/device` (
 - It handles setup, configuration and diagnostics only, and **cannot actuate anything**. `water_test_start` runs a fixed ~5 s self-test on zone 1, outlet 1.
 - Login uses a short-lived JWT obtained from a PIN. The PIN is encrypted as `base64(RSA_PKCS1v15(sha256(pin).hexdigest_ascii))` with a public key baked into the hub's Angular bundle (see `konnect/const.py`).
 - Some endpoints answer with no token at all, including two that change state: `set_hub_datetime` and the date config.
-- **Signed-in use of the web UI writes the valve's warmup mode to disabled** (live).
+- **Signed-in use of the web UI writes the valve's warmup mode to disabled** (live, reproduced six times in one day). A PIN sign-in alone is enough, as is an SD-card music scan. The value is a constant in the controller's login/UI routine, not a stored setting: no controller surface holds it, and `get_valve_settings.warmupmode` read `on` during the very logins that pushed the disable. On MQTT the disable is followed by the controller's five-snapshot burst at +2.6–3.2 s and `READ_GCS_EXPERIENCE_STS` at +4.7–5.0 s; the write itself never appears.
 
 Konnect 3.0.6 never calls this API. It opens the controller's page (the "Embedded Server Page") in a WebView at `hub-configuration` `about.hub.wlan.ip`, which is also how a client can find the host. BLE is used only for Wi-Fi provisioning.
 

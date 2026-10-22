@@ -1,25 +1,14 @@
-"""Firmware update entities — installed version, latest version, and whether to update.
+"""Firmware update entities: installed version, latest version, and whether to update.
 
-**Read-only.** Each entity shows what Kohler's firmware endpoint reports for one part —
-``/platform/api/v1/firmware/{gcs|gcs/gateway|hub}/{id}?releasetarget=Public`` — and offers
-no Install button. Installing stays with the Konnect app, which refuses while water runs or
-the device is ``Disconnected`` and walks the owner through an install that can take up to
-two hours; a Home Assistant button that skipped all of that would be the wrong trade for a
-once-a-year action.
+Read-only. Each entity reports Kohler's firmware check for one part (``gcs``,
+``gcs/gateway`` or ``hub``) and offers no Install: installing stays with the Konnect
+app, which refuses while water runs or the device is offline and supervises an install
+that can take up to two hours. "Update available" comes from ``firmwareUpdateAvailable``
+alone, as in the app. Checked every `FIRMWARE_CHECK_INTERVAL`; nothing pushes a release.
+See `docs/protocol/platform.md` §7.
 
-Recovered from Konnect 3.0.6 on 2026-10-07: the response is ``{currentFirmware, firmware
-(the latest), firmwareUpdateAvailable, mandatoryUpdate, otaStatus, skip, ...}``, and the app
-decides "update available" from ``firmwareUpdateAvailable`` alone, which is what this does.
-Read twice a day (`FIRMWARE_CHECK_INTERVAL`) — nothing pushes a release.
-
-Never seen reporting an available update on the reference system, which has been current
-throughout.
-
-**Named "… Firmware Status", not "… Firmware".** The version numbers themselves are the
-diagnostic sensors `Interface Firmware`, `Valve Firmware` and `Gateway Firmware`; these
-entities answer "is there an update", and a shared name put two `Gateway Firmware` rows on
-one device page. Renamed 2026-10-08. Unique ids are unchanged, and an existing entity keeps
-its entity id.
+Named "… Firmware Status" so they don't share a name with the `… Firmware` diagnostic
+sensors that carry the version numbers.
 """
 
 from __future__ import annotations
@@ -68,12 +57,7 @@ class _FirmwareMixin:
 
     @property
     def entity_picture(self) -> str | None:
-        """None, so the frontend shows icons rather than the integration's brand image.
-
-        `UpdateEntity` returns the brand image by default, and a picture always wins over
-        an icon. Without it the update domain's own icons apply, and they follow the state:
-        `mdi:package` when current, `mdi:package-up` when an update is available.
-        """
+        """None, so the update domain's state icons show instead of the brand image."""
         return None
 
     @property
@@ -82,11 +66,10 @@ class _FirmwareMixin:
 
     @property
     def latest_version(self) -> str | None:
-        """The release on offer when one is, else the installed version.
+        """The offered release when the cloud reports an update, else the installed one.
 
-        Home Assistant shows "update available" whenever the two differ, so the latest
-        version is reported only when the cloud says an update is available — a newer
-        number on a release the cloud is not offering to this device is not an update.
+        Home Assistant shows an update whenever the two differ, so a newer number the
+        cloud is not offering this device must not appear here.
         """
         info = self._info()
         installed = self.installed_version
@@ -118,8 +101,8 @@ class ValveFirmwareUpdate(_FirmwareMixin, KohlerValveEntity, UpdateEntity):
         else:
             self._attr_name = "Firmware Status"
             self._attr_unique_id = f"{self._device_id}_firmware_update"
-            # Without the feature Home Assistant never reads `in_progress`. Only the valve's
-            # own firmware has a source for it; the gateway's does not.
+            # Without the feature Home Assistant never reads `in_progress`, which only
+            # the valve's own firmware has a source for.
             self._attr_supported_features = UpdateEntityFeature.PROGRESS
 
     def _info(self) -> dict[str, Any]:

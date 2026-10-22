@@ -17,7 +17,8 @@ The command word is documented byte by byte in [../gcs/valve_hex.md](../gcs/valv
 
 - **A "zone" is a valve body's half.** Zone 1 is `primaryValve1` and zone 2 is `secondaryValve1`. Each carries its own temperature, flow and three outlet bits.
 - **How a valve gets into the app.** Only the first-generation touchscreen `K-28214`, plugged into the valve, adds a GCS valve to the Konnect app. The Anthem Plus screen `K-28214-ASC` plugs into the controller and adds only the HUB. Both can be on one valve at once, which is how an account ends up with a GCS and a HUB for one shower (live).
-- **Topology source.** Read `gcs-state/gcsadvancestate` → `setting.valveSettings[]`, one entry per valve slot: `valve` names it (`Valve1`, `Valve2`, …) and `noOfOutlets` is its outlet count. `Valve1` and `Valve2` give the split (works without a controller, live). Each entry's `outletConfigurations[]` holds that valve's outlet records (§1.1, §2.1). `gcs-configuration`'s structural fields are null on a controller-attached valve.
+- **Topology source.** Read `gcs-state/gcsadvancestate` → `setting.valveSettings[]`, one entry per valve slot: `valve` names it (`Valve1`, `Valve2`, …) and `noOfOutlets` is its outlet count. `Valve1` and `Valve2` give the split (works without a controller, live). Each entry's `outletConfigurations[]` holds that valve's outlet records (§1.1, §2.1). `setting.outlets`, a total beside `valveSettings`, was null on a tested valve while the per-valve counts were right (live).
+- **`gcs-configuration` carries no topology.** Its structural fields (`zoneone`, `zonetwo`, `parts`, `valve1Settings`, `valve2Settings`, `systemConfiguration`, `systemSettings`) are null on a controller-attached valve and on the controller-free K-28210 pair alike; only `about` and `firmwareOTADetails` carry data (live).
 - **All eight slots are listed**, the unpopulated ones with `noOfOutlets` 0, so a single-zone valve reports `Valve2` as 0. This integration relies on that: a `Valve2` entry that is missing, or whose count is not a whole number, fails detection rather than meaning one zone (`konnect/topology.py`).
 
 ### 1.1 `outLetId` and outlet bits
@@ -61,9 +62,9 @@ All are under `/devices/api/v1/device-management/`.
 
 | Route | Returns | Notes |
 |---|---|---|
-| `gcs-state/{id}` | `state.valve1/valve2 {out1..out3, temperatureSetpoint (°C), flowSetpoint (0-50), pauseFlag}`, `warmUpState {warmUp, state}`, `currentSystemState`, `presetOrExperienceId`, `totalVolume`, `totalFlow` | Seeds state at setup (live). `totalFlow` is **not** a water meter: it cycles among values 4× apart (live). Konnect 3.0.6 no longer calls this route |
+| `gcs-state/{id}` | `state.valve1/valve2 {out1..out3, temperatureSetpoint (°C), flowSetpoint (0-50), pauseFlag}`, `warmUpState {warmUp, state}`, `currentSystemState`, `presetOrExperienceId`, `totalVolume`, `totalFlow` | Seeds state at setup (live). Also carries a top-level `connectionState` (live). `totalFlow` is **not** a water meter: it cycles among values 4× apart (live). `totalVolume` changes erratically, is not a monotonic counter, and its unit is unknown (live). Konnect 3.0.6 no longer calls this route |
 | `gcs-state/gcsadvancestate/{id}` | Top level: `connectionState`, `lastConnected`, `firmwareUpdate`, `firmwareVersionInfo`. `state.{rebootStatus, ready, ioTActive, bleConnected, blePairing, …}`. `setting.{valveSettings[], uiConfig[], eco{ecoMode, ecoTimeLimit, flowRate}, flowControl, gcsDateTime, interfaceFirmwareTypeVersion, …}` | **The** settings source: topology, outlet records and UI config (live) |
-| `gcs-configuration/{id}` | `configuration.about {uI2, primaryValve, secondaryValve1, gateway}` each `{firmware, assetsFirmware}`; top-level `about.firmware {version, latestVersion}`; `otaReportedProperties`; `firmwareUpdate {progress, progressPercent, status, version, …}`; `createdTime` | Firmware per part (live). `about` nests under `configuration` on some accounts and sits at the top on others |
+| `gcs-configuration/{id}` | `configuration.about {uI2, primaryValve, secondaryValve1, gateway}` each `{firmware, assetsFirmware}`; top-level `about.firmware {version, latestVersion}`; `otaReportedProperties`; `firmwareUpdate {progress, progressPercent, status, version, …}`; `createdTime` | Firmware per part (live). `about` nests under `configuration` on some accounts and sits at the top on others. `createdTime` is the cloud registration date, not an install date, sent as ISO-8601 or epoch (live). A top-level `iot` block holds the device's IoT Hub connection details: treat it as a secret (live) |
 | `gcs-configuration/{id}/about` | `gatewayConfigInfo {firmware, installDate, model, serialNo}`, `valvesConfigInfo[] {firmware, model, name, serialNo, status}`, `interfacesConfigInfo[] {firmware, name, status}` | Per-part identity (app) |
 | `gcs-preset/{id}` | `gcsPresetExperienceDetails[] {presetId, title\|logicalName, isExperience ("True"/"False"), time, volume, valveDetails[{valveIndex: "Valve1", hexString}]}` | Ten preset slots plus experiences (live) |
 | `gcs-diagnostics/{id}` | Fault log, see [platform §8](platform.md#8-diagnostics-fault-logs). `DELETE` clears it — the integration's `Clear Error Log` button | app |
@@ -83,8 +84,11 @@ All are under `/devices/api/v1/device-management/`.
 **The write is a whole-record replace** (live): twelve string keys, one call per outlet, each sent after the previous one succeeds.
 - Omitting a key, or sending the read spelling, makes Gson drop it. The API still returns 201, and the field silently takes a server default.
 - One of these fields is the **scald limit**.
-- The app sends `maxVolume: "0"` and `purge: ""` (newer screens), and forces `minimumOutletTemperature = 150` and `minimumFlowrate = 16`. Flow is ×4 rounded; temperature is ×10 truncated, with 49.0 clamped to 488 (app).
+- The app sends `maxVolume: "0"` and `purge: ""` (newer screens), and forces `minimumOutletTemperature = 150` and `minimumFlowrate = 16`. Flow is ×4 rounded; temperature is ×10 truncated, with 49.0 clamped to 488 (app). `maxVolume` is probably the bath-fill volume limit (inferred).
 - `outLetFlags` is echoed back and never interpreted (`1` everywhere); the app defaults it to `"1"` (app).
+- The app offers Max and Default Temperature as one setting each and writes it to every outlet's record, with no read-back afterwards (app).
+- **`gcsadvancestate` lags a write.** A read about 1 s after the 201 still shows the old value; the change appeared within 25 s (live).
+- With flow control off at the fixture, an outlet reports its minimum flow equal to its maximum (inferred).
 
 ## 3. Commands
 
@@ -93,7 +97,7 @@ All are under `/platform/api/v1/commands/gcs/`. Every body starts `{deviceId, sk
 | Verb | Body (beyond the common three) | Effect | Confidence |
 |---|---|---|---|
 | `solowritesystem` | `gcsValveControlModel {primaryValve1, secondaryValve1, secondaryValve2..7}` | **The** direct write. The single-valve `secondaryValve1` is `"00000000"`; slots 2-7 are `""` (newer screens) or `"00000000"` | live |
-| `controlpresetorexperience` | `preset: "<id>", action: "On"\|"Off"` | Starts or stops a preset **or an experience** by itself; no valve write follows. ⚠️ `presetOrExperienceId` in this body is accepted and then ignored | live (presets), app (experiences) |
+| `controlpresetorexperience` | `preset: "<id>", action: "On"\|"Off"` | Starts or stops a preset **or an experience** by itself; no valve write follows. A preset applies only the zones it opens an outlet on; a zone at mask `0x00` keeps its setpoint (inferred). ⚠️ `presetOrExperienceId` in this body is accepted and then ignored | live (presets, starting an experience), app (stopping an experience) |
 | `startpreset` | `presetOrExperienceId` | The older screens' start | app |
 | `createpreset` | Flat: `name, time, volume: "0", valve1..valve8` (3-byte preset words; `"000000"` for unused) | Fills the lowest free slot | app |
 | `writepreset` | `gcsPresetControlModel {presetId, name, time, volume: "0", valve1..valve8}` | **Whole-record replace.** Delete = name `""`, time `"0"`, all words `"000000"`. Posting to `createpreset`, omitting the wrapper, or sending 4-byte words all silently do nothing | live |
@@ -114,18 +118,19 @@ All are under `/platform/api/v1/commands/gcs/`. Every body starts `{deviceId, sk
 | Open outlets | `solowritesystem` with the full words: outlet bits, temperature and flow for both zones | live |
 | Stop | **The app writes byte 3 = `0x40`**: the pause bit, no outlets, bit 7 clear. It sets the per-valve pause bit and zeroes the outlets (`db0/c.java`; the older screens do the same) | app |
 | Stop, `0x00` | Mask `0x00` with a valid prefix also stops. The Anthem Plus controller stops this way, and so does this integration: a `0x00` stop can never be mistaken for the valve's own run-time cutoff, which pauses with `0x40` (§4.1) | live |
-| Broken stop | An all-zero `primaryValve1` is **ignored** — the "can turn on but never off" bug in other libraries. It is the whole word that is inert, not its `0x00` first byte: every valve-1 word below 25.6 °C starts `0x00` too (full cold is `0000C8xx`) | live |
-| Full cold | Temperature `0` °C: the valve stops mixing in hot water. The app's slider has a `COLD` stop one below the minimum that sends this | app + live |
+| Broken stop | An all-zero `primaryValve1` is **ignored** — the "can turn on but never off" bug in other libraries. It is the whole word that is inert, not its `0x00` first byte: every valve-1 word below 25.6 °C starts `0x00` too (full cold is `0000C8xx`). On a two-valve system it voids the **whole** command: `v1=00000000 v2=11849C01` opened nothing, while `v1=0185C800 v2=1185C801` (valve 1 addressed and closed) opened valve 2. A zone that should stay shut therefore gets an addressed word with mask `0x00` | live |
+| Full cold | Temperature `0` °C: the valve stops mixing in hot water. The app's slider has a `COLD` stop one below the minimum that sends this. It does not make freezing water: the cold supply bottomed out near 60 °F while the setpoint read 32 °F | app + live |
 
 ### 3.2 Word details the app adds to valve_hex.md
 
-- **°F setpoints use a lookup table, not arithmetic.** The table covers 59–122 °F and is unchanged from 3.0.1 to 3.0.6 (`db0/c.java` `A()`). Celsius sends whole degrees ×10. Outside the table the app sends 0.
+- **°F setpoints use a lookup table, not arithmetic.** The table covers 59–122 °F and is unchanged from 3.0.1 to 3.0.6 (`db0/c.java` `A()`). Celsius sends whole degrees ×10. Outside the table the app sends 0. The table differs from arithmetic at 16 entries — 87, 89, 91, 93, 96, 98, 100, 102, 105, 107, 109, 111, 114, 116, 118 and 120 °F — which is what makes the app's display rounding, whole °F as `round(c × 1.8 + 32)` half-up, round-trip (app).
 - **Byte 3 bit 7** (`skipWarmUp` on write) is set only by **bath fill** (§8). Its read meaning is `errorFlag`.
 - **Decode** (`db0/c.java` `C()`):
   - temperature high bits `0x03`, atFlow `0x08`, atTemp `0x04` (byte 0);
   - flow = byte 2 / 4 (setpoint scale);
   - error `0x80` and pause `0x40` (byte 3);
-  - measured temperature in bytes 4-5, measured flow in byte 6 (raw), error code in byte 7.
+  - measured temperature in bytes 4-5, measured flow in byte 6 (raw), error code in byte 7. The app writes the same measurement to all three per-outlet sub-objects (one reading per valve), and byte 4's upper six bits are unused.
+- Words arrive over MQTT as lowercase hex (live).
 
 ### 3.3 Preset words and temperatures
 
@@ -141,7 +146,8 @@ All are under `/platform/api/v1/commands/gcs/`. Every body starts `{deviceId, sk
 Most of this was established by the [kohler-anthem-plus](https://github.com/frozenmartini/kohler-anthem-plus) project (its 0.4.7, 2026-10-19, `docs/gcs/api.md`, "Preset 1 is a stored template"); "live" below means live on that project's hardware unless it says otherwise.
 
 - **Preset 1 is a stored template, not a scene Kohler runs.** The valve has no place of its own for its default outlets, so the setup wizard keeps them, with the default temperature and flow, in preset 1 "Default shower". Every client hides it from its preset lists (`p315jj/h.java:1913-1918`, Konnect 3.0.1) (app).
-- **Starting the default shower sends preset 1's words as a direct write.** The app defaults its start screen to preset `"1"` (`Pi/A.java:472`) and builds a `solowritesystem` from preset 1's outlets plus the on-screen temperature and flow (`Pi/A.java:787`) (app, 3.0.1). Simple Start on the valve's card, pressed 2026-10-19: `presetOrExperienceId` `0` throughout, warm-up first, then exactly preset 1's outlets (`Valve1 0184c8` none, `Valve2 0584c8` outlet 1) (live). Not yet captured on this integration's own reference install.
+- **Starting the default shower sends preset 1's words as a direct write.** The app defaults its start screen to preset `"1"` (`Pi/A.java:472`) and builds a `solowritesystem` from preset 1's outlets plus the on-screen temperature and flow (`Pi/A.java:787`) (app, 3.0.1). Simple Start on the valve's card, pressed 2026-10-19: `presetOrExperienceId` `0` throughout, warm-up first, then exactly preset 1's outlets (`Valve1 0184c8` none, `Valve2 0584c8` outlet 1) (live).
+- **Confirmed on this integration's controller-free K-28210 pair, 2026-10-22.** On one valve, Simple Start, the touchscreen's own start and `Shower on` each reported `01893502` — Showerhead, 39.3 °C, flow `0x35` (26.5 %), `presetOrExperienceId` `0` — byte for byte. So whatever the decompile's "on-screen flow" is, here it is preset 1's stored flow, not a fixed 100 % (live). About two minutes after each session ended, both valves reset their idle word to the default temperature and the default shower's flow (`0x35`, and `0x31` on the valve whose preset 1 holds `0x30`) — the stable idle bytes `GcsState.flow_is_live` warns about (live).
 - **So preset 1's `time` is never used.** It holds Kohler's `1800`. It only ends a shower when preset 1 is *run as a preset* (`controlpresetorexperience {preset: "1"}`): two such runs on 2026-08-17 paused at 30:00 with every outlet at `maximumRunTime` 3600 (live).
 - **The app rewrites preset 1 on every default change.** Setting the default temperature to 103 °F rewrote its words (`0189c8` / `0589c8`) and its `time` to `1800`, replacing a stored `3600` (live, 2026-10-19). Only a temperature change was tested.
 - **What this integration does since 1.08:** reads preset 1's words from `gcs-preset` and from every `GCS_PRESET_STS` push, and the `Shower on` switch sends them as one `solowritesystem`. A zone the preset opens nothing on goes as an addressed word with mask `0x00` (§3.1), and a word failing the scald check refuses the whole start. It never activates or writes preset 1, so `presetOrExperienceId` stays `0` and only `maximumRunTime` ends that shower.
@@ -153,11 +159,13 @@ Most of this was established by the [kohler-anthem-plus](https://github.com/froz
 |---|---|---|
 | Max Temperature (scald limit) | 33-48 °C, shown as 92-118 °F (newer screens); 95-120 °F (older) | A **setting**, not a hardware limit; seen changing 450 → 477 tenths live |
 | Default Temperature | 59 °F / 15 °C up to the current max | |
-| Zone temperature slider | `COLD` (min − 1, sends 0), then the minimum (59 °F) up to the current `maximumOutletTemperature` | `qa0/p.java` |
-| Flow | Max-flow setting 5-50 setpoint (20-200 bytes); default flow minimum 4 setpoint (16 bytes); shown as a % of max | `0x10`-`0xC8` on the wire |
-| Max Shower Duration | 15, 20, 25, 30, 45, 60 min (newer); 15-30 (older); written as minutes × 60 | 3.0.1 misread anything above 30 min as 25; fixed in 3.0.5 |
+| Zone temperature slider | `COLD` (min − 1, sends 0), then the minimum (59 °F) up to the current `maximumOutletTemperature`, taken from each valve's first outlet (`outletConfigurations[0]`) | `qa0/p.java`, `db0/c.java` `n0()` |
+| Flow | Max-flow setting 5-50 setpoint (20-200 bytes); default flow minimum 4 setpoint (16 bytes); shown as a % of max. Each zone's slider is bounded by its valve's first outlet's min and max; percent is `value × 100 / maximumFlowrate` (`jj.h$a.X`), the inverse rounded; the encoder, `round(setpoint × 4)`, has no clamp of its own | `0x10`-`0xC8` on the wire |
+| Max Shower Duration | 15, 20, 25, 30, 45, 60 min (newer); 15-30 (older); written as minutes × 60 | 3.0.1 misread anything above 30 min as 25; fixed in 3.0.5. `3600` is live-verified writable; 35, 40, 50 and 55 min are untested |
 
 `deviceconfig.properties` in the APK (`maxFahrenheitValve2 = 100`, and so on) holds placeholders that GCS code never reads. The app overwrites them with the valve's own `maximumOutletTemperature`.
+
+**Flow bytes written directly are kept.** 74 and 100 were sent with one to three outlets open; the echo matched exactly and the other zone was untouched (live). The first-generation touchscreen instead rewrites both zones' flow whenever its flow panel opens, with linked-zone scaling and its own ceiling: the same outlets topped out at 200 in one session and 69 in another (live).
 
 ### 4.1 Run-time limit
 
@@ -187,7 +195,20 @@ How the valve's Max Shower Duration (`maximumRunTime`) actually ends a shower. A
 - `warmUpState.state` reports whether warmup is running now: `warmUpInProgress` / `warmUpNotInProgress`. ⚠️ "NotInProgress" ends with "InProgress", so compare the whole value.
 - The app picks **selected outlets** whenever its selected-outlets option is on **or** `uiConfig.waterSavingMode == "Enabled"` (app, `jc0/o.java`). Water-saving mode therefore forces selected-outlet warmup.
 - The app writes `warmUpDisabled` before it customises outlets.
-- An Anthem Plus controller's web UI writes `warmUpDisabled` on every signed-in use (live). See `warmup_manager.py`.
+- The app won't change the mode while any outlet on either valve is on: it reverts its own control without calling the API. Whether the valve enforces this is untested (app).
+- An Anthem Plus controller's web UI writes `warmUpDisabled` on every signed-in use (live). About a minute of configuration re-sync (outlet configs, presets, experience snapshots) comes before it, and the controller's `SYSTEM_STS: SYSTEM_READY` lands 7–9 s after the disable (live). No spontaneous disable has been seen on a controller-free account; after a reboot the valve can restate `warmUpDisabled` without the mode having changed (live).
+
+**Writing the mode** (live):
+- After a `warmup` 200, `gcs-state` still returns the old mode until about 3 s later, and the valve's `GCS_WARM_STS` echo arrives about 3.4 s after the write, so a read-back has to retry.
+- The cloud accepts a write (200) that the valve ignores while warm-up is disabled at the fixture itself (inferred from the read-back).
+- The mode survives a power cycle; the valve re-announces it with `GCS_WARM_STS` about 4 s after boot. It doesn't announce it when a client connects: across 74 captures the first `GCS_WARM_STS` came between 137 s and 7 h in, so read the mode over REST.
+- A valve can report no mode at all — no `warmUpState` in `gcs-state` and no `GCS_WARM_STS` — as both valves of the controller-free K-28210 pair did. A write to such a valve returns 200 and may be ignored.
+
+**How a warm-up runs** (live, 31 natural endings):
+- With warm-up enabled, any write that opens an outlet first runs the warm-up set. The valve's first report comes 1.1–2.1 s after the REST call returns and already carries `warmUpStatus`. The longest warm-up measured was 69 s.
+- **While warming up, the valve reports the warm-up's outlets** — every outlet of its warm-up set (`0x07`, `0x03`) — not the shower's. A write during the warm-up moves the warm-up onto the outlets that write names, so a change built from the reported mask turns the warm-up into a shower on every warm-up outlet.
+- When the water is warm the valve **pauses for two minutes**: `0x40` on both zones, outlets cleared. Outlets picked at the wall during the pause continue the session; otherwise it ends. The pause follows `warmUpStatus` clearing within 0.2 s, sometimes after one transitional report that still shows all or part of the warm-up set.
+- A warm-up restarted from the wall showed as a plain `0x00` stop, with a new warm-up 14 s later (one observation).
 
 ## 6. Touch-panel UI config
 
@@ -215,7 +236,7 @@ Dispatch on `data.code` (see [platform §4.3](platform.md#43-message-envelope)).
 
 | Code | Attributes | Notes |
 |---|---|---|
-| `GCS_SOLO_STS` | `primaryValve1`, `secondaryValve1` (16-hex words); `currentSystemState`; `presetOrExperienceId`; `warmUpStatus`; `totalFlow`, `totalVolume`; `firmwareUpdate`, `BLEPairing`, `BLEConnected`, `IoTActive`, `IoTProvision`; `configChangeIndent` | The live valve word (live). `presetOrExperienceId` latches for the session, is cleared by pause **and** stop, and is never set during warmup |
+| `GCS_SOLO_STS` | `primaryValve1`, `secondaryValve1` (16-hex words); `currentSystemState`; `presetOrExperienceId`; `warmUpStatus`; `totalFlow`, `totalVolume`; `firmwareUpdate`, `BLEPairing`, `BLEConnected`, `IoTActive`, `IoTProvision`; `configChangeIndent` | The live valve word (live). `presetOrExperienceId` latches for the session, is cleared by pause **and** stop, and is never set during warmup — a preset started during a warm-up never shows its id, since the warm-up's end pauses the valve (all 12 `warmUpInProgress` samples carried `0`). `IoTActive` read `Active` in 1020 of 1020 samples: a disconnected valve cannot publish, so it says nothing about reachability. The first report after a write arrives 1.1–2.1 s after the REST call returns |
 | `GCS_PRESET_STS` | `presetId`, `name`, `time`, `volume`, `Valve1`…`Valve8` (3-byte preset words) | Pushed on every create, edit, rename and delete, and for all slots after a reboot. A delete arrives as an empty name (live). The valve keys are capitalised here, where `writepreset` sends them lowercase, and slots 3-8 carry stale junk (`0000c0`, `080020`) — read `Valve1` and `Valve2` only (live, kohler-anthem-plus) |
 | `GCS_WARM_STS` | `warmup` (all lowercase, unlike REST's `warmUp`) | live |
 | `READ_GCS_OUTLET_CONFIG_CFG` | One outlet record, MQTT spelling (§2.1) | Unprompted, about twice a session, one outlet per message (live) |
@@ -230,7 +251,11 @@ Dispatch on `data.code` (see [platform §4.3](platform.md#43-message-envelope)).
 - **Captured:** `normalOperation`, `showerInProgress`.
 - **Acted on by the app, never captured:** `error` (case-insensitive) — a fault; `FirmwareUpdate` — an install is running.
 
-The app's fault rule is `currentSystemState == error`, **or** `errorFlag` set on either valve word (app).
+The app's fault rule is `currentSystemState == error`, **or** `errorFlag` set on either valve word (app). On hardware only the fault log has fired so far: an active `Algorithm` error `37` on `Valve 1`, while the error flag was set in 0 of 992 captured words (live). See [platform §8](platform.md#8-diagnostics-fault-logs).
+
+Idle words can carry transient flow bytes in recurring pairs (34.5 %/82.5 %, for example), with `totalFlow` dropping to 2 in the same message and back seconds later (live). An idle valve's steady flow byte is the default shower's (§3.4).
+
+**Cloud reachability.** A valve can drop off Kohler's cloud while still working from the wall, and comes back only after a power cycle (live). Reachability is read from `connectionState` (§2, [platform §5](platform.md#5-device-connection-state)), not from any MQTT field.
 
 ## 8. Bath fill (older app screens only)
 
@@ -247,7 +272,9 @@ There are two parts:
 - the valve: `firmware/gcs/{id}?releasetarget=Public`;
 - its gateway: `firmware/gcs/gateway/{id}?releasetarget=Public`.
 
-The shapes and install flow are in [platform §7](platform.md#7-firmware). The configuration's `about` lists three versions: interface (`uI2`), valve (`primaryValve`, plus `secondaryValve1`) and gateway. They are genuinely different numbers (2.2, 10 and 00.74 on one system, live), and two valves on one account can differ while the app shows one (live).
+The shapes and install flow are in [platform §7](platform.md#7-firmware). The configuration's `about` lists three versions: interface (`uI2`), valve (`primaryValve`, plus `secondaryValve1`) and gateway. They are genuinely different numbers (2.2, 10 and 00.74 on one system, live), and two valves on one account can differ while the app shows one (live). `secondaryValve1.firmware` is a placeholder `0` on a single-valve system, and `assetsFirmware` is the artwork bundle (2.0 beside interface 2.2), not the interface firmware (live). A top-level `about.firmware` mapping is the gateway's version (it equals `about.gateway.firmware`) (live).
+
+OTA records (`otaReportedProperties`, `firmwareUpdate`) carry `firmwareType`: `Application` is the firmware, `Assets` the artwork bundle with its own version (2.00 beside 2.20). `updatedVersion` is what runs now and `initialVersion` what ran before the update. Some accounts' records have no `firmwareType` (live, two K-28210 valves).
 
 ## 10. What this integration implements
 
@@ -258,7 +285,7 @@ The shapes and install flow are in [platform §7](platform.md#7-firmware). The c
 | Default shower from preset 1's words, never activating or writing it (§3.4) | ✅ since 1.08 |
 | Time-left attributes (zone clock against `maximumRunTime`, §4.1) | ✅ |
 | Endless Shower (restart a shower the valve's timer ended) | removed 2026-10-08 |
-| Experiences (start/stop via `controlpresetorexperience`) | ✅ app-confirmed only |
+| Experiences (start/stop via `controlpresetorexperience`) | ✅ start live (2026-10-22, `presetOrExperienceId` `17` reported), stop app-confirmed only |
 | Restart (`valvereset`) | ✅ app-confirmed only, disabled by default |
 | Firmware update entities (read-only) | ✅ |
 | Fault: error flag plus `currentSystemState == error`, and the fault log's active entries (read at setup, on each reconnect and twice a day); the whole log in diagnostics | ✅ |

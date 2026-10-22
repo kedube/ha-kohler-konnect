@@ -1,16 +1,10 @@
-"""Authenticated REST client for the Kohler Konnect cloud API — every product's reads.
+"""Authenticated REST client for the Kohler Konnect cloud API: every product's reads.
 
-Wraps :class:`~.auth.KohlerAuth` with the headers every call needs, transparent token
-refresh, and translation of Kohler's two error channels into exceptions.
-
-Kohler reports failure in two places and you have to check both:
-
-* the HTTP status, and
-* a ``statusCode`` field **inside** a 200/400 body — ``900`` means the device is offline,
-  ``901``/``902`` that it is running and refuses the edit; the rest of the table is in
-  ``const.STATUS_MESSAGES``.
-
-A request can therefore "succeed" with HTTP 200 and still have done nothing.
+Wraps :class:`~.auth.KohlerAuth` with the headers every call needs and token refresh,
+and turns both of Kohler's error channels into exceptions: the HTTP status, and a
+``statusCode`` inside the body (``900`` offline, ``901``/``902`` running, the rest in
+``const.STATUS_MESSAGES``). An HTTP 200 can still have done nothing; see
+`docs/protocol/platform.md` §2.1.
 """
 
 from __future__ import annotations
@@ -65,9 +59,8 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-#: Matches the id segment of a device-management path: everything after the endpoint name up
-#: to the next `/` or `?`. Kohler ids are `gcs-...`, `hub-...` and bare tenant GUIDs, so this
-#: keys off the endpoint prefix rather than trying to recognise an id by shape.
+#: The id segment of a device-management path, up to the next `/` or `?`. Keyed off the
+#: endpoint prefix, since ids (`gcs-…`, `hub-…`, bare GUIDs) have no single shape.
 _ID_IN_PATH = re.compile(
     r"/((?:gcs|hub|faucet|customer)-[a-z-]*/(?:[a-z]+/)?)[^/?]+",
     re.IGNORECASE,
@@ -123,9 +116,8 @@ class KohlerError(Exception):
     ) -> None:
         super().__init__(message)
         self.payload = payload
-        #: HTTP status when this came from a response, else None. Lets a caller tell apart
-        #: failures that mean different things — a 404 on a collection endpoint is "empty",
-        #: not "broken" — without parsing the message string.
+        #: HTTP status when this came from a response, else None. Lets a caller tell, say,
+        #: a 404 on a collection endpoint ("empty") from a failure.
         self.status = status
         #: Seconds to wait before asking again, when Kohler throttled the request.
         self.retry_after = retry_after
@@ -167,9 +159,7 @@ class DeviceOffline(KohlerError):
 class DeviceRunning(KohlerError):
     """The device is running and refuses the change (statusCode 902, or 901).
 
-    Editing a HUB favorite requires the system to be stopped first. Activating one is
-    allowed at any time, which is why the practical pattern is to pre-create a favorite
-    per state and switch by activation rather than editing at runtime.
+    For example editing a HUB favorite; see :mod:`.hub`.
     """
 
 
@@ -193,19 +183,16 @@ class Device:
 
 
 class Customer:
-    """The account record, which is also where the device list lives.
+    """The account record, which also holds the device list and display units.
 
-    Devices are nested under ``customerHome[].devices[]`` — note the singular key, which is
-    easy to guess wrong. The account also decides the units the API reports in.
+    Devices are nested under ``customerHome[].devices[]`` (singular key).
     """
 
     def __init__(self, raw: dict[str, Any]) -> None:
         self.raw = raw
-        # "Fahrenheit" or "Celsius". Kohler's REST API and the GCS valve byte both report
-        # Celsius regardless; this is the account's *display* preference, which the mobile
-        # app converts to locally. The HUB's favorite temperatures are the opposite case —
-        # whole °F on the wire whatever this says (Konnect 3.0.6) — so this decides only
-        # how a value typed in the account's unit is converted, never the wire unit.
+        # "Fahrenheit" or "Celsius": a display preference only, never the wire unit. REST
+        # and the GCS valve report °C, and HUB favorites carry °F, whatever this says; it
+        # decides only how a value typed in the account's unit is converted.
         self.temperature_unit: str = raw.get("temperatureUnit") or "Fahrenheit"
         self.water_units: str = raw.get("waterUnits") or "Standard"
         self.devices: list[Device] = [
@@ -256,11 +243,9 @@ class Customer:
 
     @property
     def other_devices(self) -> list[Device]:
-        """Devices this integration does not support.
+        """Devices this integration does not support (DTV, Numi, Blade, toilets, …).
 
-        The Konnect app covers many Kohler product lines (DTV, Numi, Blade, toilets, and
-        more). They appear on the same account and must be ignored rather than treated as
-        a malformed device of a kind this integration knows.
+        They share the account and must be ignored, not treated as malformed devices.
         """
         return [
             d
@@ -276,10 +261,8 @@ class Customer:
     def describe(self) -> str:
         """A short human summary of what was found, for logs and the config flow.
 
-        Note a GCS and a HUB on one account are often the SAME physical shower, reached
-        through two different touchscreen interfaces — see :mod:`.models` for why. They are
-        still presented as two separate devices: they behave differently, and the HUB's
-        state consistently trails the valve's.
+        A GCS and a HUB are counted separately even when they are one physical shower
+        (`docs/protocol/gcs_valve.md` §1).
         """
         parts = []
         if self.has_gcs:
@@ -342,7 +325,11 @@ class KohlerClient:
         json_body: dict[str, Any] | None = None,
         allow_retry: bool = True,
     ) -> Any:
-        """Make an authenticated request, refreshing the token once on a 401."""
+        """Make an authenticated request, refreshing the token once on a 401.
+
+        Returns the parsed JSON, the raw text if the body is not JSON, or None if empty.
+        Raises `KohlerError` (see `_raise_for_payload`) or an `AuthError` from sign-in.
+        """
         token = await self._auth.async_get_access_token()
         headers = {
             "Authorization": f"Bearer {token}",
@@ -360,40 +347,32 @@ class KohlerClient:
                 headers=headers,
                 timeout=REQUEST_TIMEOUT,
             ) as resp:
-                # `errors="replace"`: a body that is not valid UTF-8 — a gateway's error page
-                # in some other charset — raised `UnicodeDecodeError` here, past every
-                # caller's `except KohlerError`. Kohler's own replies are JSON in UTF-8, so
-                # this only ever touches text that was unreadable anyway.
+                # `errors="replace"`: a non-UTF-8 body (a gateway's error page) must not
+                # raise `UnicodeDecodeError` past callers' `except KohlerError`.
                 text = await resp.text(errors="replace")
                 status = resp.status
                 retry_after = _retry_after(status, resp.headers.get("Retry-After"))
         except (aiohttp.ClientError, TimeoutError) as err:
             # `TimeoutError` too: aiohttp raises it bare when `REQUEST_TIMEOUT` runs out,
-            # and it is not a `ClientError`, so it used to escape every caller's handling.
+            # and it is not a `ClientError`.
             raise KohlerError(
                 f"Network error calling {self.safe_path(path)}: "
                 f"{str(err) or type(err).__name__}"
             ) from err
 
-        # A 401 usually means the access token aged out mid-flight; one retry with a
-        # freshly minted token is enough. Retrying more would mask a real auth failure.
+        # A 401 usually means the access token aged out mid-flight: retry once with a new
+        # one. Retrying more would mask a real auth failure.
         if status == 401 and allow_retry:
-            # INFO, not DEBUG. This is rare, it costs a token refresh plus a second round
-            # trip — seconds, not milliseconds — and it is the only thing in this client that
-            # can make a single call take that long. A 5.05 s valve restore on 2026-08-15
-            # could not be explained afterwards precisely because this line was invisible
-            # under default logging. See the session 8 handoff.
+            # INFO, not DEBUG: it is rare, and the only thing here that can make one call
+            # take seconds, so a slow call should be explainable from default logs.
             _LOGGER.info(
                 "401 from %s — the access token aged out mid-request; refreshing it and "
                 "retrying once. Expect this call to take a few seconds longer than usual",
                 self.safe_path(path),
             )
-            # Through `async_get_access_token`, not `async_refresh`, so this goes via the
-            # refresh lock. B2C rotates the refresh token on every use, and two concurrent
-            # 401s calling `async_refresh` directly would redeem the same token twice —
-            # exactly the double-redemption the lock exists to prevent. Invalidating first
-            # makes the locked path treat the token as expired and mint a new one — unless
-            # a parallel 401 already has, which is why it names the token that was refused.
+            # Never `async_refresh` directly: the refresh must stay serialised (see
+            # `KohlerAuth.async_get_access_token`). Naming the refused token lets parallel
+            # 401s share one refresh.
             self._auth.invalidate_access_token(token)
             await self._auth.async_get_access_token()
             return await self.async_request(
@@ -407,29 +386,10 @@ class KohlerClient:
             except json.JSONDecodeError:
                 payload = text
 
-        # ------------------------------------------------------------------ #
-        # API PROBE LOG — diagnostic, OFF BY DEFAULT
-        # ------------------------------------------------------------------ #
-        # Every REST call in this integration funnels through this method, so one line
-        # here captures the whole API surface: which endpoints are reached, what they
-        # return, and — the part no other diagnostic can answer — **fields Kohler sends
-        # that this integration does not read**. `docs/protocol/gcs_valve.md` was written from
-        # exactly this kind of observation, and the questions it still leaves open (is
-        # there an install date? does a GCS-only valve populate `gcs-configuration`?) are
-        # answerable only by looking at a real response.
-        #
-        # Turn it on without a restart, from Developer Tools → Actions:
-        #
-        #     action: logger.set_level
-        #     data:
-        #       custom_components.kohler_konnect.konnect.client: debug
-        #
-        # Set it back to `info` to stop. The MQTT half of the same picture is
-        # `raw_log.py`; between them every byte the integration receives is capturable.
-        #
-        # **Credentials are redacted, not logged.** `mobile/settings` returns the IoT Hub
-        # SAS password, which is exactly the sort of thing a user pastes into an issue
-        # without looking. `_redact_payload` drops it before this line sees it.
+        # REST debug log, off by default: every call with its full response body, to see
+        # fields the integration does not read. See `docs/mqtt/capture_runbook.md`, "The
+        # REST debug logger". ⚠️ The body must go through `_redact_payload`:
+        # `mobile/settings` returns the IoT Hub SAS password.
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "API %s %s -> %s %s",
@@ -448,14 +408,9 @@ class KohlerClient:
     def safe_path(path: str) -> str:
         """An endpoint path with its device or tenant id replaced by `<id>`.
 
-        **Every read endpoint carries an id in its path**, so an error message built from one
-        carries a cloud address — and those messages reach WARNING and ERROR logs and
-        service responses. `diagnostics.py` goes to length to
-        redact exactly this; an exception string handed it back.
-
-        The shape is what makes an error useful (`gcs-usage/<id> failed with HTTP 400` says
-        which endpoint and why), and the shape is all this keeps. Write endpoints have no id
-        in the path — the id travels in the body — so they are unaffected either way.
+        ⚠️ Use it for every path that reaches a log, exception or service response: a
+        Kohler device id is a cloud address (`docs/protocol/platform.md` §2.2). Write
+        endpoints carry the id in the body, so their paths pass through unchanged.
         """
         path = _ID_IN_FIRMWARE_PATH.sub(r"\1<id>", _ID_IN_PATH.sub(r"/\1<id>", path))
         return _ID_IN_MOBILE_PATH.sub(r"\1<id>", _ID_IN_QUERY.sub(r"\1<id>", path))
@@ -469,13 +424,11 @@ class KohlerClient:
         retry_after: float | None = None,
         tenant_id: str | None = None,
     ) -> None:
-        """Translate Kohler's HTTP status and in-body statusCode into exceptions.
+        """Translate Kohler's HTTP status and in-body ``statusCode`` into exceptions.
 
-        ``statusCode`` is compared **as a string**. Konnect models it as one, and an int
-        comparison — what this did until 2026-10-07 — silently misses a ``"900"``.
-
-        ``tenant_id`` is taken out of the body quoted in the message: Kohler's error text
-        can echo the account id back, and these messages reach logs and the UI.
+        Raises `DeviceOffline`, `DeviceRunning` or `KohlerError`. ``tenant_id`` is masked
+        in any body quoted in the message: Kohler's error text can echo the account id, and
+        these messages reach logs and the UI.
         """
         inner = status_code(payload)
         if inner == STATUS_DEVICE_OFFLINE:
@@ -491,8 +444,8 @@ class KohlerClient:
                 payload,
             )
         if status >= 400:
-            # A code from the app's own table says *why* in words; Kohler's body `message`
-            # is usually just "Something went wrong".
+            # A code from the app's own table says why; Kohler's `message` is usually just
+            # "Something went wrong".
             meaning = STATUS_MESSAGES.get(inner or "")
             if meaning is not None:
                 raise KohlerError(
@@ -516,7 +469,7 @@ class KohlerClient:
     # Reads
     # ------------------------------------------------------------------ #
     async def async_get_customer(self) -> Customer:
-        """Read the account: its devices plus the units the API reports in."""
+        """Read the account: its devices and display units."""
         tenant_id = await self.async_tenant_id()
         payload = await self.async_request(
             "GET", CUSTOMER_DEVICE.format(tenant_id=tenant_id)
@@ -528,18 +481,16 @@ class KohlerClient:
     async def async_register_mobile_device(
         self, mobile_device_id: str | None = None
     ) -> dict[str, Any]:
-        """Register a mobile client and return Azure IoT Hub credentials.
+        """Register a mobile client and return its Azure IoT Hub credentials.
 
-        This is how the real-time MQTT status stream is reached. The returned settings
-        carry ``ioTHub`` (hostname), ``deviceId`` (the MQTT client id to use), ``username``
-        and ``password`` (a short-lived SAS token).
+        Returns the settings with ``ioTHub`` (host), ``deviceId`` (the MQTT client id),
+        ``username`` and ``password`` (a short-lived SAS token); raises
+        `UnexpectedResponse` if any is missing. ⚠️ Never persist or log these; fetch them
+        on every connect.
 
-        The credentials are per-session and must NEVER be persisted or logged — obtain
-        them fresh on each connect.
-
-        ``mobile_device_id`` **should** be persisted and reused, though: it is the identity,
-        not a credential. Omitting it generates a throwaway one, which registers what Kohler
-        sees as another phone on every single connect.
+        ``mobile_device_id`` is the identity, not a credential: persist and reuse it, or
+        each connect registers another "phone" on the account. See
+        `docs/protocol/platform.md` §4.1.
         """
         tenant_id = await self.async_tenant_id()
         device_id = mobile_device_id or uuid.uuid4().hex[:16]
@@ -556,9 +507,8 @@ class KohlerClient:
         settings = data.get("ioTHubSettings") if isinstance(data, dict) else None
         if not isinstance(settings, dict) or not settings.get("ioTHub"):
             raise UnexpectedResponse("Kohler returned no IoT Hub settings", data)
-        # Every field the stream connects with, checked here rather than read blind there:
-        # a missing one raised `KeyError`, which no caller catches, so setup failed for good
-        # instead of retrying. Named, never quoted — the password is a live credential.
+        # Every field the stream connects with, so a gap raises a `KohlerError` here rather
+        # than a `KeyError` there. Named, never quoted: the password is a live credential.
         missing = [
             key
             for key in ("deviceId", "username", "password")
@@ -573,8 +523,8 @@ class KohlerClient:
     async def async_unregister_mobile_device(self, mobile_device_id: str) -> None:
         """Remove a registration made by `async_register_mobile_device` from the account.
 
-        What the Konnect app does on sign-out. Called when the config entry is deleted, so
-        the account does not keep a phantom "phone" that nothing will ever connect as again.
+        As the Konnect app does on sign-out. Called when the config entry is deleted, so no
+        phantom "phone" stays on the account.
         """
         tenant_id = await self.async_tenant_id()
         await self.async_request(
@@ -584,19 +534,16 @@ class KohlerClient:
     async def async_get_gcs_state(self, device_id: str) -> Any:
         """Live valve state: both zone words' fields, warmup, and the active preset.
 
-        The read that seeds every valve entity at setup and on each MQTT reconnect, and
-        the same field the Konnect app reads for warmup (``warmUpState.warmUp``). Partly
-        cached on Kohler's side — the device's own MQTT push is the final word.
+        Seeds every valve entity at setup and on each MQTT reconnect. Partly cached on
+        Kohler's side; the valve's own MQTT push is authoritative.
         """
         return await self.async_request("GET", GCS_STATE.format(device_id=device_id))
 
     async def async_get_gcs_settings(self, device_id: str) -> dict[str, Any]:
-        """Read the valve's own settings block, including its outlet topology.
+        """The valve's own ``setting`` block from ``gcsadvancestate``, or ``{}``.
 
-        This is the authoritative source for how many outlets sit on each valve — it comes
-        from the valve itself, so it works without an Anthem Plus controller. Note the path
-        is ``gcs-state/gcsadvancestate/…``, NOT the plain ``gcs-configuration/…``, which
-        returns null for every structural field on a controller-attached valve.
+        The outlet topology source, with or without a controller; not
+        ``gcs-configuration`` (`docs/protocol/gcs_valve.md` §1).
         """
         payload = await self.async_request(
             "GET", GCS_ADVANCE_STATE.format(device_id=device_id)
@@ -614,25 +561,17 @@ class KohlerClient:
         interval: str = "MONTH",
         faucet: bool = False,
     ) -> dict[str, Any]:
-        """Per-period water usage — the series behind the Konnect app's chart.
+        """Per-period water usage: the series behind the Konnect app's chart.
 
-        **`volume` comes back in litres**, whatever the account's unit setting. Verified from
-        the Konnect app, which multiplies it by 0.264172 (litres to US gallons) when the
-        customer's `waterUnits` is `Standard` and shows it raw otherwise. `LITRES_PER_...`
-        callers should use `usage_volume_gallons` rather than repeat the constant.
+        ``from_date``/``to_date`` are ``yyyy-MM-dd``; ``interval`` is ``DAY`` or ``MONTH``
+        (the query keys are PascalCase, unlike every other endpoint). ``volume`` comes back
+        in litres whatever the account unit; convert with `usage.usage_volume_gallons`. See
+        `docs/protocol/platform.md` §6.
 
-        `interval` is `DAY` or `MONTH`. The query parameters are PascalCase — `FromDate`,
-        `ToDate`, `Interval` — which is the whole reason this endpoint went unsolved: every
-        other endpoint in this API is camelCase, and a wrong case is rejected with the same
-        generic 400 as a bare call. Konnect 3.0.6 sends exactly two intervals, `Day` and
-        `Month`, with `MM-dd-yyyy` dates; `WEEK` and `YEAR` are not intervals the server
-        knows. See `GCS_USAGE` in `const.py`.
+        ``faucet`` reads ``faucet-usage`` instead; `usage.usage_series` reads either reply.
 
-        `faucet` reads `faucet-usage` instead, which takes the same query and returns its
-        buckets as `faucetUsageDataDetailsList`; `usage.usage_series` reads either.
-
-        Returns `{}` rather than raising when the read fails: this feeds a diagnostic sensor,
-        and a setup that already works must not start failing over it.
+        Returns ``{}`` rather than raising when the read fails: this feeds a diagnostic
+        sensor and must not fail a working setup.
         """
         template = FAUCET_USAGE if faucet else GCS_USAGE
         path = (
@@ -650,10 +589,10 @@ class KohlerClient:
     # Faucet reads (SKU SEN / SET)
     # ------------------------------------------------------------------ #
     async def async_get_faucet_state(self, device_id: str) -> dict[str, Any]:
-        """Live faucet state — `{connectionState, lastConnected, sku, state: {...}}`.
+        """Live faucet state: `{connectionState, lastConnected, sku, state: {...}}`.
 
-        Raises rather than returning `{}`: this is what the faucet's entities stand on, and
-        an unreadable answer has to show as a failed refresh, not as an empty faucet.
+        Raises rather than returning `{}`, so an unreadable answer shows as a failed
+        refresh, not as an empty faucet.
         """
         payload = await self.async_request(
             "GET", FAUCET_STATE.format(device_id=device_id)
@@ -690,22 +629,13 @@ class KohlerClient:
         )
 
     async def async_get_gcs_configuration(self, device_id: str) -> dict[str, Any]:
-        """Read the valve's configuration record — firmware, and possibly nothing else.
+        """Read the valve's configuration record, for its firmware versions.
 
-        **Not the outlet topology source.** ``async_get_gcs_settings`` above is, and the
-        two are easy to confuse: on the reference install — a valve wired to an Anthem Plus
-        controller — every structural field here (``zoneone``, ``zonetwo``, ``parts``,
-        ``valve1Settings``, ``valve2Settings``, ``systemConfiguration``, ``systemSettings``)
-        comes back ``null``, because such a valve reports its configuration through the
-        controller. Only ``about.firmware`` and ``firmwareOTADetails`` carry data there.
+        Not the outlet topology source (that is `async_get_gcs_settings`): its structural
+        fields are null on a controller-attached valve, and nothing here depends on them
+        (`docs/protocol/gcs_valve.md` §1, §2).
 
-        Whether a **GCS-only** install populates the rest has never been captured — see
-        ``docs/protocol/gcs_valve.md``. This method exists so a report from such an account can answer
-        that, and so the firmware version is readable at all; nothing in the integration
-        depends on the structural fields being present.
-
-        Returns ``{}`` rather than raising when the read fails: this is diagnostic, and a
-        setup that already works must not start failing over it.
+        Raises `KohlerError` on failure; returns ``{}`` for a reply that is not an object.
         """
         payload = await self.async_request(
             "GET", GCS_CONFIGURATION.format(device_id=device_id)
@@ -719,8 +649,7 @@ class KohlerClient:
     async def async_get_gcs_presets(self, device_id: str) -> dict[str, Any]:
         """The valve's stored presets, as ``gcsPresetExperienceDetails[]``.
 
-        Only needed to seed and as a backstop: the device pushes ``GCS_PRESET_STS`` on every
-        create, edit, rename, and delete, so preset changes do not need polling.
+        For seeding and as a backstop; changes arrive as ``GCS_PRESET_STS`` pushes.
         """
         return await self.async_request("GET", GCS_PRESETS.format(device_id=device_id))
 
@@ -737,12 +666,9 @@ class KohlerClient:
         )
 
     async def async_get_hub_configuration(self, device_id: str) -> dict[str, Any]:
-        """Zones, outlets, installed parts, capability flags — and the controller's settings.
+        """Zones, outlets, installed parts, capability flags and the controller's settings.
 
-        ``configuration.systemSettings`` carries ``maxShowerDuration`` (minutes),
-        ``showerMaxTemperature``, ``temperatureUnit`` and ``flowRateEnable``;
-        ``steamSettings`` the steam defaults; ``lightSettings[]`` the light groups; and
-        ``about.hub.wlan.ip`` the controller's LAN address. See ``HubSettings``.
+        See `hub.HubSettings` and `docs/protocol/hub_controller.md` §2.1.
         """
         return _object(
             await self.async_request(
@@ -753,9 +679,8 @@ class KohlerClient:
     async def async_get_hub_active_errors(self, device_id: str) -> dict[str, Any]:
         """The controller's currently active faults, as ``errorDetails[]``.
 
-        What the app shows as "`<title>` error `<errorCode>` detected". Returns ``{}``
-        rather than raising: this feeds a problem sensor's attributes and must not fail a
-        setup that otherwise works.
+        Returns ``{}`` rather than raising: this feeds a problem sensor's attributes and
+        must not fail a working setup.
         """
         try:
             payload = await self.async_request(
@@ -767,7 +692,7 @@ class KohlerClient:
         return payload if isinstance(payload, dict) else {}
 
     async def async_get_gcs_about(self, device_id: str) -> dict[str, Any]:
-        """Per-part identity — gateway, valves and interfaces, with serials and models.
+        """Per-part identity: gateway, valves and interfaces, with serials and models.
 
         Returns ``{}`` rather than raising: device-registry detail, never worth failing
         setup over.
@@ -782,14 +707,11 @@ class KohlerClient:
         return payload if isinstance(payload, dict) else {}
 
     async def async_get_gcs_diagnostics(self, device_id: str) -> dict[str, Any]:
-        """The valve's fault log, as Kohler sent it — ``errorDetails[]`` and all.
+        """The valve's fault log, as Kohler sent it (``errorDetails[]``).
 
-        ``{}`` when the read failed, which has no ``errorDetails`` and so can never pass
-        for an empty log. **A sign-in failure is raised instead** — `AuthError`, or
-        `AuthUnavailable` when Kohler's sign-in is down. Both callers, the diagnostics
-        report and the valve's fault-log read on every seed, catch it themselves and need
-        to tell it apart from "no faults" and from "Kohler hiccuped". Release 1.03 answered
-        `{}` for it as well, and neither could.
+        Returns ``{}`` when the read fails; having no ``errorDetails``, that never passes
+        for an empty log. A sign-in failure (`AuthError`, `AuthUnavailable`) is raised, so
+        callers can tell it from "no faults" and from a Kohler error.
         """
         try:
             payload = await self.async_request(
@@ -801,18 +723,17 @@ class KohlerClient:
         return payload if isinstance(payload, dict) else {}
 
     async def async_clear_gcs_diagnostics(self, device_id: str) -> None:
-        """Clear the valve's fault log — the Konnect app's Diagnostics → clear error log.
+        """Clear the valve's fault log (the app's Diagnostics → clear error log).
 
-        ``DELETE gcs-diagnostics/{id}``, as Konnect 3.0.6 declares it. Raises when it
-        fails: a clear that did not happen must not read as one that did.
+        ``DELETE gcs-diagnostics/{id}``. Raises on failure, so a clear that did not happen
+        never reads as one that did.
         """
         await self.async_request("DELETE", GCS_DIAGNOSTICS.format(device_id=device_id))
 
     async def async_clear_hub_diagnostics(self, device_id: str) -> None:
         """Clear an Anthem Plus controller's fault log: ``DELETE hub-diagnostics/{id}``.
 
-        Konnect 3.0.6 declares it beside the valve's; no screen of the app was found to
-        use it, and it has not been tried against a controller from here.
+        Untried on hardware (`docs/protocol/hub_controller.md` §2). Raises on failure.
         """
         await self.async_request("DELETE", HUB_DIAGNOSTICS.format(device_id=device_id))
 
@@ -838,9 +759,8 @@ class KohlerClient:
         return payload if isinstance(payload, dict) else {}
 
 
-# Keys whose VALUES are credentials or identity, redacted before anything is logged. The
-# match is on the lowercased key containing one of these, so `sasToken`, `SharedAccessKey`
-# and `refresh_token` are all caught without listing every spelling Kohler uses.
+# A key whose lowercased name contains one of these has its value redacted before logging,
+# catching `sasToken`, `SharedAccessKey`, `refresh_token` and other spellings.
 _SECRET_KEY_PARTS = (
     "password",
     "token",
@@ -852,11 +772,8 @@ _SECRET_KEY_PARTS = (
 )
 
 
-# Credential-bearing VALUES whose key name gives nothing away. `_SECRET_KEY_PARTS` catches
-# the field names Kohler is known to use, but this runs on whatever the cloud returns,
-# including endpoints whose full shape no capture has covered. An Azure
-# connection string is the realistic case: the whole secret sits inside one string under a
-# neutral key like `connectionString`, so a key-only check copies it out in full.
+# A credential inside a value under a neutral key, such as an Azure connection string
+# under `connectionString`, which `_SECRET_KEY_PARTS` alone would let through.
 _SECRET_IN_VALUE = re.compile(
     r"(?:SharedAccessKey|AccountKey|SharedAccessSignature|sig)=", re.IGNORECASE
 )
@@ -865,23 +782,16 @@ _SECRET_IN_VALUE = re.compile(
 def _object(payload: Any) -> dict[str, Any]:
     """``payload`` if it is a JSON object, else ``{}``.
 
-    `async_request` returns ``None`` for a 200 with an empty body, and any other JSON type
-    as it came. Reads documented as returning an object say so here, rather than every
-    caller's ``.get`` raising an ``AttributeError`` its ``except KohlerError`` cannot catch.
+    For reads that promise an object: `async_request` can return None or any JSON type.
     """
     return payload if isinstance(payload, dict) else {}
 
 
 def _redact_payload(value: Any, _depth: int = 0) -> Any:
-    """Copy a payload with credential values replaced, for the API probe log.
+    """Copy a payload with credential values replaced, for the REST debug log.
 
-    Structure is preserved exactly — every key stays, only secret *values* are swapped —
-    because the whole point of the log is seeing which fields exist. A redacted field still
-    tells you it was there.
-
-    Depth-limited rather than trusting the payload to be shallow: this runs on whatever
-    Kohler returns, and a cycle or a pathological nesting must not take the event loop down
-    with it.
+    Every key is kept, so the log still shows which fields exist. Depth-limited, since the
+    payload is whatever Kohler returns.
     """
     if _depth > 12:
         return "<too deep>"

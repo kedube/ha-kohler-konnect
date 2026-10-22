@@ -17,10 +17,9 @@ def faucet_updates(coordinator: FaucetCoordinator) -> list[UpdateEntity]:
 class FaucetFirmwareUpdate(KohlerFaucetEntity, UpdateEntity):
     """Installed and latest firmware, as Kohler's cloud reports them.
 
-    **Read-only**, like the shower's: the latest version comes from Kohler's firmware check,
+    Read-only, like the showers': the latest version comes from Kohler's firmware check,
     as in the Konnect app, and installing stays with the app. Named "Firmware status" to
-    match the showers' update entities, which answer "is there an update" rather than
-    giving a version number.
+    match the showers' update entities.
     """
 
     _attr_translation_key = "firmware_status"

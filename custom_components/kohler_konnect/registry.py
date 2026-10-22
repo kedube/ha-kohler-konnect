@@ -1,11 +1,10 @@
-"""The device-registry calls Home Assistant 2026.10 changed.
+"""Device-registry calls that differ across supported Home Assistant versions.
 
-2026.10 stopped treating a device's identifier as unique across config entries, and
-deprecated the two calls this integration made that assume it: looking a device up by
-identifier with `async_get_device`, and naming a device's parent by identifier
-(`via_device`). Both stop working in 2027.8. Their replacements are not in 2026.3, the
-oldest version this integration supports, so each is used where Home Assistant has it and
-the old call is kept only for the versions that do not.
+From 2026.10 a device identifier is no longer unique across config entries, so looking a
+device up by identifier (`async_get_device`) and naming a parent by identifier
+(`via_device`) are deprecated, and stop working in 2027.8. Their replacements are missing
+from 2026.3, the oldest supported version, so each helper uses the new call where it exists
+and falls back to the old one otherwise.
 """
 
 from __future__ import annotations
@@ -32,10 +31,10 @@ def device_by_identifier(
 def parent_link(identifier: tuple[str, str], registry_id: str | None) -> DeviceInfo:
     """The part of a device's `DeviceInfo` that names its parent device.
 
-    ``identifier`` is the parent's own identifier and ``registry_id`` its id in the device
-    registry, once known. Where Home Assistant takes a registry id but this one is not
-    known, the link is left out rather than made the deprecated way: the device still
-    works, only its page loses the "connected via" line, and `via_device` will stop working.
+    ``identifier`` is the parent's identifier and ``registry_id`` its device-registry id,
+    if known. Where Home Assistant takes a registry id but none is known yet, the link is
+    left out rather than made the deprecated way; the device only loses its "connected via"
+    line.
     """
     if not VIA_DEVICE_ID:
         return DeviceInfo(via_device=identifier)

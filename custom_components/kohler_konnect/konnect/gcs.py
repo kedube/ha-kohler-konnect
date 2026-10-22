@@ -1,16 +1,11 @@
 """Commands for the Anthem digital valve (SKU ``GCS``).
 
-The GCS valve is addressed directly and has **no "run my default"** — every start must
-specify the complete valve state as a hex command word. There is no bare on/off command,
-which is the fundamental difference from the Anthem Plus HUB. The default outlets live in
-preset 1, and Kohler's own clients start the default shower by sending its words as a
-direct write (`valve_hex.preset_words_to_pair`).
-
-All direct writes go through ``solowritesystem``. Presets are a stored layer on top:
-``controlpresetorexperience`` with ``{preset, action}`` starts one by itself — the valve
-runs the stored scene, no valve write follows. (An earlier reading held that it only
-*selected* a preset and a start needed two commands; live testing disproved that, and the
-two-command path was removed 2026-08-21.)
+The valve has no bare on/off and no "run my default": every direct write
+(``solowritesystem``) specifies the whole valve state as two command words. The default
+shower is started by sending preset 1's words as such a write
+(``valve_hex.preset_words_to_pair``). ``controlpresetorexperience`` starts a stored
+preset or experience by itself, with no valve write. See
+``docs/protocol/gcs_valve.md`` §3.
 """
 
 from __future__ import annotations
@@ -54,9 +49,8 @@ _LOGGER = logging.getLogger(__name__)
 # must still be present and zeroed.
 SECONDARY_SLOTS = tuple(f"secondaryValve{n}" for n in range(2, 8))
 
-#: What a preset sends for a valve it does not use. Konnect 3.0.6 fills unused `valve2`..
-#: `valve8` with this on both `createpreset` and `writepreset` (`mc0/n.java`); this
-#: integration sent `""` until 2026-10-07 on a misreading that the app did.
+#: What a preset sends for a valve it does not use, as the app does on both
+#: `createpreset` and `writepreset`.
 UNUSED_PRESET_WORD = "000000"
 
 
@@ -67,17 +61,12 @@ def validate_outlet_record(
     maximum_temperature_tenths: int | None = None,
     default_temperature_tenths: int | None = None,
 ) -> dict[str, Any]:
-    """The record `GcsDevice.async_write_outlet_config` sends, or `KohlerError` if it would not.
+    """Build the record `GcsDevice.async_write_outlet_config` sends.
 
-    ``limits`` is the outlet's current record, and the named fields override it — wire units
-    throughout, as `OutletLimits` holds them. Every refusal of that write is made here.
-
-    **A function of its own so a caller can check every outlet before writing any**
-    (2026-10-16). `writeoutletconfig` takes one outlet per call, and a refusal used to
-    surface only when the chain reached the outlet concerned — a corrupt flow ceiling on
-    outlet 3 left outlets 1 and 2 already written. `Valve.async_write_outlet_setting` runs
-    this over every cached outlet before its first POST, so nothing is written unless every
-    outlet would be.
+    ``limits`` is the outlet's current record and the named fields override it, in wire
+    units as `OutletLimits` holds them. Raises `KohlerError` for every refusal of that
+    write, so a caller writing several outlets (one call each) can check them all before
+    sending any.
     """
     run_time = limits.maximum_run_time if maximum_run_time is None else maximum_run_time
     maximum = (
@@ -102,11 +91,10 @@ def validate_outlet_record(
         "maximumFlowrate": limits.maximum_flow_byte,
         "maximumRuntime": run_time,
     }
-    # **Refuse rather than guess.** Every field here is part of the record being
-    # replaced; a None is something this integration has not read, and inventing it
-    # would change a setting the caller never asked to touch. The two app defaults
-    # `async_write_outlet_config` adds are the exception, and only because they are what
-    # the app itself writes.
+    # Refuse rather than guess: the write replaces the whole record, so a field never
+    # read (None) cannot be invented without changing a setting nobody asked to touch.
+    # The only defaults are the two `async_write_outlet_config` adds, which the app
+    # always sends.
     missing = sorted(key for key, value in record.items() if value is None)
     if missing:
         raise KohlerError(
@@ -114,13 +102,9 @@ def validate_outlet_record(
             "has not been read from the valve, and this endpoint replaces the whole "
             "record. Reload the integration to re-read the outlet configuration."
         )
-    # **Absolute ranges, before the relative check below.** Most of these values are
-    # echoed from a read rather than chosen, which is the trust boundary
-    # `check_preset_word` closes for preset words: a corrupt read or a caller's slip
-    # must not become the valve's scald limit or flow envelope. The temperature ceiling
-    # is the app's own for this write — it clamps at 488 tenths (gcs_valve.md §2.1) —
-    # and flow is the valve's byte range. Only `default > maximum` was checked until
-    # 2026-10-16, so a 102.3 °C scald limit passed as long as the default sat below it.
+    # Absolute ranges first: most values are echoed from a read, and a corrupt read must
+    # not become the scald limit or flow envelope. The temperature ceiling is the app's
+    # clamp for this write (`docs/protocol/gcs_valve.md` §2.1); flow is the byte range.
     for key, low, high, unit in (
         ("minimumOutletTemperature", 0, TEMPERATURE_MAX_TENTHS, "tenths of °C"),
         ("defaultOutletTemperature", 0, TEMPERATURE_MAX_TENTHS, "tenths of °C"),
@@ -155,8 +139,7 @@ class GcsDevice:
         self._client = client
         self.device_id = device_id
         self.temperature_unit = temperature_unit
-        # The valve model decides how many outlets exist and which valve each sits on.
-        # Detected from the API at setup where possible (topology.py), else user-picked.
+        # Decides how many outlets exist and which valve each sits on (see models.py).
         self.model = model if isinstance(model, ValveModel) else get_valve_model(model)
 
     @property
@@ -168,10 +151,9 @@ class GcsDevice:
     # Raw valve writes
     # ------------------------------------------------------------------ #
     async def async_write_valves(self, valve1: str, valve2: str) -> Any:
-        """Send a pair of already-encoded valve command words.
+        """Send a pair of already-encoded valve command words (``solowritesystem``).
 
-        This is the one write path the device honours; everything else here builds the
-        two words and calls through to it.
+        Every direct write in this class ends here.
         """
         payload = {
             "deviceId": self.device_id,
@@ -193,13 +175,11 @@ class GcsDevice:
         temperature: float,
         flow_percent: float = 100,
     ) -> Any:
-        """Open the given outlets at a temperature and flow.
+        """Open the given outlets at a temperature and flow; runs water.
 
-        ``outlets`` has one flag per physical outlet on this model — two for a K-28209,
-        six for a K-28212.
-
-        ``temperature`` is in the account's unit and converted to Celsius here, because
-        the valve byte is always Celsius regardless of the account's display preference.
+        ``outlets`` has one flag per physical outlet on this model. ``temperature`` is
+        in the account's unit (converted here; the valve word is always Celsius) and
+        ``flow_percent`` is a percentage of maximum flow.
         """
         if len(outlets) != self.model.total_outlets:
             raise ValveHexError(
@@ -213,11 +193,9 @@ class GcsDevice:
     async def async_turn_off(self, temperature: float | None = None) -> Any:
         """Stop every outlet on both valves.
 
-        Uses mask ``0x00`` in an otherwise well-formed word. The upstream library's
-        ``turn_off()`` sends the all-zero word as ``primaryValve1`` — the
-        :data:`~.valve_hex.UNUSED_VALVE_WORD` sentinel — and the firmware ignores it: that is
-        the "could turn on but never off" bug. It is the whole word that is inert, not its
-        ``0x00`` first byte; see the sentinel's note.
+        Sends mask ``0x00`` in an otherwise valid word, never the all-zero
+        :data:`~.valve_hex.UNUSED_VALVE_WORD`, which the valve ignores as
+        ``primaryValve1``.
         """
         celsius = (
             unit_to_celsius(temperature, self.temperature_unit)
@@ -228,12 +206,10 @@ class GcsDevice:
         return await self.async_write_valves(valve1, valve2)
 
     async def async_restart(self) -> Any:
-        """Reboot the valve — the app's Settings → Restart Product.
+        """Reboot the valve (the app's Restart Product); stops any running water.
 
-        ``valvereset`` with ``reset: "productRestart"``, the exact body Konnect 3.0.6 sends
-        (``AnthemValveResetRequestModel``). The valve drops any running water while it
-        reboots. A valve that has lost its cloud link never receives this, so it cannot be
-        used to revive one.
+        Sends ``valvereset`` with ``reset: "productRestart"``, as the app does. It
+        cannot revive a valve that has lost its cloud link, which never receives it.
         """
         payload = {
             "deviceId": self.device_id,
@@ -264,11 +240,8 @@ class GcsDevice:
     ) -> Any:
         """Write explicit per-valve outlet masks, for callers that already have them.
 
-        A single-zone model sends :data:`~.valve_hex.UNUSED_VALVE_WORD` for valve 2, as
-        every other write path does (``docs/protocol/gcs_valve.md`` §3) — this one alone
-        used to encode a real valve-2 word for a valve that does not exist. A mask for that
-        valve is refused rather than dropped, like a zone 2 flag in
-        :func:`~.valve_hex.encode_shower`: the caller asked for an outlet it cannot have.
+        A single-zone model sends :data:`~.valve_hex.UNUSED_VALVE_WORD` for valve 2, and
+        a nonzero valve-2 mask raises `ValveHexError` rather than being dropped.
         """
         if valve2_mask and not self.model.uses_valve2:
             raise ValveHexError(
@@ -287,22 +260,11 @@ class GcsDevice:
     # Presets
     # ------------------------------------------------------------------ #
     async def async_activate_preset(self, preset_id: Any, on: bool = True) -> Any:
-        """Start or stop a preset. **One call — no valve write needed.**
+        """Start or stop a preset or experience (ids 17 and up). Runs water when on.
 
-        The controller runs the stored preset itself, so this replaces the two-step
-        "select then open the valves" dance entirely.
-
-        The body is ``{preset, action}``. The ``kohler-anthem`` library posts
-        ``presetOrExperienceId`` instead, which the backend accepts with a correlationId
-        and then ignores — the reason presets "returned success but nothing happened", and
-        why a ``solowritesystem`` follow-up was bolted on to compensate. Confirmed live:
-        the library's body left ``presetOrExperienceId`` at ``'0'`` and moved no valve.
-
-        **Experiences start the same way.** Konnect 3.0.6's current screens send this exact
-        body for an experience id (17 and up) as for a preset; only the older screens used
-        ``startpreset {presetOrExperienceId}``. Experiences carry no valve words of their
-        own — the valve runs the program from firmware — so there is nothing else to send.
-        App-confirmed, not yet live-verified on this integration.
+        One call; the valve runs the stored program and no valve write follows. The body
+        is ``{preset, action}``: ``presetOrExperienceId`` here is accepted and ignored
+        (``docs/protocol/gcs_valve.md`` §3).
         """
         payload = {
             "deviceId": self.device_id,
@@ -324,16 +286,14 @@ class GcsDevice:
         time_seconds: int = 1800,
         volume: str = "0",
     ) -> Any:
-        """Overwrite an existing preset.
+        """Overwrite an existing preset (a whole-record replace).
 
-        ``valves`` maps a 1-based valve number to a **3-byte preset word** (see
-        :func:`~.valve_hex.encode_preset_word`). Unlisted valves are sent as
-        :data:`UNUSED_PRESET_WORD`, and ``volume`` defaults to the ``"0"`` the app sends.
-
-        Three shapes make this silently no-op while still returning success: posting to
-        ``createpreset`` (which makes a new preset instead of editing), omitting the
-        ``gcsPresetControlModel`` wrapper or the ``presetId`` inside it, or sending 4-byte
-        command words where 3-byte preset words belong.
+        ``valves`` maps a 1-based valve number to a 3-byte preset word
+        (:func:`~.valve_hex.encode_preset_word`); unlisted valves get
+        :data:`UNUSED_PRESET_WORD`. ``time_seconds`` is the preset's own run-time limit.
+        The wrapper, its ``presetId`` and 3-byte words are all required: without any of
+        them the call still succeeds and changes nothing
+        (``docs/protocol/gcs_valve.md`` §3).
         """
         model = {
             "presetId": str(preset_id),
@@ -362,40 +322,20 @@ class GcsDevice:
     ) -> Any:
         """Replace one outlet's configuration record. **This writes a scald limit.**
 
-        `writeoutletconfig` has no partial form: the body is all **twelve** keys, and
-        whatever is sent becomes the record. So this takes the outlet's *current* limits and
-        overrides only the named fields — every other value is echoed back exactly as read.
+        `writeoutletconfig` has no partial form: all twelve keys are sent and become the
+        record. So this takes the outlet's current ``limits`` and overrides only the
+        named fields (seconds, tenths of °C); everything else is echoed as read,
+        including the minimum temperature and flow the app would force. ``maxVolume``
+        and ``purge`` are echoed when reported, else sent as the app sends them
+        (``"0"``, ``""``).
 
-        The twelve are the ten below plus ``maxVolume`` and ``purge``, which Konnect 3.0.6
-        always sends (``GcsOutletConfigurationsModel``) and this integration omitted until
-        2026-10-07. Neither is read back over MQTT on any captured install, so each is echoed
-        when the valve has reported it and otherwise sent as the app sends it: ``maxVolume``
-        ``"0"``, ``purge`` ``""``. ``maxVolume`` is most likely the bath-fill volume limit.
-        (The app also forces ``minimumOutletTemperature`` 150 and ``minimumFlowrate`` 16 on
-        every write; this echoes what was read instead, which on every captured install is
-        the same 150 and 16.)
+        ⚠️ A missing key, a read-side spelling or display units all succeed and silently
+        corrupt the record (``docs/protocol/gcs_valve.md`` §2.1): send `OutletLimits`'s
+        wire values under the write keys. Raises `KohlerError` for every refusal in
+        `validate_outlet_record`.
 
-        🚨 **Three ways to silently corrupt a safety setting**, all documented in
-        `docs/protocol/gcs_valve.md` §2.1 and all guarded here:
-
-        * **Omitting a key.** Gson drops unmatched keys, the API returns 201, and the field
-          takes whatever the server defaults to. A record with an unknown field cannot be
-          written at all — that is what the `None` check in `validate_outlet_record`
-          refuses.
-        * **The write keys are not the read keys.** `maximumRuntime`, `maximumFlowrate`,
-          `minimumFlowrate`, `defaultFlowrate` — lowercase `t`/`r` on the write side,
-          capitalised on the MQTT read side. Four of twelve fields would vanish.
-        * **The wrong scale.** The body wants wire units: tenths of °C and flow bytes. REST
-          reports display units, which is why `OutletLimits` normalises on the way in and
-          this sends what it holds without converting again.
-
-        Every refusal — an unread field, a value outside the ranges this write accepts, a
-        default above the scald limit — is `validate_outlet_record`'s, so a caller writing
-        several outlets can make the same checks on all of them before the first is sent.
-
-        A 201 means *accepted for delivery*, never *applied* — the response carries no echo
-        and the app performs no read-back. Callers must verify by reading the value back,
-        and must allow time: an immediate `gcsadvancestate` read still shows the old value.
+        A 201 means accepted, not applied (``docs/protocol/platform.md`` §2.1): verify
+        by reading back after a few seconds.
         """
         record = validate_outlet_record(
             limits,
@@ -442,7 +382,7 @@ class GcsDevice:
 
     @staticmethod
     def _valve_fields(valves: dict[int, str]) -> dict[str, str]:
-        """Build valve1..valve8 fields, with :data:`UNUSED_PRESET_WORD` for unused ones."""
+        """The valve1..valve8 fields, :data:`UNUSED_PRESET_WORD` where unused."""
         fields = {}
         for number in range(1, 9):
             word = valves.get(number)
@@ -453,34 +393,15 @@ class GcsDevice:
     # Warmup
     # ------------------------------------------------------------------ #
     async def async_set_warmup(self, mode: str) -> Any:
-        """Set the warmup mode.
+        """Set the warmup mode (``docs/protocol/gcs_valve.md`` §5). Does not run water.
 
-        Warmup is a **mode toggle**, not a run-now command — there is no separate start and
-        stop. The mode *is* the on/off state, and once enabled the valve runs it by itself.
+        Warmup is a stored mode, not a run-now command; turning it off means writing
+        ``warmUpDisabled``. ``mode`` is validated by the caller
+        (``WarmupManager.async_set_warmup``), which also refuses while water runs, as
+        the app does.
 
-        The four fields below are the whole request model
-        (``AnthemWriteWarmUpRequestModel``): there is no duration, no delay, no outlet list
-        and no temperature. Re-confirmed against Konnect Android 3.0.1 on 2026-08-20 and
-        3.0.6 on 2026-10-07.
-
-        ⚠️ **``warmUp`` is required, and omitting it fails silently** — Kohler's cloud
-        returns 200 and the device ignores the request. That is the single most common bug in
-        implementations of this call, because the published curl examples show a three-field
-        body; the upstream ``kohler-anthem`` library has it. Hence the guard: a caller that
-        cannot name a mode must not reach the API at all, because the failure it would get
-        back is indistinguishable from success.
-
-        The app blocks this while the system is active, so set it when idle — see
-        ``KohlerKonnectCoordinator.async_set_warmup``, which mirrors that guard.
-
-        ⚠️ **Turning warmup off means writing ``warmUpDisabled`` here.** It is *not* posting
-        ``presetOrExperienceId: 0`` to ``controlpresetorexperience``, which is what
-        ``kohler-anthem``'s ``stop_warmup`` does: that clears a running preset and leaves the
-        warmup mode exactly as it was — a different field on a different endpoint.
-
-        ``mode`` is validated by the caller, not here. ``WARMUP_MODES_CURRENT`` in
-        ``const.py`` holds the three the current app offers; the two legacy delayed-start
-        values are decodable but should not be written. See ``docs/protocol/gcs_valve.md`` §5.
+        Raises `ValueError` for an empty mode: the cloud returns 200 for it and the
+        valve ignores it, so the failure would look like success.
         """
         if not mode or not mode.strip():
             raise ValueError(

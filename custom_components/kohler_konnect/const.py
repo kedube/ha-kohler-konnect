@@ -11,13 +11,11 @@ from datetime import timedelta
 
 DOMAIN = "kohler_konnect"
 
-# Device display names. These also decide entity_id prefixes, because Home Assistant builds
-# entity ids from the device name plus the entity name — so "Anthem Valve" + "Rainhead"
-# yields `switch.anthem_valve_rainhead`.
-#
-# A second Anthem Plus controller on the account cannot also be called "Anthem Plus" — two
-# devices with one name would hand the second one `_2` entity ids — so with several, each is
-# suffixed with its Konnect name. See `coordinator.controller_names`.
+# Device display names. They also set entity_id prefixes, because Home Assistant builds
+# entity ids from device name plus entity name: "Anthem Valve" + "Rainhead" gives
+# `switch.anthem_valve_rainhead`. With several controllers on one account, each name is
+# suffixed with its Konnect name so none gets `_2` entity ids; see
+# `coordinator.controller_names`.
 DEVICE_NAME_VALVE = "Anthem Valve"
 DEVICE_NAME_CONTROLLER = "Anthem Plus"
 # A faucet is named after its Konnect name; this is for one the app gives none.
@@ -35,23 +33,18 @@ CONF_VALVE_MODEL = "valve_model"
 CONF_ZONE_OUTLETS = "zone_outlets"
 CONF_TEMPERATURE_UNIT = "temperature_unit"
 CONF_WATER_UNITS = "water_units"
-# The Azure IoT Hub identity this install registers as, generated once and then reused.
-#
-# Without this, every connect registered a fresh `uuid4()` identity — so each restart and
-# each reconnect left another dead "phone" on the Kohler account. Reusing one identity also
-# means any first-registration delay is paid once, ever, rather than on every connect.
-#
-# Stored per config entry, never global: two Home Assistant instances on one account must
-# not share an identity or they would fight over the same MQTT client id.
+# The Azure IoT Hub identity this entry registers as: generated once, then reused, so
+# reconnects don't leave a new "phone" on the Kohler account each time. Per config entry,
+# never global: two Home Assistant instances on one account must not share an MQTT
+# client id.
 CONF_MOBILE_DEVICE_ID = "mobile_device_id"
-# Per-valve settings, keyed by the valve's device id, in `entry.options` — an account can
-# carry several valves, and each has its own Warmup Auto-Restore and remembered warm-up
-# mode. Reload-ignored: the switches write them while running.
+# Per-valve settings in `entry.options`, keyed by the valve's device id: Warmup
+# Auto-Restore, the remembered warm-up mode and any pending restore. Reload-ignored, because
+# the integration writes them while running.
 CONF_VALVES = "valves"
 
-# How multi-zone valve outlets, controls, and sensors are grouped and named. Stored in
-# `entry.options[CONF_ZONE_GROUPING]` via the Configure dialog and deliberately NOT in
-# `RELOAD_IGNORED_OPTION_KEYS` — changing it reloads the entry so entities and zone
+# How multi-zone valve outlets, controls and sensors are grouped and named. Deliberately
+# not in `RELOAD_IGNORED_OPTION_KEYS`: changing it reloads the entry so entities and zone
 # sub-devices re-register with the chosen layout.
 CONF_ZONE_GROUPING = "zone_grouping"
 ZONE_GROUPING_NUMBERED = "numbered"
@@ -65,50 +58,27 @@ ZONE_GROUPING_MODES: tuple[str, ...] = (
 DEFAULT_ZONE_GROUPING = ZONE_GROUPING_NUMBERED
 
 # ---------------------------------------------------------------------------
-# Polling — deliberately none for showers
+# Polling — none for showers
 # ---------------------------------------------------------------------------
-# `None` disables the account coordinator's interval entirely. Valves and controllers are
-# push-driven: every state change arrives over MQTT, and REST is read on two **events** —
-# setup, and each MQTT (re)connect — never on a clock. Faucets are the exception, with a
-# coordinator of their own that polls as a safety net; see "Faucets" at the end of this file.
-#
-# The reads cannot be dropped altogether, because **the broker replays nothing on connect**.
-# Measured across 27 capture sessions: the first message after connecting is always a change
-# event, never a state dump. Six sessions received nothing at all, and the longest silence
-# was 11.9 hours. Without a read at connect, every restart would leave entities `unknown`
-# until somebody next used the shower.
-#
-# `homeassistant.update_entity` still forces a refresh on demand — that is the manual path,
-# and the only one.
+# `None` disables the account coordinator's interval. Valves and controllers are
+# push-driven over MQTT; REST is read at setup and on each MQTT (re)connect, because the
+# broker replays nothing on connect (`docs/protocol/platform.md` §4.2). Faucets have their
+# own polling coordinator; see "Faucets" below. `homeassistant.update_entity` forces a
+# refresh on demand.
 SCAN_INTERVAL = None
 
-# How long to wait after a shower stops before re-reading the daily usage series.
-#
-# Kohler aggregates a session server-side *after* the valve reports it closed, so reading
-# the moment the water stops returns the day's total without the shower that just finished —
-# which is precisely the reading someone would go and check. Ninety seconds is comfortably
-# past that and still fast enough to be there when they look.
-#
-# This is the only delayed read in the integration and it is not polling: it fires on the
-# running -> stopped edge, so a day with no shower costs no calls at all.
+# Delay after a shower stops before re-reading the daily usage series. Kohler aggregates a
+# session server-side after the valve reports it closed, so an immediate read misses the
+# shower that just ended. Fires on the running -> stopped edge only; it is not polling.
 USAGE_REFRESH_DELAY_SECONDS = 90
 
-# Conditional follow-up wait when the first read at `USAGE_REFRESH_DELAY_SECONDS` returns
-# the exact same daily total as before the shower — i.e. Kohler's cloud backend had not
-# finished aggregating the session at 90 s. Never runs when the 90 s read already shows
-# the new water.
+# A second read, this long after the first, made only when the first still shows the same
+# daily total as before the shower (aggregation not finished yet).
 USAGE_RETRY_DELAY_SECONDS = 180
 
-# How long to wait after writing an outlet configuration before reading it back.
-#
-# ⚠️ **An immediate read-back lies.** `gcsadvancestate` is a cloud document that only updates
-# once the device reports, so a read about a second after a 201 still shows the OLD value —
-# measured in the live write sweep of 2026-08-21, where the change appeared within 25 s.
-# Verifying too early is precisely how a working write looks like a device-side limit, which
-# is a mistake this project has already made about this API more than once.
-#
-# Thirty seconds: past the observed 25, and still inside what someone will wait for a
-# confirmation after changing a setting.
+# Delay before reading an outlet configuration back after writing it.
+# ⚠️ An immediate read-back shows the old value: `gcsadvancestate` updates only once the
+# device reports, which has been seen to take up to 25 s after the 201.
 OUTLET_WRITE_VERIFY_DELAY_SECONDS = 30
 
 
@@ -118,9 +88,9 @@ OUTLET_WRITE_VERIFY_DELAY_SECONDS = 30
 def device_issue_key(device_id: str) -> str:
     """A device's stand-in in repair-issue ids: stable, but not the device id.
 
-    Home Assistant copies every issue id into the diagnostics download, and a Kohler device
-    id is the address the cloud uses to reach the device — the one thing the report redacts.
-    A one-way hash keeps one issue per device, and lets removal find them, without it.
+    Issue ids appear in the diagnostics download, and a Kohler device id is the address
+    the cloud reaches the device by, which diagnostics redact. A one-way hash keeps one
+    issue per device without exposing it.
     """
     return hashlib.sha256(device_id.encode()).hexdigest()[:12]
 
@@ -128,104 +98,68 @@ def device_issue_key(device_id: str) -> str:
 # ---------------------------------------------------------------------------
 # Optimistic controls
 # ---------------------------------------------------------------------------
-# How long a just-chosen option or switch position is shown before the device's own answer takes over, if the
-# device never agrees. Sized off the two confirmations measured live on 2026-08-21: a warmup
-# write confirmed 2.2 s later with its MQTT echo 0.8 s after that, and a controller
-# favorite's `FAVORITE_STS` arrived 1.5 s after activation. `async_set_warmup` already
-# awaits its own readback chain (`WARMUP_READBACK_DELAYS`, up to ~6 s) before this even
-# starts, so this is the margin on top, not the whole budget.
-#
-# It is a backstop, not the normal path: agreement clears it sooner, every time.
+# How long a just-chosen option or switch position is shown if the device never agrees;
+# agreement clears it sooner. Device confirmations arrive within about 3 s, and
+# `async_set_warmup` awaits its own read-backs (`WARMUP_READBACK_DELAYS`) before this
+# starts, so this is margin on top.
 OPTIMISTIC_GRACE_SECONDS = 12.0
 
 # ---------------------------------------------------------------------------
 # Shower switch
 # ---------------------------------------------------------------------------
-# The preset whose stored words `switch.anthem_valve_shower_on` sends. The valve has no
-# "run my default" command and no place of its own for its default outlets, so the setup
-# wizard and the Konnect app keep them — with the default temperature and flow — in preset 1,
-# "Default shower". Every Kohler client hides it and none runs it as a preset: the touchscreen
-# and Simple Start on the app's valve card read its words and send them as a plain
-# `solowritesystem`. The Shower switch does the same (`Valve.async_start_default_shower`): it
-# never activates or writes preset 1, so only the outlets' `maximumRunTime` ends that shower.
-# The preset's own `time` (1800 s, rewritten with every default change in the app) is never
-# used. See `docs/protocol/gcs_valve.md` §3.4.
+# The preset whose stored words the `Shower on` switch sends. The valve has no "run my
+# default" command, so the setup wizard and the Konnect app keep the default outlets,
+# temperature and flow in preset 1, "Default shower". Clients send its words as a plain
+# `solowritesystem`, and so does `Valve.async_start_default_shower`: preset 1 is never
+# activated or written, so its own `time` never applies and only the outlets'
+# `maximumRunTime` ends that shower. See `docs/protocol/gcs_valve.md` §3.4.
 #
-# Until 1.08 the switch activated preset 1 instead, which brought that hidden 30-minute timer
-# into play, and setup rewrote the timer to 3600 s to keep it out of the way — a change to the
-# owner's valve nobody asked for, and one the app undid at the next default change.
-#
-# The app hides preset 1 from its own list, so the id shown in the app is not this id.
+# The app hides preset 1 from its list, so the id shown in the app is not this id.
 SHOWER_ON_PRESET_ID = 1
 
-# Presets never offered to the user as a choosable scene.
-#
-# Preset 1 is the valve's stored default-shower template and the Konnect app hides it from
-# its own list, so surfacing it would show something the app does not. Its words are what
-# the Shower switch sends (`SHOWER_ON_PRESET_ID` above); it is never run as a preset.
+# Presets never offered as a choosable scene: preset 1 is the default-shower template
+# (`SHOWER_ON_PRESET_ID`), which the Konnect app hides too.
 PRESET_HIDDEN_IDS: frozenset[int] = frozenset({1})
 
 # ---------------------------------------------------------------------------
 # RAW MQTT LOG — diagnostic capture of every payload, before decoding
 # ---------------------------------------------------------------------------
-# Full explanation, file format, and the runtime switch: `konnect/raw_log.py`.
-# Find every piece of this feature with:
-#
-#     grep -rn "RAW MQTT LOG" custom_components/kohler_konnect/
-#
-# Prefer the runtime switch over this constant — it needs no restart and no file edit.
-# Developer Tools -> Actions -> `logger.set_level`:
+# Details, file format and the runtime switch: `konnect/raw_log.py`. Prefer the runtime
+# switch, which needs no restart: `logger.set_level` with
 #
 #     custom_components.kohler_konnect.konnect.raw_log: debug
 #
 # This constant pins capture on across restarts instead.
 #
-# **Off, and it must ship off.** It was switched on 2026-08-13 for a stretch of work
-# involving frequent restarts, where a UI toggle that resets on every restart was useless —
-# and then shipped that way through 0.6.7, which was a mistake: this constant *overrides*
-# the `logger.set_level` switch (see `raw_log.py`), so a released build with it True
-# captures every MQTT payload with no supported way for the owner to stop it short of
-# editing the integration's source.
-#
-# An earlier version of this comment claimed the capture was "bounded (8 MB x 6 files)".
-# It is not — `RAW_MQTT_LOG_KEEP_FILES` below is None, so nothing is ever pruned and growth
-# is unbounded in file count. On a Raspberry Pi's SD card that is a real cost.
-#
-# Turn it on for a debugging session by setting this True locally; do not commit it.
+# ⚠️ Must ship False. It overrides the logger switch, so a release with it True captures
+# every MQTT payload with no supported way to stop it, and `RAW_MQTT_LOG_KEEP_FILES` never
+# prunes. Set it True only locally, for a debugging session.
 ENABLE_RAW_MQTT_LOG = False
 
-# Written under the Home Assistant config directory, so it is reachable from the File editor
-# and Samba add-ons rather than buried in the container.
+# Under the Home Assistant config directory, so it is reachable from the File editor and
+# Samba add-ons rather than buried in the container.
 RAW_MQTT_LOG_DIR = "kohler_konnect_raw"
 RAW_MQTT_LOG_MAX_BYTES = 8 * 1024 * 1024
-# None = no limit on the number of files; every capture is kept forever. Set at the user's
-# request on 2026-08-14 — this directory is meant to be a permanent record, not a rotating
-# buffer, and deleting old captures automatically risks losing the ones a future session
-# needs. Each file is still capped at RAW_MQTT_LOG_MAX_BYTES, so growth is in file count, not
-# a single unbounded file.
+# None: never prune. The directory is a permanent record, and automatic deletion could lose
+# the capture a later investigation needs. Each file is capped at `RAW_MQTT_LOG_MAX_BYTES`,
+# so growth is in file count.
 RAW_MQTT_LOG_KEEP_FILES = None
 
 # ---------------------------------------------------------------------------
 # REPORT LOG — the consumer-side capture, keyed to the "Report Log" switch
 # ---------------------------------------------------------------------------
-# A second raw MQTT capture, deliberately separate from the one above: that one is the
-# development evidence machine (off unless switched on, per-run files,
-# `/config/kohler_konnect_raw/`), this one is a user's bug-report tool — a switch on each
-# valve and controller page, recording every device's messages, one file per
-# switch-on, and a Home Assistant restart appends to the SAME file rather than starting a
-# new one. See `konnect/report_log.py` for the full semantics.
+# A user's bug-report capture, separate from the RAW MQTT LOG above: a switch on each valve
+# and controller records every device's messages to one file per switch-on, and a restart
+# appends to the same file. See `konnect/report_log.py`.
 #
-# The options key stores the active episode's name — its presence IS the switch state, so
-# an episode survives restarts. It is in `RELOAD_IGNORED_OPTION_KEYS` for the same reason
-# every switch-written key is: toggling a capture must not reload the entry and drop the
-# very MQTT stream being captured.
+# The options key holds the active capture's name; its presence is the switch state, so a
+# capture survives restarts. It is in `RELOAD_IGNORED_OPTION_KEYS` so toggling it does not
+# reload the entry and drop the MQTT stream being captured.
 CONF_REPORT_LOG_FILE = "report_log_file"
 
-# Inside the integration folder, at the owner's decision (2026-08-22): reports sit with the
-# integration they describe, reachable like any custom_components path. The accepted costs,
-# documented in the README this capture writes beside its files: a HACS update or reinstall
-# replaces the integration folder and deletes any reports still inside, and on the
-# development install the directory is gitignored.
+# Inside the integration folder, beside the integration the reports describe. A HACS update
+# or reinstall replaces that folder and deletes any reports still in it; the README written
+# beside them says so.
 REPORT_LOG_DIR_NAME = "reports"
 REPORT_LOG_MAX_BYTES = 8 * 1024 * 1024
 
@@ -233,106 +167,37 @@ REPORT_LOG_MAX_BYTES = 8 * 1024 * 1024
 # What a config-entry change has to be before it is worth a reload
 # ---------------------------------------------------------------------------
 # Read by `_async_update_listener` in `__init__.py`; the mechanism is in
-# `konnect/entry_reload.py`, which also explains why the comparison needs a snapshot.
+# `konnect/entry_reload.py`.
 #
-# Keys the running integration writes to its OWN entry. A change to one of them is
-# bookkeeping, not configuration, and must never cause a reload:
+# Data keys the running integration writes to its own entry. They are bookkeeping, not
+# configuration, and must never cause a reload:
 #
-# * `CONF_REFRESH_TOKEN` — B2C rotates it on every refresh and invalidates the previous one,
-#   so the newest has to be persisted immediately or a restart comes up unauthenticated.
-#   That makes it the most frequently written key here, and reloading on it would flap every
-#   entity and drop MQTT for nothing.
-# * `CONF_MOBILE_DEVICE_ID` — generated once on first connect, then reused forever.
+# * `CONF_REFRESH_TOKEN` — B2C rotates it on every refresh, so each new one is persisted
+#   at once. It is the most frequently written key; reloading on it would drop MQTT for
+#   nothing.
+# * `CONF_MOBILE_DEVICE_ID` — written once, on first connect.
 RELOAD_IGNORED_DATA_KEYS = frozenset({CONF_REFRESH_TOKEN, CONF_MOBILE_DEVICE_ID})
 
-# `RELOAD_IGNORED_OPTION_KEYS` is defined further down, after the warmup constants it
-# names — see the Warmup auto-restore section.
+# `RELOAD_IGNORED_OPTION_KEYS` is defined after the warm-up constants it names.
 
-# ---------------------------------------------------------------------------
-# REMOVED 2026-08-15 — valve reboot counter, controller ping, outage counter
-# ---------------------------------------------------------------------------
-# `CONF_GCS_REBOOT_COUNT` / `CONF_GCS_REBOOT_LAST` / `CONF_HUB_LOCAL_HOST` /
-# `CONF_HUB_OUTAGE_COUNT` / `CONF_HUB_OUTAGE_LAST` / `CONF_HUB_OUTAGE_LAST_SECONDS` /
-# `HUB_LOCAL_POLL_SECONDS` all lived here, alongside `konnect/hub_local.py`.
-#
-# They existed to diagnose the valve reboot fault, and that investigation is closed: the
-# cause was a failing Moes smart outlet, not the Kohler hardware. With both devices moved off it, the counters had no
-# remaining question to answer — and the probe was the integration's **only** polling loop
-# in an otherwise push-only design, at 1 Hz against the controller.
-
-# ---------------------------------------------------------------------------
-# Temperature slider bounds (Home Assistant side only)
-# ---------------------------------------------------------------------------
-# What the temperature sliders offer. **These are a UI gate, not a device limit.** The valve
-# accepts far more — 0 °C is a real setting meaning "full cold", and the app's own ceiling is
-# 48.8 °C — and `valve_hex.py` still encodes the whole range, so a preset, the touchscreen,
-# or `send_valve_hex` can still put the valve outside these bounds.
-#
-# Narrowed to the range people actually shower in, because a slider spanning 32-119 °F makes
-# every useful degree a pixel wide.
-#
-# ⚠️ **The ceiling was 113 °F until 0.12.0, on a premise that turned out to be false.** The
-# note here read "113 °F is also exactly the `maximumOutletTemperature` the valve reports for
-# every outlet (450 tenths °C)" — true of the reference valve, and generalised from it. It is
-# not universal: the owner's two valves report **450 tenths (113 °F) and 477 tenths
-# (117.9 °F)**, confirmed 2026-09-10. So the old ceiling silently withheld five degrees the
-# hardware would have accepted, on any valve set higher than the one this was written from.
-#
-# **92-118 °F is exactly what the Konnect app offers for the Max Temperature setting**
-# (owner-confirmed 2026-09-10; Konnect 3.0.6 `gc0/i.java` bounds it 33-48 °C, shown as
-# 92-118 °F). That is what `Max Temperature` and `Default Temperature` use these for.
-#
-# ⚠️ **It is not the zone temperature slider's range, which this used to claim.** Konnect
-# 3.0.6 bounds that slider from a `COLD` stop one degree below the outlet's minimum (sent
-# as 0 °C, full cold) up through `minimumOutletTemperature` (59 °F) to the valve's *current*
-# `maximumOutletTemperature` (`qa0/p.java`, `db0/c.java` `n0()`). The zone control follows
-# that since 2026-10-07 — owner's decision — using `ZONE_TEMPERATURE_MIN_F` below and the
-# valve's live maximum; see `number.ZoneTemperatureNumber`.
-#
-# The bounds were 80-113 before 0.12.0 — both ends invented here rather than taken from the
-# app. The old ceiling was justified as matching `maximumOutletTemperature`, which was a
-# double mistake: that value was read from one valve and generalised, and it is a **setting**
-# rather than a hardware limit. The owner changed one valve from 113 °F to 118 °F in the app
-# on 2026-09-10 and the valve took it. So there is no fixed device ceiling for this slider to
-# match — only the app's range, which is what it matches now. `maximumOutletTemperature` is
-# still the ceiling in force at any moment, and the `Max Temperature` number shows it.
-#
-# Stated in Fahrenheit and converted for a Celsius account — the reverse would make these
-# unrecognisable to anyone checking them against the shower.
-#
-# Consequence to keep in mind: if the wall panel sets a temperature below the minimum, the
-# entity still *reports* it, but the slider cannot represent it accurately.
 # ---------------------------------------------------------------------------
 # Outlet type codes
 # ---------------------------------------------------------------------------
-# The valve reports a type code per outlet in `outLetType`. **This is now the full table** —
-# Konnect 3.0.6's own outlet picker (`db0/c.java` `X()`, duplicated in `mc0/n.java`), the
-# list a user chooses from when setting a valve up, so every code a valve can hold is one of
-# these. Recovered 2026-10-07.
+# The valve's per-outlet `outLetType`, named as the Konnect app's outlet picker titles it.
+# This is the app's full table (`docs/protocol/gcs_valve.md` §1.2). Take any new code from
+# the app's table, never from lining up one install's outlet order against another's.
 #
-# It agrees with every code confirmed on hardware before then — 1, 11 and 21 from Kohler's
-# own documentation, 31 on a K-28210 (2026-09-10) and 52 on a K-28211 (2026-10-05) — and it
-# names the three seen in captures but never matched to a fixture: **38 is a Silk rainhead,
-# 39 a Real Rain rainhead, 62 a pair of foot sprays.** (The 0.5.1 mistake of naming 52 and
-# 62 by lining one install's outlet order up against another's is still the thing never to
-# do; these come from the app's table, not from inference.)
+# Where the app distinguishes one fixture from several, the plural is kept, because "Body
+# Sprays" switches more than one head. Rainhead and spray variants (Katalyst, Silk, …) are
+# the same fixture to switch, so they share a name; the variant is in
+# `OUTLET_TYPE_VARIANTS`.
 #
-# Names are the fixture as the app titles it. Where the picker distinguishes one fixture from
-# several (`Showerhead` / `Showerheads`, `Single` / `Multiple` body or foot sprays), the
-# plural is kept, because "Body Sprays" switches more than one head. Rainhead and body-spray
-# *variants* (Katalyst, Silk, Massage…) are the same fixture to switch, so they share a name
-# and the variant is published separately — see `OUTLET_TYPE_VARIANTS`.
+# A label only: nothing reads these names to decide behaviour. Names given to outlets in
+# the app are not transmitted, so the fixture type is the closest name available.
 #
-# **This is a label, not behaviour.** The valve derives no flow envelope from the type; the
-# controller does. Nothing in this integration reads these names to decide anything.
-#
-# The Konnect app's own outlet names are *not* here because they are not transmitted: no
-# name string appears anywhere in the captured API surface, so a rename in the app cannot
-# be read back. These are fixture types, which is the closest the hardware gets.
-#
-# Naming a code renames its switch, at the next setup. The switch's unique id is its
-# position, not its name, so it stays the same entity, with the entity id it was first
-# registered as — see `entity.outlet_unique_id`.
+# Naming a code renames its switch at the next setup. The unique id is the outlet's
+# position, so it stays the same entity with its original entity id; see
+# `entity.outlet_unique_id`.
 OUTLET_TYPE_NAMES: dict[int, str] = {
     1: "Handshower",
     11: "Showerhead",
@@ -374,74 +239,60 @@ OUTLET_TYPE_VARIANTS: dict[int, str] = {
     62: "Multiple",
 }
 
+# ---------------------------------------------------------------------------
+# Temperature slider bounds (Home Assistant side only)
+# ---------------------------------------------------------------------------
+# 92-118 °F: the Konnect app's range for Max Temperature (33-48 °C;
+# `docs/protocol/gcs_valve.md` §4), used by `Max Temperature`, as the top of
+# `Default Temperature`, and as the zone control's ceiling until the valve reports its own.
+# A UI gate, not a device limit: the valve accepts 0 °C (full cold) and more, `valve_hex.py`
+# encodes the whole range, and a preset, the touchscreen or `send_valve_hex` can go outside
+# it. The scald limit in force is the valve's `maximumOutletTemperature`, a per-valve
+# setting.
+#
+# Stated in Fahrenheit and converted for a Celsius account, so they read as the app shows
+# them. A temperature set elsewhere outside these bounds is still reported, but a slider
+# cannot show it accurately.
 UI_TEMPERATURE_MIN_F = 92
 UI_TEMPERATURE_MAX_F = 118
 
 #: The zone temperature control's floor when the valve has not reported its own minimum —
-#: the `minimumOutletTemperature` of 15.0 °C every captured outlet carries, and the value the
-#: app forces on every outlet-config write. The control's lowest step is one below this, and
-#: means full cold, as the app's `COLD` stop does.
+#: the `minimumOutletTemperature` of 15.0 °C the app forces on every outlet-config write.
+#: The control's lowest step is one below this, and means full cold, as the app's `COLD`
+#: stop does.
 ZONE_TEMPERATURE_MIN_F = 59
 
 # ---------------------------------------------------------------------------
 # Writable outlet configuration — the Konnect app's own three settings
 # ---------------------------------------------------------------------------
-# **Max Shower Duration** is a curated list, not a range. Konnect 3.0.5 offers exactly these
-# six; 35/40/50/55 minutes are skipped even though they are legal multiples of 300 s, and
-# whether the valve would take one is untested (`docs/protocol/gcs_valve.md` — "still open"). A select of
-# what the app offers is honest about that; a slider would imply the gaps are reachable.
-#
-# 3600 s is live-verified writable (sweep, 2026-08-21), which is what makes 45 and 60 real
-# rather than theoretical.
+# Max Shower Duration: the six values the app offers, not a range. 35/40/50/55 minutes are
+# legal multiples of 300 s, but whether the valve accepts them is untested, so a select
+# offers only the app's list. 3600 s is live-verified writable.
 OUTLET_RUN_TIME_CHOICES_SECONDS = (900, 1200, 1500, 1800, 2700, 3600)
 
-# ⚠️ **Konnect 3.0.1 misreads any duration above 1800 s.** Its picker snaps the device value
-# into 15-30 before choosing a wheel index, so a valve set to 45 or 60 minutes displays as 25
-# and one tap of Save silently writes 1500. A vendor defect in that build, fixed by 3.0.5 —
-# but worth a warning wherever this integration lets someone choose the higher values.
+# ⚠️ Konnect 3.0.1 shows any duration above 1800 s as 25 minutes, and one Save there writes
+# 1500 (fixed in 3.0.5). Choosing a higher value here warns about it.
 OUTLET_RUN_TIME_APP_SAFE_MAX_SECONDS = 1800
 
-# **Default Temperature** — what a shower starts at when nothing specifies otherwise. The app
-# bounds it below by a fixed floor and above by whatever the scald limit currently is, which
-# is why the maximum here is read from the valve rather than being a constant.
+# Default Temperature's floor. Its top is `UI_TEMPERATURE_MAX_F`; a value above the valve's
+# current scald limit is refused (`number.OutletDefaultTemperatureNumber`).
 UI_DEFAULT_TEMPERATURE_MIN_F = 59
 
 # ---------------------------------------------------------------------------
 # Flow
 # ---------------------------------------------------------------------------
-# What flow Home Assistant writes when a command does not name one — which is every command
-# it can currently issue, while the flow entities were absent, between 2026-08-13 and 0.6.0 (see `docs/protocol/gcs_valve.md`).
-#
-# **This must not be "whatever the valve currently holds".** It used to be, and that quietly
-# handed control of every HA write to the touchscreen: opening an outlet from Home Assistant
-# re-sent the last flow the wall panel wrote. Measured over 1,346 captured valve words, 419 —
-# **31%** — were below 100%, the lowest at **8%**. So roughly a third of the time, turning on
-# a shower from Home Assistant would have produced a trickle, with nothing in the UI to
-# explain why or to fix it.
-#
-# 100% is the only defensible default: it is the one value a user who has no flow control
-# cannot be surprised by. (This used to add "it is what the Konnect app pins favorites to".
-# Konnect 3.0.6 does not: a favorite takes the outlet's own `defaultFlowrate`, `db0/c.java`.
-# The reasoning above stands without it.)
+# Flow for a write when the command names none. Never the valve's current flow byte: that
+# is whatever the panel last wrote, often far below 100%, so re-sending it could start a
+# trickle nobody chose.
 DEFAULT_FLOW_PERCENT = 100.0
 
 # ---------------------------------------------------------------------------
 # Warmup dropdown labels
 # ---------------------------------------------------------------------------
-# The device's mode strings are camel-case protocol values and make a poor dropdown, so each
-# gets a display label here.
-#
-# ⚠️ **These are Home Assistant's labels, not the Konnect app's.** They tracked the app's
-# wording until 2026-08-21, when the owner renamed them: `All Outlets` took a capital O, and
-# `Selected outlets` became **`Started Outlets`**, which describes what the mode does here
-# rather than echoing the phone. So the dropdown and the app now read differently for that
-# mode — deliberately. Only the labels moved; the protocol values, the write path and which
-# modes are offered are all unchanged.
-#
-# The two legacy delayed-start modes get labels too, but they are never *offered* — they are
-# only added to the dropdown when the valve is already holding one, so the entity can report
-# the truth instead of blanking. Their labels follow the same wording, so the dropdown stays
-# internally consistent if one ever appears. See `select.py`.
+# Display labels for the device's warm-up mode strings. Deliberately Home Assistant's
+# wording, not the app's: the app's "Selected outlets" is "Started Outlets" here, which
+# says what the mode does. The two delayed-start modes are never offered; they appear only
+# while the valve holds one (see `select.py`).
 WARMUP_LABELS = {
     "warmUpDisabled": "Off",
     "warmUpAllOutletsWithNoStartDelay": "All Outlets",
@@ -453,16 +304,9 @@ WARMUP_LABELS = {
 # ---------------------------------------------------------------------------
 # Services
 # ---------------------------------------------------------------------------
-# **Three actions, and this is the whole list** — `send_valve_hex` and `custom_shower` here,
-# `dispense` with the faucet constants. Everything else this integration does is an entity —
-# a switch, a select, a number — because an entity shows state as well as accepting a
-# command, and an action only accepts one.
-#
-# Twelve more names lived here until 2026-08-20: `set_outlets`, `start_preset`,
-# `activate_favorite`, `stop_all`, `set_warmup` and their `ATTR_*` fields. **None was ever
-# registered** — they were scaffolding for a service-shaped design that entities replaced,
-# and the two warmup ones additionally described an older Konnect build. A constant nothing
-# reads is a claim that something exists; these claimed five services that did not.
+# Three actions in all: `send_valve_hex` and `custom_shower` here, `dispense` with the
+# faucet constants. Everything else is an entity, because an entity shows state as well as
+# accepting a command.
 #: What a valve command says when Kohler answers `statusCode 900`.
 VALVE_OFFLINE = (
     "The Anthem valve is offline. Check that it is powered on and connected to Wi-Fi, "
@@ -475,63 +319,49 @@ VALVE_OFFLINE = (
 FIRMWARE_CHECK_INTERVAL = timedelta(hours=12)
 
 SERVICE_SEND_VALVE_HEX = "send_valve_hex"
-# The form-driven sibling: outlets, temperature and an optional flow as typed fields, sent as
-# ONE complete write. Added 2026-09-06 after GitHub issue #1 showed that every UI-built
-# automation ends up as two valve commands back to back, which the valve cannot take.
+# The form-driven sibling: outlets, temperature and an optional flow as typed fields, sent
+# as one complete write. A UI-built automation would otherwise send two valve commands back
+# to back, which the valve cannot take.
 SERVICE_CUSTOM_SHOWER = "custom_shower"
 
 # ---------------------------------------------------------------------------
 # Warmup auto-restore
 # ---------------------------------------------------------------------------
-# The Anthem Plus hub sets the valve's warmup mode back to `warmUpDisabled` on every
-# signed-in use of its web UI — a constant in the hub's login/UI routine, solved 2026-08-21
-# after reproducing it live six times in a day (`docs/protocol/gcs_valve.md` §5). It cannot be
-# prevented from outside the hub's firmware, so this feature is the standing mitigation:
-# it puts the mode back, once, a minute later.
+# The Anthem Plus hub's web UI writes `warmUpDisabled` on every signed-in use, which
+# nothing outside the hub's firmware can prevent (`docs/protocol/gcs_valve.md` §5). This
+# switch puts the mode back, once, `WARMUP_AUTO_RESTORE_DELAY_SECONDS` later.
 CONF_WARMUP_AUTO_RESTORE = "warmup_auto_restore"
 
-# The last *enabled* mode seen on the valve, persisted so a restore reinstates what was
-# actually in force rather than a default. Without it there is nothing to restore to, and
-# guessing "all outlets" would silently change a fixture set to "selected outlets".
+# The last enabled mode seen on the valve, persisted so a restore puts back what was in
+# force rather than a guess: all outlets and selected outlets are different water.
 CONF_LAST_WARMUP_MODE = "last_warmup_mode"
 
-# The mode a scheduled restore is going to write, persisted from the moment it is scheduled
-# until it is written or no longer wanted. A restore waits a minute, and for as long as the
-# water runs, and a restart or reload in that time used to lose it: the next seed saw warm-up
-# already off with nothing before it, which is not a disable, so it stayed off. The seed
-# finishes it instead — see `WarmupManager.note_seeded_mode`. Absent or None: nothing owed.
+# The mode a scheduled restore will write, kept from scheduling until it is written or no
+# longer wanted, so a restart or reload during the wait does not lose it; the next seed
+# finishes it (`WarmupManager.note_seeded_mode`). Absent or None: nothing owed.
 CONF_WARMUP_RESTORE_PENDING = "warmup_restore_pending"
 
 
-# Options the coordinator reads live from `entry.options` on every access instead of caching,
-# so they already take effect the moment they are saved and a reload would be pure cost.
-#
-# Anything NOT listed here reloads. An option added later therefore works by default, and
-# only an option proven to be read live gets added to this set — a decision someone has to
-# write down rather than inherit by accident.
-#
-# The per-valve Warmup Auto-Restore switch and remembered warm-up mode are written while
-# running — the second during setup itself — and both live under `CONF_VALVES`, so ignoring
-# that key covers them, and the pending restore (`CONF_WARMUP_RESTORE_PENDING`) beside them.
-# Until 2026-08-21 they were flat keys missing from this list, and touching either control
-# reloaded the whole entry.
+# Options the coordinator reads live from `entry.options` on every access, so saving one
+# needs no reload. Anything not listed reloads, so a new option is safe by default; add one
+# here only once it is known to be read live. `CONF_VALVES` covers the per-valve switch,
+# remembered mode and pending restore, all written while running.
 RELOAD_IGNORED_OPTION_KEYS = frozenset({CONF_REPORT_LOG_FILE, CONF_VALVES})
 
-# One minute, as asked for. Long enough that a re-sync burst has finished writing before we
-# write back — restoring into the middle of one would just be overwritten again.
+# Long enough for the config re-sync burst around a disable to finish; a restore written
+# into it would be overwritten again.
 WARMUP_AUTO_RESTORE_DELAY_SECONDS = 60.0
 
-# A disable *we* caused, from the dropdown, must never be undone by this — otherwise choosing
-# `Off` becomes impossible. Our own writes are recorded and any matching disable inside this
-# window is ignored. Generous because the device echo itself takes ~3.4 s.
+# A disable we wrote (choosing `Off`) must never be undone, or `Off` could not be chosen.
+# A matching disable within this window of our own write is ours; the device echo takes
+# about 3.4 s.
 WARMUP_SELF_WRITE_GRACE_SECONDS = 30.0
 
-# If the mode is disabled again immediately after each restore, something is actively fighting
-# us and a restore loop would hammer Kohler's API forever. Stop after this many consecutive
-# restores that failed to stick, and say so.
+# Stop after this many consecutive restores that did not stick, rather than fight whatever
+# keeps disabling the mode and hammer Kohler's API, and say so.
 WARMUP_AUTO_RESTORE_MAX_CONSECUTIVE = 5
 
-# A restore that stayed put for this long counts as successful, and resets the counter above.
+# A restore that holds this long counts as having stuck, and resets the count above.
 WARMUP_AUTO_RESTORE_SETTLED_SECONDS = 900.0
 
 WARMUP_AUTO_RESTORE_ON = (
@@ -562,34 +392,21 @@ WARMUP_AUTO_RESTORE_NOT_WRITABLE = (
 # ---------------------------------------------------------------------------
 # Warmup diagnostic journal
 # ---------------------------------------------------------------------------
-# **Off by default.** It was forced on during an investigation and shipped that way through
-# 0.6.7. Built to catch what kept
-# disabling warmup; that question is solved (`docs/protocol/gcs_valve.md` §5 — the hub's web UI).
-#
-# Worth turning on locally if warm-up is being rewritten by something on your system: it
-# verifies every auto-restore end to end and would be the first thing to notice a different
-# writer. Volume is a handful of records a day; `DebugJournal` rolls each file at 8 MB.
+# ⚠️ Must ship False: like `ENABLE_RAW_MQTT_LOG`, it pins the journal on over its logger
+# switch (`docs/mqtt/capture_runbook.md`). Worth turning on locally if something keeps
+# rewriting the warm-up mode: it records every auto-restore end to end. A handful of
+# records a day; `DebugJournal` rolls each file at 8 MB.
 ENABLE_WARMUP_DEBUG_LOG = False
 
-# Unlimited: this is evidence for an open question, and the whole point is comparing an
-# event to ones weeks earlier.
+# Never pruned: the journal's value is comparing an event with ones weeks earlier.
 WARMUP_DEBUG_LOG_KEEP_FILES = None
 
-# How much wire traffic to carry in a disable record, either side of the event.
+# Wire traffic carried in a disable record, either side of it. The config re-sync burst
+# around a disable runs for about a minute beforehand, and the controller's
+# `SYSTEM_STS: SYSTEM_READY` arrives 7-9 s after it, so the record looks both ways.
 #
-# 120 s back and 45 s forward, chosen from what the four known disables actually look like:
-# the config re-sync burst around them (outlet configs, presets, experience snapshots) runs
-# for roughly a minute beforehand, and `SYSTEM_STS: SYSTEM_READY` — the most distinctive
-# marker — landed 7 to 9 s AFTER the disable in the two clearest cases. A window that only
-# looked backwards would miss the strongest signal there is.
-#
-# ⚠️ **The forward window must stay shorter than WARMUP_AUTO_RESTORE_DELAY_SECONDS**, and
-# The external harness asserted this; nothing in this repository's `tests/` does. Both were
-# 60 s when first written, which put
-# the close of the evidence window at the exact instant auto-restore writes to the valve —
-# so whether our own traffic landed inside the evidence depended on which coroutine the loop
-# happened to run first. 45 s ends the window a clear 15 s before any intervention, which
-# costs nothing: the marker being hunted arrives within 10 s.
+# ⚠️ The forward window must stay shorter than `WARMUP_AUTO_RESTORE_DELAY_SECONDS`, so the
+# evidence closes before any restore of ours is written.
 WARMUP_CONTEXT_BEFORE_SECONDS = 120.0
 WARMUP_CONTEXT_AFTER_SECONDS = 45.0
 
@@ -599,54 +416,36 @@ WARMUP_CONTEXT_MAX_MESSAGES = 400
 # ---------------------------------------------------------------------------
 # Warmup write confirmation
 # ---------------------------------------------------------------------------
-# How long to wait, cumulatively, before treating a read-back that disagrees with the write
-# as a real failure rather than lag.
-#
-# Measured live 2026-08-20 against this valve: a POST accepted at 08:01:34 still read back
-# the OLD mode at t+0 and the new one by t+3, with the valve's own MQTT echo at +3.42 s. An
-# immediate single read therefore reports a false mismatch every time. Three attempts spanning
-# 6 s clears that with margin while keeping the service call short enough for a UI action.
+# Waits before each read-back of a warm-up write (reads at about 0, 2 and 6 s). Right
+# after a successful POST, `gcs-state` still shows the old mode, catching up within about
+# 3 s, so a single immediate read would always disagree.
 WARMUP_READBACK_DELAYS = (0.0, 2.0, 4.0)
 
 # ---------------------------------------------------------------------------
 # CLOUD CONNECTION WATCH — is the valve still reachable by Kohler's cloud?
 # ---------------------------------------------------------------------------
-# Full explanation and the measurements behind every number here: `cloud_watch.py`.
+# Implemented in `cloud_watch.CloudConnectionWatch`; user-facing behaviour in
+# `docs/user_guide.md`, "When the valve drops off the cloud".
 #
-#     grep -rn "CLOUD CONNECTION WATCH" custom_components/kohler_konnect/
-#
-# The problem this exists for: the GCS valve drops off Kohler's cloud on its own and only
-# returns on a power cycle. MQTT cannot report it — everything on that stream is published
-# *by* the valve, so a disconnect is silence, and silence is indistinguishable from idle.
-# Measured over a 19-day corpus: the longest silence provably benign is **12 h 02 m**, and
-# the one real outage was **12 h 22 m**. No silence threshold separates them, which is why
-# neither of the triggers below alerts on silence — they only decide when to *ask*.
+# The valve can drop off Kohler's cloud and return only on a power cycle. MQTT cannot show
+# that: everything on it is published by the valve, so a disconnect is silence, and benign
+# idles can last longer than real outages. These settings only decide when to ask the cloud
+# (`connectionState`), never when to raise an alarm.
 
-# How close a GCS message has to be to a HUB `SHOWER_VALVE_STS` for the pair to count as
-# confirmed. Both directions, so a valve message just before or just after the controller's
-# report pairs it.
-#
-# 60 s, not 5 s. Measured across the 19-day corpus: at ±5 s there are 23 unpaired controller
-# reports (3.9 %), nearly all ordinary controller lag; at ±60 s there are **4**, and **3 of
-# those are the 2026-08-26 outage**. The controller normally trails the valve by 0.3–2 s, but
-# a documented restore once went **176.77 s** with no valve message at all — which is why the
-# rule additionally requires a zone to be ON rather than trusting timing alone.
+# How close a valve message must be to a controller `SHOWER_VALVE_STS`, either side, for
+# the pair to count as confirmed. The controller normally trails the valve by 0.3-2 s but
+# can lag by minutes, so the rule also requires a zone to be on rather than trusting timing
+# alone.
 CLOUD_CHECK_PAIR_WINDOW_SECONDS = 60.0
 
-# Minimum spacing between REST reads, whichever trigger asks for one.
-#
-# The point is that a shower produces a burst of `SHOWER_VALVE_STS` — 437 zone-ON reports in
-# 13 days, clustered — and an unreachable valve would make every one of them fire. One read
-# per half hour is enough to answer "is it gone", since the failure lasts hours and is only
-# cleared by a human at the wall.
+# Minimum spacing between cloud checks, whichever trigger asks. A shower produces a burst
+# of `SHOWER_VALVE_STS`, each of which could ask; the failure lasts hours and needs a person
+# at the wall, so one check per half hour is enough.
 CLOUD_CHECK_COOLDOWN_SECONDS = 1800.0
 
-# How long the valve may be silent before we ask the cloud about it directly.
-#
-# ⚠️ **This is not a silence alarm and must never become one.** 3 h of quiet is completely
-# normal — the corpus holds 12 h idles that were provably fine. It is the interval after
-# which the *question* is worth one HTTP GET, and `connectionState` answers it definitively,
-# so a "false" trigger costs one request and reports Connected.
+# How long the valve may be silent before the cloud is asked about it.
+# ⚠️ Not a silence alarm, and must never become one: 12-hour quiet periods are normal. It
+# only decides when one GET is worth making, and `connectionState` gives the answer.
 CLOUD_CHECK_QUIET_SECONDS = 3 * 60 * 60.0
 
 
@@ -654,10 +453,9 @@ CLOUD_CHECK_QUIET_SECONDS = 3 * 60 * 60.0
 # Faucets (Sensate and Setra)
 # ---------------------------------------------------------------------------
 # Each faucet has its own coordinator, polling its live state slowly while idle and quickly
-# while water runs or right after a command. These are the cadences the separate
-# `kohler_sensate` integration settled on live. The MQTT stream is shared with the showers;
-# once it has proven it reports a faucet's changes, polling for that faucet is only a safety
-# net — rarely while idle, now and then while water runs.
+# while water runs or right after a command, at cadences carried over from the
+# `kohler_sensate` integration. The MQTT stream is shared with the showers; once it has
+# proven it reports a faucet's changes, polling that faucet is only a safety net.
 FAUCET_SCAN_INTERVAL_IDLE = timedelta(seconds=30)
 FAUCET_SCAN_INTERVAL_ACTIVE = timedelta(seconds=5)
 FAUCET_SCAN_INTERVAL_PUSH = timedelta(minutes=5)

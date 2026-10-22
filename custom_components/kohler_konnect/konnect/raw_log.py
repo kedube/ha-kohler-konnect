@@ -1,48 +1,22 @@
 """Raw MQTT capture — every payload paho hands us, before any decoding.
 
-# =====================================================================
-# RAW MQTT LOGGING — diagnostic, OFF BY DEFAULT, safe to delete wholesale
-# =====================================================================
-#
-# Searching for this later? The markers are:
-#
-#   grep -rn "RAW MQTT LOG" custom_components/kohler_konnect/
-#
-# That finds this module, the two constants in `const.py`, the call site in
-# `mqtt.py:_on_message`, and the wiring in `coordinator.py`. Removing all four
-# blocks removes the feature completely.
-#
-# =====================================================================
+Grep marker: ``RAW MQTT LOG`` (this module, the constants in `const.py`, the call in
+`mqtt.py:_on_message`, the wiring in `coordinator.py`). Off by default; removing the
+marked blocks removes the feature.
 
-This exists because the decoded `Envelope` is lossy by design — it keeps `sku`, `deviceid`,
-`code` and `attributes`, and drops everything else. When the question is "what did Kohler
-*actually* send", a decoded stream cannot answer it, and the answer is unrecoverable after
-the fact. This replaces the capture that used to live in the separate `mqtt_capture.py`
-bridge, which stopped being reachable when the old `kohler` integration was removed.
+The decoded `Envelope` keeps only `sku`, `deviceid`, `code` and `attributes`, so it cannot
+say what Kohler actually sent. This writes each payload's text exactly as it arrived,
+including payloads that are not valid JSON or UTF-8, which the decode path drops.
 
-**What is written is the payload exactly as it arrived** — the undecoded UTF-8 text, not a
-re-serialised dict. A payload that is not valid JSON, or not valid UTF-8, is still captured;
-those are precisely the ones worth having, and the normal decode path silently drops them.
+Two switches (`docs/mqtt/capture_runbook.md`):
 
-Two ways to switch it on, both without touching this file:
+* At runtime, until restart: `logger.set_level` with
+  ``custom_components.kohler_konnect.konnect.raw_log: debug``. Setting it back to
+  ``info`` stops capture at the next message. Only this logger's own level counts, not
+  `logger.set_default_level` (see :attr:`RawMqttLog.enabled`).
+* Pinned on across restarts: ``ENABLE_RAW_MQTT_LOG = True`` in `const.py`.
 
-* **From the Home Assistant UI, no restart** — Developer Tools → Actions →
-  `logger.set_level`, in YAML mode. The whole `data:` block is a mapping of logger name to
-  level; there is no `entity_id`, because a logger is not an entity.
-
-      action: logger.set_level
-      data:
-        custom_components.kohler_konnect.konnect.raw_log: debug
-
-  Setting it back to `info` stops the capture and closes the file on the next message. This
-  is the one to reach for. Note `logger.set_level` is per-logger — the system-wide one is
-  `logger.set_default_level`, which does **not** turn this on (see :attr:`RawMqttLog.enabled`).
-  Neither survives a restart, which is the right default for a capture.
-
-* **Permanently, across restarts** — set `ENABLE_RAW_MQTT_LOG = True` in `const.py`.
-
-Nothing is created on disk until the first message actually arrives while enabled, so
-leaving the feature installed but off costs one branch per message.
+Switched off, it costs one check per message and creates nothing on disk.
 
 Thread safety: paho calls `write()` on its own network thread, never the event loop, so the
 file I/O here is already off-loop. The lock guards against a `close()` racing a write from
@@ -64,15 +38,12 @@ from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
-# The logger whose level acts as the runtime switch. It is this module's own logger, so
-# `logger.set_level` on the module path toggles capture. Nothing is ever emitted through it
-# at DEBUG — the level is read as a flag, not used for output — which keeps the capture out
-# of `home-assistant.log` where it would be unreadable.
+# This module's logger, whose level is the runtime switch. Nothing is logged through it at
+# DEBUG, which keeps the capture out of `home-assistant.log`.
 _SWITCH_LOGGER = _LOGGER
 
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
-#: None means no limit — every capture file is kept forever. This is the default; the
-#: directory is diagnostic output the owner wants to keep, not a rotating buffer.
+#: None keeps every file: the directory is diagnostic output, not a rotating buffer.
 DEFAULT_KEEP_FILES: int | None = None
 
 _README = """\
@@ -122,11 +93,10 @@ def format_record(
 ) -> str | None:
     """One capture line: ts/topic/qos/retain plus the payload exactly as it arrived.
 
-    Shared by this capture and by `report_log.py`'s consumer capture, so the two produce
-    byte-compatible records and every tool that reads one reads both. Decoding is the
-    consumer's problem, deliberately: a payload that fails to parse is the most interesting
-    kind, and re-serialising a parsed dict would quietly normalise away key order,
-    duplicates, and numeric formatting. None when the record cannot be serialised.
+    Shared with `report_log.py`, so both captures write the same records. The payload is
+    not parsed: re-serialising would normalise key order, duplicates and number
+    formatting, and an unparseable payload is the most interesting kind. None when the
+    record cannot be serialised.
     """
     record: dict[str, Any] = {
         "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -176,14 +146,9 @@ class RawMqttLog:
     def enabled(self) -> bool:
         """True when capture is switched on, by either mechanism.
 
-        Deliberately reads `.level` — the level set on *this exact logger* — and not
-        `isEnabledFor()`, which reads the effective level and therefore inherits from
-        ancestors. With `isEnabledFor`, debugging the integration as a whole
-        (`custom_components.kohler_konnect: debug`) or setting `logger: default: debug`
-        would silently start writing capture files nobody asked for. A diagnostic that
-        touches the disk should require being named.
-
-        `.level` is `NOTSET` (0) until something sets it explicitly, so the default is off.
+        Reads `.level` on this exact logger, not `isEnabledFor()`, which inherits:
+        debugging the whole integration, or `logger: default: debug`, must not start
+        writing capture files. `.level` is `NOTSET` until set, so the default is off.
         """
         return self._forced or _SWITCH_LOGGER.level == logging.DEBUG
 
@@ -195,12 +160,9 @@ class RawMqttLog:
     def prepare(self) -> None:
         """Create the directory and open an empty capture file now, if switched on.
 
-        Without this nothing appears on disk until the first message arrives — and this
-        stream can be silent for hours (11.9 h is the record), so somebody who has just
-        switched capture on has no way to tell whether it worked. An empty file that exists
-        is a far better answer than a missing directory.
-
-        Blocking file I/O: call it from an executor, not the event loop.
+        Otherwise nothing appears until the first message, which can be hours away, and
+        whoever switched capture on cannot tell it worked. Blocking file I/O: call from an
+        executor.
         """
         if not self.enabled:
             return
@@ -216,8 +178,7 @@ class RawMqttLog:
     ) -> None:
         """Record one message. Cheap no-op when switched off."""
         if not self.enabled:
-            # Handles the on->off transition: releases the file the moment capture stops,
-            # rather than holding it open until unload.
+            # Release the file as soon as capture is switched off, not at unload.
             if self._handle is not None:
                 self.close()
             return
@@ -242,8 +203,8 @@ class RawMqttLog:
         encoded = line + "\n"
         self._handle.write(encoded)
         self._handle.flush()
-        # Flushed per line on purpose: a capture is usually read while the thing being
-        # debugged is still running, and buffered lines would not be there yet.
+        # Flushed per line: a capture is usually read while the thing being debugged is
+        # still running.
         self._written += len(encoded.encode("utf-8"))
 
     def _open_locked(self) -> None:
@@ -265,9 +226,8 @@ class RawMqttLog:
     def _write_readme(self) -> None:
         """Leave a note saying what these files are and how to stop them.
 
-        Rewritten on every file open rather than written once, because *which* switch is
-        active decides how to turn capture off — and the wrong instruction is worse than
-        none. `logger.set_level` cannot stop a capture pinned by the constant.
+        Rewritten on every open, because which switch is active decides how to stop
+        capture: `logger.set_level` cannot stop a capture pinned by the constant.
         """
         try:
             with open(
@@ -288,11 +248,7 @@ class RawMqttLog:
             pass
 
     def _prune(self) -> None:
-        """Keep the newest `keep_files` captures so the directory stays bounded.
-
-        A no-op when `keep_files` is None — unlimited is the default, and the owner wants
-        this directory to hold everything.
-        """
+        """Keep the newest `keep_files` captures; a no-op when it is None (the default)."""
         if self._keep_files is None:
             return
         try:
@@ -315,12 +271,8 @@ class RawMqttLog:
     def roll(self) -> str | None:
         """Start a new capture file immediately. Returns its path, or None if capture is off.
 
-        For separating one experiment from the next without restarting Home Assistant. A
-        capture that spans several runs has to be split by timestamp afterwards, and reading
-        back which message belonged to which attempt is exactly the kind of bookkeeping that
-        goes wrong when the runs are minutes apart.
-
-        Blocking file I/O — call it from an executor, not the event loop.
+        Separates one experiment from the next without a restart. Blocking file I/O: call
+        from an executor.
         """
         if not self.enabled:
             return None

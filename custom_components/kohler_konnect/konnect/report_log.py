@@ -1,46 +1,26 @@
-"""Consumer-side raw MQTT capture, keyed to a switch — the "Report Log".
+"""Consumer-side raw MQTT capture, keyed to the "Report Log" switch.
 
-# =====================================================================
-# REPORT LOG — off by default, one file per switch-on, survives restarts
-# =====================================================================
+Unlike `raw_log.py`, the development capture (one file per Home Assistant run), this is
+the user's capture: one file per **episode**, from switch-on to switch-off, to attach to
+an issue.
 
-**Why this exists beside `raw_log.py`, which also captures raw MQTT.** The two serve
-different people and different moments:
+* Switch on starts a new file, named for the moment it was enabled.
+* A Home Assistant restart does not split the episode: the coordinator persists the
+  episode name in the config entry options, and `resume` reattaches to the same file in
+  append mode.
+* Switch off ends the episode; the next switch-on starts a fresh file.
 
-* `raw_log.py` is the *development* evidence machine: pinned on via `const.py` during
-  protocol work, one file per Home Assistant run, written to `/config/kohler_konnect_raw/`
-  beside the cutoff and warmup journals it interleaves with.
-* This one is the *user's* capture: a switch on the device page ("Report Log") that someone
-  flips on to document a bug — or a healthy run — and off when done, producing **one file
-  per episode** they can attach to a GitHub issue.
+Records use `raw_log.format_record`, so both captures share one format. A file that
+reaches ``max_bytes`` continues in ``<episode>_p2.jsonl``, ``_p3``, … sharing the stem;
+a restart reattaches to the latest part.
 
-The episode is the unit, not the Home Assistant run:
-
-* **Switch on → a new file**, named for the moment it was enabled.
-* **Home Assistant restarting does not split the episode** — the coordinator persists the
-  episode name in the config entry options and re-attaches to the *same* file in append
-  mode after the restart. A capture of "it breaks when I restart HA" must not lose the
-  interesting part to the restart itself.
-* **Switch off → the episode ends.** The next switch-on starts a fresh file.
-
-Record format is `raw_log.format_record` — byte-compatible with the development capture, so
-every existing tool reads both.
-
-Size is bounded per file, not per episode: a file that reaches ``max_bytes`` rolls to a
-continuation part (``<episode>_p2.jsonl``, ``_p3``, …) sharing the episode stem, so one
-runaway episode cannot eat the disk in a single unmanageable file and a restart's re-attach
-lands on the latest part.
-
-⚠️ **The directory lives inside the integration folder** (``custom_components/
-kohler_konnect/reports/``) — the owner's choice, so reports sit with the integration
-they describe. Two consequences, both accepted: a HACS update or reinstall **replaces the
-integration folder and deletes any reports still in it** (move files out before updating if
-they matter), and on the development install the directory is gitignored.
+⚠️ The directory is inside the integration folder (``custom_components/kohler_konnect/
+reports/``), so a HACS update or reinstall deletes it; `_README` warns the user.
 
 Thread safety: paho calls `write()` on its network thread; `start`/`resume`/`stop`/
-`prepare` run in an executor. The lock covers all file state, same pattern as `raw_log.py`.
-`note()` runs on the event loop and takes no lock at all: it queues the decision for the
-next `prepare()` or `write()`, whichever thread gets there first.
+`prepare`/`close` run in an executor. The lock covers all file state. `note()` runs on the
+event loop and takes no lock: it queues the decision for the next `prepare()` or
+`write()`, whichever thread gets there first.
 """
 
 from __future__ import annotations
@@ -59,8 +39,7 @@ from .raw_log import format_record
 
 _LOGGER = logging.getLogger(__name__)
 
-# Episode names this class generates: `report_` plus a UTC stamp. Anything else did not
-# come from `start()` — see `resume`.
+# Episode names `start()` generates: `report_` plus a UTC stamp. `resume` rejects others.
 _SAFE_STEM = re.compile(r"report_\d{8}T\d{6}Z")
 
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
@@ -123,7 +102,7 @@ class ReportLog:
         # Decisions from `note()`, oldest first, waiting for `prepare()` or `write()`.
         # Bounded: if neither ever comes, the oldest are dropped rather than held for ever.
         self._pending: deque[str] = deque(maxlen=_PENDING_MAX)
-        # Set by `close()`. See there: nothing but `start()` or `resume()` reopens after it.
+        # Set by `close()`; only `start()` or `resume()` reattaches after it.
         self._closed = False
 
     @property
@@ -133,16 +112,11 @@ class ReportLog:
 
     @property
     def wants_open(self) -> bool:
-        """True when a decision is queued, so `prepare()` should be called.
+        """True when a decision is queued, so `prepare()` should be called from an executor.
 
-        `write()` is called from paho's network thread, where file I/O is fine. `note()` is
-        called from the **event loop**, where it is not — so `note()` never touches the
-        file, nor the lock, which paho's thread holds while it opens or rolls a part. It
-        queues the decision and raises this instead, exactly as `DebugJournal` does, and
-        the caller schedules `prepare()` in an executor to write it.
-
-        ⚠️ Until 2026-10-16 `note()` wrote on the loop whenever a part was open, and could
-        wait there on that lock; with none open, the decision that raised this was lost.
+        `note()` runs on the event loop, so it never touches the file or the lock (which
+        paho's thread holds while it opens or rolls a part); it queues the decision and
+        raises this, as `DebugJournal` does.
         """
         return self._wants_open
 
@@ -160,8 +134,8 @@ class ReportLog:
             try:
                 self._drain_locked()
             except OSError as err:
-                # The handle goes and the episode stays, as in `write()`; so does whatever
-                # is still queued, for when the disk comes back.
+                # The handle goes; the episode and what is still queued stay, as in
+                # `write()`, for when the disk comes back.
                 _LOGGER.warning("Report log write failed: %s", err)
                 self._close_locked()
 
@@ -173,9 +147,8 @@ class ReportLog:
     def start(self) -> str:
         """Begin a new episode. Returns the episode name for the caller to persist.
 
-        Opens the file immediately rather than waiting for the first message — this stream
-        has been silent for 11.9 hours, and someone who just flipped the switch deserves a
-        file they can see. Blocking I/O: call from an executor.
+        Opens the file now rather than at the first message, which can be hours away, so
+        the user can see the capture started. Blocking I/O: call from an executor.
         """
         stem = "report_" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
         with self._lock:
@@ -190,26 +163,22 @@ class ReportLog:
         _LOGGER.info("Report log ON — new episode %s", stem)
         return stem
 
-    def resume(self, stem: str) -> None:
-        """Re-attach to a persisted episode after a restart, appending to its last part.
+    def resume(self, stem: str) -> str:
+        """Reattach to a persisted episode after a restart, appending to its last part.
 
-        Blocking I/O: call from an executor. A vanished file (user deleted it mid-episode)
-        is simply recreated by the append open — the episode name is the identity.
-
-        The stem is only ever written by `start()` from its own timestamp, so a hostile
-        value means the config entry has already been edited — at which point far more is
-        available than this. Validated anyway because the value round-trips through a file
-        an operator may hand-edit, and `_part_path` joins it straight onto the directory:
-        a stem carrying `..` or a separator would write outside the log folder.
+        Returns the episode now in force, which the caller must persist if it differs from
+        `stem`. Blocking I/O: call from an executor. A deleted file is recreated by the
+        append open; the episode name is the identity. A name `start()` could not have
+        written starts a new episode instead: `_part_path` joins the name onto the
+        directory, so a hand-edited `..` or separator would write outside it.
         """
-        if not _SAFE_STEM.fullmatch(stem):
+        if not isinstance(stem, str) or not _SAFE_STEM.fullmatch(stem):
             _LOGGER.warning(
                 "Ignoring a report-log episode name that is not one we could have "
                 "written: %r. Starting a new episode instead.",
                 stem,
             )
-            self.start()
-            return
+            return self.start()
         with self._lock:
             self._close_locked()
             self._closed = False
@@ -219,13 +188,10 @@ class ReportLog:
             except OSError as err:
                 _LOGGER.warning("Report log could not reopen %s: %s", stem, err)
         _LOGGER.info("Report log resumed episode %s after restart", stem)
+        return stem
 
     def stop(self) -> None:
-        """End the episode. The next `start()` gets a fresh file.
-
-        Decisions still queued were made before the switch went off, so they are written
-        first.
-        """
+        """End the episode, writing decisions still queued first. `start()` opens anew."""
         with self._lock:
             if self._stem is not None and not self._closed:
                 try:
@@ -241,23 +207,16 @@ class ReportLog:
     def close(self) -> None:
         """Release the file handle without ending the episode — for unload. **Final.**
 
-        The episode's persistence is the config entry's business; after a reload the
-        coordinator calls `resume()` with the persisted name and writing continues in the
-        same file — from the *new* coordinator's `ReportLog`.
+        After a reload the new coordinator's `ReportLog` resumes the persisted episode.
 
-        ⚠️ **So nothing may reopen the file through this object afterwards.** Until
-        2026-10-16 it kept `_stem`, and a decision noted after unload — or the `prepare()`
-        an earlier one had scheduled — opened the episode's part again: a leaked handle,
-        and two writers on one file once the reload resumed it. Now `note()`, `write()` and
-        `prepare()` all do nothing after this; only an explicit `start()` or `resume()`
-        attaches it again.
+        ⚠️ Nothing reopens the file through this object afterwards: `note()`, `write()` and
+        `prepare()` do nothing once it has run, and only `start()` or `resume()`
+        reattaches. Otherwise a late decision would leak a handle and put two writers on
+        one file.
 
-        Decisions still queued go into the part already open first, without opening or
-        rolling one. That is the only write here, and it is blocking file I/O:
-        `KonnectMqttStream.async_stop` calls this from a worker thread (`asyncio.to_thread`,
-        through `_close_captures`) once paho's network thread has stopped — never on the
-        event loop. By then the `prepare()` each decision scheduled has almost always
-        written it already.
+        Decisions still queued go into the part already open, without opening or rolling
+        one. Blocking file I/O: called from a worker thread
+        (`KonnectMqttStream._close_captures`) after paho's network thread has stopped.
         """
         with self._lock:
             self._closed = True
@@ -288,36 +247,28 @@ class ReportLog:
             if self._stem is None or self._closed:
                 return
             try:
-                # Decisions queued before this message arrived happened before it, and the
-                # file keeps that order — see `note()`.
+                # Decisions queued before this message happened before it; keep that order.
                 self._drain_locked()
                 self._write_line_locked(line)
             except OSError as err:
                 # A diagnostic must never take the stream down. Drop the handle but keep
-                # the episode: the disk may come back, and the persisted name means a
-                # restart re-attaches either way.
+                # the episode: the disk may come back, and a restart reattaches by name.
                 _LOGGER.warning("Report log write failed: %s", err)
                 self._close_locked()
 
     def note(self, journal: str, event: str, fields: dict[str, Any]) -> None:
         """Record one **decision** — what the integration concluded, not what arrived.
 
-        The raw messages say what the valve sent; these say what was made of it. Both in one
-        file, in the order they happened, on one clock, so a report answers "why was warmup
-        not restored" without asking the reader to line two files up by timestamp. One switch,
-        one attachment.
-
-        Told apart from a raw message by their keys: a message has `topic`, a decision has
-        `journal` (`warmup` today; reports from before 2026-10-08 can also carry `cutoff`,
-        from the removed Endless Shower) and `event`. To read one or the other:
+        Decisions share the file and clock with the raw messages, in order, so one
+        attachment explains itself. A message has `topic`; a decision has `journal` (e.g.
+        `warmup`) and `event`:
 
             jq -c 'select(.topic)'    report_*.jsonl   # the wire
             jq -c 'select(.journal)'  report_*.jsonl   # the reasoning
 
-        **Written whether or not the feature is switched on**, exactly as the standalone
-        journal is, so a report from an install with Auto-Restore off still shows a disable
-        that was seen and deliberately left alone — which is usually the question being
-        asked.
+        Written whether or not the feature is switched on, as the standalone journal is,
+        so a report with Auto-Restore off still shows a disable that was seen and left
+        alone.
         """
         if self._stem is None or self._closed:
             return
@@ -331,16 +282,9 @@ class ReportLog:
             line = json.dumps(record, default=str)
         except (TypeError, ValueError):  # pragma: no cover - defensive
             return
-        # ⚠️ **Never touches the file, and never takes the lock.** Unlike `write()`, which
-        # paho calls on its own network thread, this runs on the **event loop** — the
-        # warm-up watcher lives there. `_open_locked` creates a directory and opens two
-        # files, and this shipped doing exactly that on the loop in 0.15.0; after that it
-        # still wrote and flushed here, and waited on a lock paho's thread holds while it
-        # opens or rolls a part.
-        #
-        # Same answer as `DebugJournal.note`: queue the line and let the caller schedule
-        # `prepare()` in an executor. `write()` takes the queue first too, so a message
-        # arriving meanwhile still lands after the decisions made before it.
+        # ⚠️ Never touches the file or the lock: this runs on the event loop. Queue the
+        # line for `prepare()`; `write()` drains the queue first, so a message arriving
+        # meanwhile still lands after the decisions made before it.
         self._pending.append(line)
         self._wants_open = True
 
@@ -363,8 +307,7 @@ class ReportLog:
         encoded = line + "\n"
         self._handle.write(encoded)
         self._handle.flush()
-        # Per line, like the development capture: reports are read while the problem is
-        # still happening, and buffered lines would not be there yet.
+        # Flushed per line: reports are read while the problem is still happening.
         self._written += len(encoded.encode("utf-8"))
 
     def _part_path(self, part: int) -> str:
@@ -390,10 +333,9 @@ class ReportLog:
         return latest
 
     def _open_locked(self) -> None:
-        """Open the episode's current part for append, rolling to the next when full.
+        """Open the episode's latest part for append, rolling to the next when full.
 
-        Append mode is the whole trick: a restart's `resume()` lands here, finds the
-        latest part, and continues it — the file does not restart with Home Assistant.
+        Append mode is what lets `resume()` continue the same file across a restart.
         """
         self._close_locked(quiet=True)
         os.makedirs(self._directory, exist_ok=True)

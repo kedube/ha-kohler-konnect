@@ -247,7 +247,7 @@ zone 2:
 
 | Entity | Type | What it does |
 |---|---|---|
-| `Water Used Today` | sensor | Water used since local midnight, from **Kohler's own per-day usage series** — the same data behind the Konnect app's chart. Refreshed after a shower ends (never on a polling clock) and resets to `0.0` at local midnight. On accounts whose daily totals Kohler files by UTC date, an evening's water is counted today and left out of tomorrow's figure (`counted_yesterday`), restarts and reloads included, so it counts once. East of UTC, a shower between local and UTC midnight counts on the right day |
+| `Water Used Today` | sensor | Water used since local midnight, from **Kohler's own per-day usage series** — the same data behind the Konnect app's chart. Refreshed after a shower ends (never on a polling clock) and resets to `0.0` at local midnight. On accounts whose daily totals Kohler files by UTC date, an evening's water is counted today and left out of tomorrow's figure (`counted_yesterday`), restarts and reloads included, so it counts once. East of UTC, a shower between local and UTC midnight counts on the right day. `times_turned_on` is Kohler's own count of how many times the water was turned on that day; the Konnect app doesn't show it, so it hasn't been checked against real use |
 | `Water Used This Week` | sensor | The last seven days including today, as a rolling window — **not a calendar week**. Summed from seven daily buckets; `per_day` carries the breakdown. Keeps long-term statistics, but as a rolling window its daily change can be negative when a heavy day leaves the window, so it is not a consumption meter: use `Water Used Today` for the Energy dashboard |
 | `Water Used This Month` | sensor | This calendar month's usage, from **Kohler's own history** and kept current after each shower via the daily usage series. Reads `0.0` on the 1st until the month's first shower. Carries every month returned as a `history` attribute |
 | `Water Used This Year` | sensor | Calendar year to date (`Jan 1` – today), matching the Konnect app's **Year** tab. Each month uses Kohler's monthly history or the daily series, whichever is higher, so every shower updates the yearly total with no extra API calls and a month that has just ended keeps its full total; a month that has ended never reads lower than it already has (remembered until a restart or reload). Reads unknown, rather than a partial total, while Kohler's monthly history can't be read — except in January, or when the daily series reaches back to January 1. Reads `0.0` on January 1 until the year's first shower |
@@ -256,7 +256,7 @@ zone 2:
 | `Temperature` | number | Setpoint for that zone, in your account's unit — the Konnect app's slider: **Cold**, then 59 °F up to the valve's current `Max Temperature`, in whole degrees that never go above it (a 47.7 °C limit tops out at 47 °C). The bottom step (58 °F / 14 °C) is **Cold**: the valve stops mixing in hot water, as the app's `COLD` stop does, and the `cold` attribute reads true. `Temperature 1` / `Temperature 2` on a two-zone valve |
 | `Flow` | number | Flow as a percentage, bounded by the limits the valve itself reports. `Flow 1` / `Flow 2` on a two-zone valve. See **Flow** below |
 | `Favorite` | select | Presets **stored on the valve**, added in the Konnect app or at the first-generation touchscreen |
-| `Experience` | select | The valve's stored **experiences** (Wake Up, Cool Down…), added in the Konnect app. Started with the same command the app uses — new in this release and not yet tried on hardware; see [Favorites and presets](#favorites-and-presets) |
+| `Experience` | select | The valve's stored **experiences** (Wake Up, Cool Down…), added in the Konnect app. Started with the same command the app uses; see [Favorites and presets](#favorites-and-presets) |
 | `Warmup` | select | Off / All Outlets / Started Outlets. See [Warmup](#warmup) |
 | `System Status` | sensor | `Water Running`, `Paused`, `Warming Up`, `Idle`. Whole-valve: warm-up and pause are system-level, not per-zone. Carries `seconds_remaining` — how long before the valve's run-time limit closes the water |
 | `System State` | sensor | The valve's own `normalOperation` / `showerInProgress` flag — a second opinion to `System Status`, decoded differently. Also `error` and `FirmwareUpdate`, which the Konnect app acts on but no install has yet been seen to send |
@@ -345,9 +345,10 @@ set up with:
 | 61 / 62 | Foot Spray / Foot Sprays | Single, Multiple |
 
 An outlet whose type the valve hasn't reported yet keeps the positional form, `Outlet 1` or
-`Outlet 2.1`. When a name later arrives, the switch is **renamed in place**: each switch is
-identified by its zone and position, never its name, so its entity id, history and
-automations stay as they were. Zone numbers and repeated fixtures follow
+`Outlet 2.1`. When the valve reports the type later, the switch takes its fixture name the
+next time Home Assistant restarts or the integration reloads. Each switch is identified by
+its zone and position, never its name, so its entity id, history and automations stay as
+they were. Zone numbers and repeated fixtures follow
 [How entities are named](#how-entities-are-named).
 
 #### Flow
@@ -754,10 +755,10 @@ integration activates them, it doesn't create them.
 **Experiences** are Kohler's built-in programs — on the valve, ones you've added in the app
 (Wake Up, Cool Down, the ice-shower routines); on the controller, its fixed catalogue of
 shower, steam and ice-shower programs. Each device has its own `Experience` dropdown. The
-valve's starts with the same command the Konnect app sends, but earlier versions of this
-integration believed the valve ignored it, and nobody has yet confirmed it on hardware — if
-choosing one does nothing, the dropdown falls back to `Off` after a few seconds. Please open an
-issue either way.
+valve's starts with the same command the Konnect app sends. Earlier versions of this
+integration believed the valve ignored it; starting one has since been confirmed on a valve,
+but stopping one from the dropdown hasn't been tried yet. If choosing one does nothing, the
+dropdown falls back to `Off` after a few seconds — please open an issue if it does.
 
 ### Warmup
 

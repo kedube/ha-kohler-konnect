@@ -1,8 +1,7 @@
 """Kohler Konnect protocol library.
 
-Pure Python with no Home Assistant imports, so it can be tested off-box and lifted into its
-own package later without changes. Everything that knows about Kohler's wire formats lives
-here; everything that knows about Home Assistant lives in the parent integration.
+Pure Python with no Home Assistant imports, so it can be tested off-box. Kohler's wire
+formats live here; everything Home Assistant-specific lives in the parent integration.
 
 One sign-in (`auth`), one REST client (`client`) and one MQTT stream (`mqtt`) serve every
 product on the account. Product modules hold what differs:
@@ -16,12 +15,9 @@ product on the account. Product modules hold what differs:
 
 Water usage history has the same shape for every product (`usage`).
 
-Written against live captures and two decompiles of the Konnect Android app (3.0.1, and
-3.0.6 on 2026-10-07). ``docs/protocol/`` is the developer reference — every endpoint, body,
-message and code, marked app-confirmed or live-verified — and is written to be reused by
-other Kohler Konnect integrations. The ``kohler-anthem`` library reads a few of these
-behaviours differently; it was decompiled from the same APK but not checked against
-captures, so where the two disagree, this package follows the captures.
+``docs/protocol/`` is the developer reference for every endpoint, body, message and code.
+Where the ``kohler-anthem`` library reads a behaviour differently, this package follows
+live captures.
 """
 
 from __future__ import annotations

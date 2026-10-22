@@ -12,7 +12,9 @@ The valve word is 16 hex characters; only the **first 8** carry the command. In 
 report the trailing 8 are the valve's live feedback — measured temperature (bytes 4-5, same
 encoding as bytes 0-1), measured flow (byte 6, same scale as byte 2) and an error code
 (byte 7). The hardware tested always reports `00000001` there (no measurement, error code 1),
-and a command ignores them, so `send_valve_hex` takes 8 characters or 16.
+and a command ignores them, so `send_valve_hex` takes 8 characters or 16. A valve that does
+not fill the measurement reports temperature and flow both as zero, so read them together:
+a temperature below 25.6 °C on its own is a real reading (inferred).
 
 ```text
  0 1 | 2 3 | 4 5 | 6 7
@@ -40,6 +42,14 @@ byte0 = (valveIndex << 4) | (temperature >> 8)
 When reading the valve's own status reports, byte 0 also carries two read-only status flags:
 `0x08` = at flow setpoint and `0x04` = at temperature setpoint, which is what the
 `At Temperature` sensor reads. A command always sends them as zero.
+
+- **At temperature (`0x04`)** follows the touchscreen: it sets when the panel stops flashing
+  and shows a solid setpoint, lags 1–2 s behind a setpoint change, stays set while water
+  runs, clears on stop, and is never set during warm-up. Only `primaryValve1` carries it,
+  even when only zone 2 is running (live).
+- **At flow (`0x08`)** has never been seen set, and the measured-flow byte has always been
+  zero, on a system with flow control disabled at the fixture (live). Whether it sets with
+  flow control on is untested.
 
 ## Bytes 0-1 — temperature
 
@@ -80,8 +90,9 @@ decode:  percent = byte / 2
 | `0xC8` | 100% (maximum) |
 
 Valid range is `0x10`-`0xC8` (16-200). The flow byte is only meaningful while an outlet is
-open — on an idle or paused valve it may reflect a calibrated ceiling rather than the last
-commanded flow.
+open. About two minutes after a session ends, the valve resets its idle word to the default
+shower's flow ([gcs_valve.md §3.4](../protocol/gcs_valve.md#34-preset-1-the-default-shower)),
+so an idle byte is not the last commanded flow.
 
 ## Byte 3 — outlet mask and pause flag
 
@@ -92,7 +103,7 @@ byte3 = [error / skipWarmUp : 1][pause : 1][0 0 0][outlet3][outlet2][outlet1]
 
 | Mask | Meaning |
 |---|---|
-| `0x40` | **Pause flag.** Set when the session is held (e.g. mid-warmup, or the valve's run-time cutoff). Independent of the outlet bits — a paused valve keeps the outlet assignment it will resume to. |
+| `0x40` | **Pause flag.** Set when the session is held: at the end of a warm-up, at the valve's run-time cutoff, or by a Stop from the app or touchscreen. Independent of the outlet bits — a paused valve keeps the outlet assignment it will resume to. |
 | `0x07` | The three outlet bits for that zone |
 | `0x80` | Differs by direction. **Read:** `errorFlag`, paired with the error code in byte 7 — one of the things the `Problem` sensor reads; never seen set on hardware. **Write:** `skipWarmUp`, which the Konnect app sets only for bath fill and this integration never sends |
 

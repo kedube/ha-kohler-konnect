@@ -49,11 +49,10 @@ class FaucetPresetSelect(KohlerFaucetEntity, SelectEntity, RestoreEntity):
         await super().async_added_to_hass()
         if self.coordinator.preset_choice is not None:
             return
-        # By the preset's id, kept beside the state. Restoring by the label alone lost a
-        # preset renamed while Home Assistant was down, and the button then poured the
-        # first preset's amount instead. The label stands in when the id is gone (a state
-        # saved before the id was, or a preset deleted and saved again under its name);
-        # with neither, the id is kept, as a choice is while running.
+        # By the preset's id, kept beside the state, so a preset renamed while Home
+        # Assistant was down stays chosen. The label stands in when the id is unknown (none
+        # saved, or a preset deleted and saved again under its name); with neither, the
+        # saved id is kept in case the preset reappears.
         extra = await self.async_get_last_extra_data()
         preset_id = (extra.as_dict() if extra is not None else {}).get(_PRESET_ID)
         if not isinstance(preset_id, str) or not preset_id:

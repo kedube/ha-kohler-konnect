@@ -11,6 +11,24 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Fixed**
+
+- **A Report Log with an unreadable saved name no longer starts a new file at every
+  restart.** It starts one new file, as before, and now remembers it, so later restarts
+  carry on in that file.
+- **An Anthem Plus controller's zone `Temperature` reads correctly on a Celsius account.**
+  It was labelled in the account's unit, so a controller reporting °F showed, for example,
+  102 °C. It now reads right whether the controller reports °F or °C there; Fahrenheit
+  accounts are unchanged.
+
+**Documentation**
+
+- **`Shower on` matches Kohler's own controls.** On a real valve, Simple Start in the
+  Konnect app, the touchscreen and `Shower on` all started exactly the same default shower:
+  the same outlets, temperature and flow.
+- **Starting a valve experience from Home Assistant is confirmed to work** on a real valve.
+  Stopping one from the `Experience` dropdown hasn't been tried yet.
+
 ## 1.09 — 2026-10-22
 
 **Added**

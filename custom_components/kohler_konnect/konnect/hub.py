@@ -1,21 +1,15 @@
 """Commands for the Anthem Plus system controller (SKU ``HUB``).
 
-The HUB is favorite-centric. There is **no direct "set outlet/temperature/flow now"**
-command: to run a specific configuration you create or edit a *favorite* and activate it.
-The only direct commands are bare on/off for the controller's own stored default
-(``valvecontrol`` / ``steamcontrol``) and ``stopall``. Konnect 3.0.6 confirms it: nine HUB
-command paths plus ``hub/factoryreset``, and no light, music, volume or temperature command
-anywhere in the app.
+The controller is favorite-centric: there is no "set outlets, temperature and flow now"
+command. To run a configuration, create or edit a favorite and activate it. The only
+direct commands are on/off for the controller's stored default (``valvecontrol``,
+``steamcontrol``) and ``stopall``. See `docs/protocol/hub_controller.md` §3 and §4.
 
-Two constraints shape every caller:
-
-* **Editing a favorite is rejected while the system runs** (``statusCode 902``), surfaced
-  as :class:`~.client.DeviceRunning`. Activating one is allowed at any time — so the
-  practical pattern is to pre-create a favorite per state you want and switch between
-  them by activation, never editing at runtime.
-* **An all-off favorite is not the same as ``stopall``.** Activating an empty favorite
-  stops the outputs but leaves the system reporting that favorite as running; only
-  ``stopall`` fully idles it.
+* Editing a favorite is refused while the system runs (``statusCode 902``, raised as
+  :class:`~.client.DeviceRunning`); activating one is always allowed. So pre-create a
+  favorite per state and switch between them by activation.
+* An all-off favorite is not ``stopall``: it stops the outputs but the favorite still
+  reports as running. Only ``stopall`` fully idles the system.
 """
 
 from __future__ import annotations
@@ -39,17 +33,12 @@ from .models import ValveModel
 ON = "ON"
 OFF = "OFF"
 
-# Read and write disagree on shape, which is a standing source of bugs:
-#   READ  water.zoneN.outlets     = a COUNT, and outletState = a 6-slot array
-#   WRITE water.zoneN.outlets     = a list of 0-BASED POSITIONS to open
-#
-# The MQTT SHOWER_VALVE_STS message reports the same 6-slot array per zone, e.g.
-# [1,0,0,0,0,0] meaning that zone's outlet 1 is on. Every array is padded to six slots
-# regardless of hardware; only the leading slots for THAT zone's valve carry meaning —
-# three on a K-28210/K-28212, two on a K-28209 or either half of a K-28211. The trailing
-# slots are always zero and must be ignored, not read as extra outlets.
-#
-# A zone maps to a valve: zone1 is valve1, zone2 is valve2.
+# Read and write shapes differ (`docs/protocol/hub_controller.md` §1):
+#   READ  water.zoneN.outlets = a count, and outletState = a 6-slot array
+#   WRITE water.zoneN.outlets = a list of 0-based positions to open
+# Outlet arrays (REST and MQTT SHOWER_VALVE_STS) are padded to six slots per zone; only
+# the zone valve's leading slots mean anything: three on a K-28210/K-28212, two on a
+# K-28209 or either half of a K-28211. zone1 is valve1, zone2 is valve2.
 OUTLETS_PER_ZONE = 3
 ZONE_ARRAY_SLOTS = 6
 
@@ -64,12 +53,8 @@ def outlet_flags(
 ) -> list[bool]:
     """Convert one zone's padded outlet array into that zone's real outlet flags.
 
-    ``outlet_count`` is how many outlets that zone's valve actually has; the remaining
-    slots are padding.
-
-    Every capture carries integers, but a slot is read through :func:`_slot_on` so a
-    ``["1", "0", "0"]`` array means what ``[1, 0, 0]`` does. Plain ``bool()`` read the
-    string ``"0"`` as True — every outlet in the zone running.
+    ``outlet_count`` is how many outlets the zone's valve has; later slots are padding.
+    Slots are read through :func:`_slot_on`, so ``"0"`` is off, as ``0`` is.
     """
     state = outlet_state or []
     return [
@@ -80,11 +65,8 @@ def outlet_flags(
 def _slot_on(value: Any) -> bool:
     """One outlet-array slot: a number, or the same number as a string.
 
-    A numeric string reads as its whole part does, through the same `int(float())` as
-    :func:`_int_or_none`: ``"1.0"`` is on like ``"1"`` — plain `int` refused it, and an
-    open outlet read as off until 2026-10-16 — and ``"0.0"`` is off. Anything else other
-    than ``"true"``/``"on"`` reads as off, ``"nan"`` and ``"inf"`` included — the same as
-    the padding beyond the zone's outlets, and the same as ``0``.
+    A numeric string reads by its whole part (``"1.0"`` on, ``"0.0"`` off) and
+    ``"true"``/``"on"`` read as on; any other string is off.
     """
     if isinstance(value, str):
         text = value.strip().lower()
@@ -111,12 +93,9 @@ def zone_outlet_flags(
     return flags
 
 
-# The HUB uses "zone" and "valve" interchangeably, and not consistently within one payload:
-# hub-state's shower entries carry `zone: "1"`, favorites nest under `water.zone1`,
-# hub-configuration's parts are `valve1`/`valve2`, and MQTT SHOWER_VALVE_STS attributes may
-# carry either a `zone` number or a `component` of "valve1"/"valve2". They all mean the same
-# thing. Anything reading a HUB payload should go through zone_number() rather than picking
-# one field and hoping.
+# HUB payloads name the zone several ways (`zone: "1"`, `component: "valve1"`, …), all
+# meaning the same; read them through `zone_number`. See
+# `docs/protocol/hub_controller.md` §1.
 _ZONE_FIELDS = ("zone", "component", "valve", "valveIndex", "zoneIndex")
 
 
@@ -155,8 +134,7 @@ def _connected(value: Any) -> bool:
 
 
 def _int_or_none(value: Any) -> int | None:
-    # `OverflowError` too: `float("Infinity")` parses, and `int()` of it raises that rather
-    # than `ValueError` — out of `HubSettings.from_configuration`, failing the seed.
+    # `OverflowError` too: `int(float("Infinity"))` raises it, not `ValueError`.
     try:
         return int(float(str(value)))
     except (TypeError, ValueError, OverflowError):
@@ -176,23 +154,12 @@ def _ip_or_none(value: Any) -> str | None:
 class HubSettings:
     """The controller's own settings, as ``hub-configuration`` publishes them.
 
-    **Max Shower Duration is here.** This integration long held that the controller's
-    duration was readable only through the local API. Konnect 3.0.6 reads it from
-    ``configuration.systemSettings.maxShowerDuration`` — minutes — as the default and cap
-    for a favorite's duration. Whether the cloud copy follows an edit made on the
-    controller's web page promptly is unverified: REST has been seen to lag on
-    ``amplifierSettings.monoVolume``.
-
-    ``disconnected`` applies the app's own rules (``nc0/z.java`` ``k()``): an accessory
-    counts as fitted from configuration evidence — a valve body whose ``about`` serial is
-    not all zeros, a steam generator with a non-zero ``defaultTime``, an amplifier with a
-    volume, any configured light group — and is reported when fitted but its ``parts``
-    entry is not ``Connected``. That is the case ``HubCapabilities`` cannot see: it gates
-    entities on ``parts`` alone, so a fitted accessory that drops off simply vanishes.
-
-    ``lan_ip`` is the controller's address on the home network: ``about.hub.wlan.ip``, the
-    address Konnect 3.0.6 opens the controller's web settings page (the "Embedded Server
-    Page") at, or ``about.hub.eth.ip`` for a wired controller with no Wi-Fi address.
+    ``max_shower_duration_minutes`` (``systemSettings.maxShowerDuration``) is the default
+    and cap for a favorite's duration. ``disconnected`` lists accessories that are fitted
+    but not ``Connected``, by the app's rules (`docs/protocol/hub_controller.md` §2.2);
+    `HubCapabilities`, which reads ``parts`` alone, cannot see those. ``lan_ip`` is
+    ``about.hub.wlan.ip``, else ``about.hub.eth.ip``: where the controller serves its web
+    settings page.
     """
 
     max_shower_duration_minutes: int | None = None
@@ -309,56 +276,31 @@ class HubSettings:
 
 @dataclass(frozen=True)
 class HubCapabilities:
-    """Which accessories are attached, and therefore which favorite fields exist.
+    """Which accessories are attached, and so which favorite components mean anything.
 
-    A favorite bundles ``water``, ``steam``, ``music``, and ``light`` components, but only
-    those whose hardware is present are meaningful. An account with no amplifier has no
-    music field to set.
-
-    None of this affects **activating** a favorite — that is always just an id and a
-    name, whatever the favorite contains.
+    None of this affects activating a favorite, which takes only an id and a name.
     """
 
     water: bool = False
     music: bool = False
     light: bool = False
     steam: bool = False
-    # Whether this was ever populated from a real read. Cannot be inferred from the flags:
-    # a controller with no accessories is legitimately all-False, so "empty" and "unread"
-    # look identical without this.
+    # Whether this came from a real read: a controller with no accessories is all-False
+    # too, so the flags alone cannot tell "empty" from "unread".
     known: bool = False
 
     @classmethod
     def from_configuration(cls, configuration: dict[str, Any]) -> HubCapabilities:
-        """Read capabilities from a ``hub-configuration`` response.
+        """Read capabilities from a ``hub-configuration`` ``configuration`` block.
 
-        ``parts`` reports ``Connected`` / ``NotConnected`` / ``null`` per component.
+        ``parts`` reports ``Connected`` / ``NotConnected`` / ``null`` per component,
+        compared case-insensitively as the app does. ⚠️ ``parts.valve1``/``valve2`` count
+        valve bodies, not zones: never gate zone-2 entities on ``parts.valve2``
+        (`docs/protocol/hub_controller.md` §1).
 
-        Note ``parts.valve1`` / ``valve2`` count **physical valve units**, whereas the GCS
-        API's ``valve1``/``valve2`` count **zones** within one unit —
-        ``HUB valve1 == GCS valve1 + valve2``. So a 6-outlet K-28212 correctly reports
-        ``valve1: Connected`` and ``valve2: NotConnected``: there is no second valve body.
-
-        Never gate zone-2 entities on ``parts.valve2``; it would hide half the outlets on a
-        normal install. Use ``zoneone``/``zonetwo`` ``configuredoutlets`` for topology.
-
-        ``Connected`` is compared case-insensitively, through the same :func:`_connected`
-        as :class:`HubSettings` and the app. An exact match read a lowercase
-        ``connected`` as absent and hid every accessory entity.
-
-        A configuration or ``parts`` that is not an object says nothing about the hardware,
-        so it comes back **unread** (``known=False``) rather than as "no accessories": the
-        platforms create accessory entities when capabilities are unknown, and the next
-        seed reads again. Raising here — an `AttributeError` until 2026-10-16 — failed
-        setup, since the caller catches only `KohlerError`.
-
-        **So does a reply with no ``parts`` in it** — none at all, ``null``, or an empty
-        object (2026-10-16). Every real configuration names its parts, ``NotConnected`` or
-        ``null`` included, so one naming none is a degraded reply — ``{}``, or the
-        ``{"configuration": null}`` the caller turns into ``{}`` — not a controller without
-        accessories. Those read as known and empty, and since the coordinator re-reads only
-        while ``known`` is False, Music, Light and Steam were never created until a manual
-        reload.
+        A block that is not an object, or names no parts at all, is a degraded reply, not
+        a controller without accessories. It returns unread (``known=False``), so
+        accessory entities are still created and the coordinator reads again.
         """
         if not isinstance(configuration, dict):
             return cls()
@@ -394,11 +336,8 @@ class HubDevice:
     ) -> None:
         self._client = client
         self.device_id = device_id
-        # Favorite temperatures are **whole °F on the wire, whatever the account's unit.**
-        # Konnect 3.0.6 converts a Celsius account's entry to °F before it goes into the
-        # request (`nc0/z.java` `G0()` -> `F()`, `round(c * 1.8 + 32)`, at every zone and
-        # steam setter) and back to °C only for display. This said the opposite until
-        # 2026-10-07 — harmless only because nothing called the favorite writers yet.
+        # The account's unit, used only to convert input: favorite temperatures are whole
+        # °F on the wire whatever it is (`docs/protocol/hub_controller.md` §4).
         self.temperature_unit = temperature_unit
 
     def to_wire_temperature(self, temperature: float) -> int:
@@ -417,8 +356,7 @@ class HubDevice:
     async def _async_base(self) -> dict[str, Any]:
         """`_base()`, signing in first if the tenant id is not known yet.
 
-        A client given no stored id learns it from its first access token, so a command
-        sent as the first call would otherwise carry ``tenantId: null``.
+        Otherwise a command sent as the client's first call would carry ``tenantId: null``.
         """
         await self._client.async_tenant_id()
         return self._base()
@@ -437,10 +375,9 @@ class HubDevice:
     async def async_set_steam(self, on: bool) -> Any:
         """Run or stop the controller's default steam configuration.
 
-        Runs at ``steamSettings.defaultTemperature`` for ``defaultTime`` — the body carries
-        nothing else. The app refuses to start steam while the shower runs, and the
-        controller refuses a favorite holding both; ``KohlerKonnectCoordinator`` mirrors the
-        first guard.
+        Runs at ``steamSettings.defaultTemperature`` for ``defaultTime``; the body carries
+        nothing else. The app refuses to start steam while the shower runs;
+        ``KohlerKonnectCoordinator`` enforces the same guard.
         """
         return await self._client.async_request(
             "POST",
@@ -449,7 +386,7 @@ class HubDevice:
         )
 
     async def async_stop_all(self) -> Any:
-        """Fully idle the system — the only true "off"."""
+        """Fully idle the system: the only true "off"."""
         return await self._client.async_request(
             "POST", HUB_STOP_ALL, json_body=await self._async_base()
         )
@@ -466,7 +403,7 @@ class HubDevice:
             HUB_FAVORITE_CONTROL,
             json_body={
                 **(await self._async_base()),
-                # Control takes the id as a STRING; create/delete take it as an integer.
+                # Control takes the id as a string; create, edit and delete as an int.
                 "id": str(favorite_id),
                 "name": name,
                 "state": ON if on else OFF,
@@ -537,21 +474,12 @@ class HubDevice:
     ) -> dict[str, Any]:
         """Assemble a favorite body the way Konnect 3.0.6 does.
 
-        **Components are omitted, not nulled.** The app serialises with Gson defaults, so
-        an unset component never reaches the wire: ``water`` only when a zone has outlets,
-        ``steam`` only when steam is on, ``music`` only with an amplifier source, ``light``
-        only for active groups, and ``zone2`` only when used. (``music`` was already known
-        to fail with HTTP 400 when sent all-null.) Until 2026-10-07 this sent ``zone2: null``,
-        ``steam: {0, 0}`` and ``light: []``; app-side only, untested live either way.
+        Unused components are omitted, not nulled (`docs/protocol/hub_controller.md` §4):
+        a zone only when it opens an outlet, ``water`` only with such a zone, ``steam``
+        only when given, ``music`` only when not None, ``light`` only when non-empty.
 
-        A zone is "used" when it opens an outlet. :meth:`zones_for` builds every zone the
-        model has, so one with nothing open is dropped here — until 2026-10-16 it went out
-        as ``outlets: []``, a shape the app never sends, and a favorite with no water at all
-        still carried ``water``.
-
-        🚨 **A favorite may not hold both water and steam** — the app refuses to build one
-        ("A favorite cannot contain both Shower and Steam"), so this refuses too rather
-        than find out what the controller does with it.
+        Raises ValueError for a favorite with both water and steam, which the app forbids
+        and the controller's response to is untested.
         """
         water = {
             key: value
@@ -580,11 +508,10 @@ class HubDevice:
     ) -> dict[str, Any]:
         """Build a water zone for a favorite body.
 
-        ``temperature`` is **whole °F** — convert an account-unit value with
-        :meth:`to_wire_temperature` first. The app bounds it 59 °F to the controller's
-        ``showerMaxTemperature``, and ``flowrate`` 10-100 (only editable when
-        ``flowRateEnable`` is ``"1"``). ``outlets`` are per-outlet flags, converted here to
-        the 0-based position list the API expects.
+        ``temperature`` is whole °F (convert with :meth:`to_wire_temperature`); the app
+        bounds it to 59 °F through ``showerMaxTemperature``. ``flowrate`` is a percentage,
+        10-100, editable only when ``flowRateEnable`` is ``"1"``. ``outlets`` are
+        per-outlet flags, sent as 0-based positions.
         """
         return {
             "temperature": int(temperature),
@@ -599,14 +526,11 @@ class HubDevice:
         temperature: int,
         flowrate: int = 100,
     ) -> dict[str, dict[str, Any] | None]:
-        """Build both water zones from GLOBAL outlet flags for this valve model.
+        """Build both water zones from global outlet flags for this valve model.
 
-        Pass one flag per physical outlet (four for a K-28211, six for a K-28212); this
-        splits them across zone1/zone2 the way the model dictates and converts each zone's
-        flags to the 0-based position list a write expects.
-
-        A zone the model does not have comes back as ``None``. Both that and a zone with no
-        outlet open are left out of the body by :meth:`_favorite_body`, as the app does.
+        Pass one flag per physical outlet (four for a K-28211, six for a K-28212). A zone
+        the model lacks comes back as ``None``; :meth:`_favorite_body` drops that and any
+        zone with no outlet open.
         """
         zone1_flags, zone2_flags = model.split_outlets(outlets)
         zones: dict[str, dict[str, Any] | None] = {
@@ -621,10 +545,9 @@ class HubDevice:
 
     @staticmethod
     def music(source: str, volume: int = 70) -> dict[str, Any]:
-        """Build a music component. ``source`` is ``"Aux"`` or ``"SdCard"``.
+        """Build a music component. ``source`` is ``"Aux"`` or ``"SdCard"`` (no Bluetooth).
 
-        There is no Bluetooth source. ``songID``/``musicRepeat`` are only meaningful for
-        Kohler Playlist streaming and are sent empty otherwise.
+        ``volume`` is 0-100. ``songID`` and ``musicRepeat`` are sent empty, as the app does.
         """
         return {
             "source": source,
@@ -639,18 +562,12 @@ class HubDevice:
     async def async_control_experience(
         self, title: str, category: str, on: bool = True
     ) -> Any:
-        """Start or stop a firmware experience.
+        """Start or stop a firmware experience by its title (not its numeric id).
 
-        All three experience endpoints share one body; the path is chosen by the category
-        the experience appeared under in the experiences read. Sending a shower experience
-        to the steam path does not work.
-
-        ``title`` is the experience's TITLE string, not its numeric id.
-
-        Experiences carry no outlet or curve data in the API — the program is internal to
-        the firmware and always runs on the default zone1/outlet1 (the app says so: "will
-        run from the fitting connected to the first port of zone 1"). Use a favorite when
-        you need a specific outlet. Run state comes back as ``SHOWER_EXP_STS`` /
+        ``category`` is the group the experience was listed under in the experiences read,
+        and picks the endpoint; any other path does not work. Raises ValueError for an
+        unknown category. Experiences always run on zone 1's first outlet; use a favorite
+        for a specific outlet. Run state arrives as ``SHOWER_EXP_STS`` /
         ``STEAM_EXP_STS`` / ``ICE_SHOWER_EXP_STS``.
         """
         endpoint = EXPERIENCE_ENDPOINTS.get(category)

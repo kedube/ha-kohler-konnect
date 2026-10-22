@@ -1,22 +1,15 @@
 """Shared entity bases for the showers. Faucet entities have their own, in `faucet/`.
 
-Two kinds of shower device are registered, never merged, because they behave differently
-and their state arrives on different schedules:
+Two kinds of shower device, each bound to its own coordinator object:
 
-* **Anthem Valve** — a digital valve. Authoritative for outlets, temperature, and flow.
-  An account can have several, each its own device bound to its own
-  :class:`~.coordinator.Valve`.
-* **Anthem Plus** — a system controller. Owns favorites, music, steam, and lighting. An
-  account can have several — one per bathroom — and each is its own device, bound to its
-  own :class:`~.coordinator.Controller`.
+* **Anthem Valve** (:class:`~.coordinator.Valve`) — authoritative for outlets,
+  temperature and flow.
+* **Anthem Plus** (:class:`~.coordinator.Controller`) — favorites, music, steam and
+  lighting.
 
-A valve and a controller are usually the same physical shower reached through two different
-touchscreens, but presenting them as one device would imply a consistency that does not
-exist.
-
-The SKU strings ``GCS`` and ``HUB`` appear nowhere a user can see them. They exist only in
-Kohler's API — not in the app, the manual, or on the hardware — so every user-facing string
-uses the names Kohler itself shows: "Anthem" and "Anthem Plus".
+A valve and a controller often drive the same physical shower, but they are never merged:
+their state arrives separately and can disagree. User-facing strings say "Anthem" and
+"Anthem Plus", never the API product codes ``GCS`` and ``HUB``.
 """
 
 from __future__ import annotations
@@ -49,20 +42,13 @@ __all__ = [
 
 
 def valve_device_info(valve: Valve) -> DeviceInfo:
-    """The valve's own device.
-
-    One definition, because two places register it: every valve entity, and setup, which
-    registers it ahead of the platforms whenever zone sub-devices need it as their parent.
-    """
+    """The valve's own device; shared by valve entities and setup's parent registration."""
     return DeviceInfo(
         identifiers={(DOMAIN, valve.device_id)},
-        # "Anthem Valve" alone with one valve; suffixed with the Konnect name when there
-        # are several — see `coordinator.valve_names`.
+        # See `coordinator.valve_names`.
         name=valve.name,
         manufacturer="Kohler",
-        # The valve's own layout — detected from the valve, else the model chosen at
-        # setup — which is what is printed on the hardware, far more useful than the API's
-        # "GCS".
+        # The valve's layout model number (e.g. K-28212), as printed on the hardware.
         model=valve.model.sku,
         model_id=valve.model.name,
         serial_number=valve.gcs_device.serial_number,
@@ -101,20 +87,16 @@ def zone_label(
     label: str,
     grouping: str | None = None,
 ) -> str:
-    """`Temperature` on a single-zone device, or disambiguated by the grouping mode.
+    """`label` unchanged on a single-zone device, else disambiguated by grouping mode.
 
-    With one zone there is nothing to disambiguate, and a number on every entity of a
-    3-outlet valve is noise. On a multi-zone valve, three modes are offered:
+    On a multi-zone valve:
 
-    * **Numbered (default)** — appends the zone number (`Temperature 1`, `Temperature 2`).
-    * **Separate zone sub-devices** — each zone is its own device (`Anthem Valve Zone 1`),
-      so the entity inside that device needs no suffix (`Temperature`).
-    * **Outlet-labelled controls** — stays on one device and names the zone's outlets on
-      the control or sensor (`Temperature (Showerhead, Body Sprays)`), falling back to
-      the zone number until at least one fixture in the zone is known.
+    * **numbered** (default) — `Temperature 1`, `Temperature 2`;
+    * **subdevices** — `Temperature`, since the zone's own device scopes it;
+    * **outlet_labels** — `Temperature (Showerhead, Body Sprays)`, or the zone number
+      until a fixture in the zone is known.
 
-    Takes a valve or a controller — both carry a `model`. A controller has no per-outlet
-    fixture codes, so on a multi-zone controller it always appends the zone number.
+    A controller has no fixture codes, so a multi-zone controller always gets the number.
     """
     if len(device.model.zones) <= 1:
         return label
@@ -142,59 +124,39 @@ def outlet_name(
     outlet: int,
     grouping: str | None = None,
 ) -> str:
-    """`Rainhead`, `Rainhead 2` on a multi-zone valve, or `Outlet 1` when unknown.
+    """An outlet's display name: `Rainhead`, `Rainhead 2`, or `Outlet 1` when unknown.
 
-    Lives here rather than on the switch because the Max Shower Duration select names each
-    outlet the same way in its `per_outlet` attribute, and a select platform reaching into a
-    switch platform for it would couple the two for no reason.
+    Shared by the outlet switches and the Max Shower Duration select's `per_outlet`.
 
-    Three rules, in order:
+    * The fixture name is used where the valve's `outLetType` maps to a confirmed one;
+      otherwise the position (`Outlet 1`, or `Outlet 1.2` with several zones on one
+      device).
+    * The zone suffix follows the grouping mode: none on a single-zone valve or in
+      `subdevices`; in `outlet_labels` only when the fixture type appears in more than one
+      zone; in `numbered` always (`Showerhead 1`).
 
-    * **The fixture name wins** where the valve's `outLetType` maps to a confirmed one —
-      `Rainhead` says what the entity does in a way `Outlet 1` never can.
-    * **The zone suffix follows the grouping mode:**
-      - Single-zone valves and `subdevices` mode drop the zone number (`Showerhead`),
-        since the device itself scopes the zone.
-      - `outlet_labels` mode drops the zone number whenever the fixture type is unique
-        across the valve (`Showerhead`, `Body Sprays`, `Rainhead`, `Handshower`),
-        keeping it only if both zones carry the same fixture type on the single device.
-      - `numbered` mode appends the zone number on multi-zone valves (`Showerhead 1`).
-    * **An unknown code falls back to the position** — `Outlet 1` (or `Outlet 1.2` when
-      multiple zones share one device). Naming an outlet after a code nobody has
-      confirmed would be inventing a fixture; the number is honest.
-
-    Read **once, at construction**. Per-outlet types arrive gradually over MQTT and via the
-    REST seed, so a valve that has not announced yet names its outlets by position and picks
-    up fixture names on the next restart. Renaming entities live would change their ids
-    underneath running automations, which is worse than waiting.
+    The outlet switches read it once, at construction, so a fixture type that arrives
+    after setup is picked up at the next reload.
     """
     mode = grouping if grouping is not None else valve.zone_grouping
     single_zone_scope = len(valve.model.zones) <= 1 or mode == ZONE_GROUPING_SUBDEVICES
 
     fixture = _fixture_at(valve, zone, outlet)
     if fixture is None:
-        # No confirmed fixture: name it by position. `Outlet 1` when scoped to one zone,
-        # and `Outlet 1.2` on a multi-zone single device, matching the numbering below.
+        # No confirmed fixture: name it by position.
         if not single_zone_scope:
             return f"Outlet {zone}.{outlet}"
         return f"Outlet {outlet}"
 
-    # **Two outlets of the same fixture type in one zone is legal** — a pair of body sprays,
-    # or the two showerheads a K-28212 can carry. Naming both `Showerhead` would build the
-    # same unique id twice, and Home Assistant drops the second silently: one outlet would
-    # simply not exist, with no error to explain it. So a repeated fixture keeps its
-    # position as a suffix, and only a repeated one does.
+    # A zone can hold two outlets of one fixture type (e.g. two showerheads on a
+    # K-28212); each gets its position among them as a suffix so the names differ.
     same = [
         position
         for position in range(1, valve.model.outlets_in_zone(zone) + 1)
         if _fixture_at(valve, zone, position) == fixture
     ]
     if len(same) > 1:
-        # Both this suffix and `zone_label`'s are bare numbers, so applying them together
-        # would read `Showerhead 2 1` — two numbers meaning different things, in an order
-        # nobody can guess. The zone leads, because that is the coarser grouping: the second
-        # showerhead in zone 2 is `Showerhead 2.2`, and in a single-zone scope just
-        # `Showerhead 2`.
+        # Zone first, then position: the second showerhead in zone 2 is `Showerhead 2.2`.
         position = same.index(outlet) + 1
         if not single_zone_scope:
             return f"{fixture} {zone}.{position}"
@@ -221,13 +183,8 @@ def outlet_name(
 def outlet_unique_id(valve: Valve, zone: int, outlet: int) -> str:
     """An outlet switch's unique id: the valve's id and the outlet's position.
 
-    **Never its name.** Until 2026-10-08 it followed the fixture name, which arrives over
-    MQTT or REST and so may not be known at the first setup: a switch registered as `Outlet
-    1.3` needed migrating to `..._rainhead` once the type arrived, and one registered as
-    `..._rainhead` came back as a second `..._outlet_3` entity after a startup whose read
-    failed. The position never changes, so neither does the entity; its name follows the
-    fixture, and its entity id stays what it was first registered as. Fixed whatever
-    `zone_grouping` says, too.
+    ⚠️ Never derived from the fixture name or `zone_grouping`: the fixture type may not be
+    known at setup, and the id must not change once it is.
     """
     return f"{valve.device_id}_zone_{zone}_outlet_{outlet}"
 
@@ -235,18 +192,12 @@ def outlet_unique_id(valve: Valve, zone: int, outlet: int) -> str:
 class _KohlerDeviceEntity(CoordinatorEntity[KohlerKonnectCoordinator]):
     """Re-render only for a message about this entity's own device.
 
-    The account has one coordinator, so every notification reaches every shower entity.
-    For a message from one device, `KohlerKonnectCoordinator.devices_changed` names that
-    device for the length of the notification, and an entity belonging to another skips
-    its state write — until 2026-10-16 every message from any valve or controller wrote
-    the state of every entity on the account. A notification that is not about one device
-    (a reseed, a cloud check, a usage or firmware read, midnight) leaves it None, and
-    everything re-renders as before — and so does the first message after a failed
-    refresh, which makes every entity on the account available again.
+    One coordinator serves every shower entity. `KohlerKonnectCoordinator.devices_changed`
+    names the device a notification is about; entities of other devices skip the state
+    write. When it is None (reseed, usage read, first message after a failed refresh, ...)
+    everything re-renders.
 
-    `_device_id` is always the Kohler device's own — the valve's for a zone sub-device's
-    entities too, since a zone has no messages of its own. Faucet entities sit on their own
-    coordinators and never see this.
+    `_device_id` is the Kohler device's id, the valve's for zone sub-device entities too.
     """
 
     _device_id: str
@@ -269,16 +220,9 @@ class _KohlerDeviceEntity(CoordinatorEntity[KohlerKonnectCoordinator]):
 class KohlerValveEntity(_KohlerDeviceEntity):
     """Base for entities belonging to one Anthem digital valve.
 
-    Takes the :class:`~.coordinator.Valve` it belongs to, for the same reason the
-    controller base takes a `Controller`: the coordinator holds every valve on the account,
-    and an entity reads and commands exactly one. Unique ids are built on that valve's
-    device id, so a single-valve install keeps every id it had.
-
-    When `zone` is supplied on a multi-zone valve and the entry is configured for
-    per-zone sub-devices (`ZONE_GROUPING_SUBDEVICES`), the entity attaches to that
-    zone's sub-device (`Anthem Valve Zone 1` / `Zone 2`), linked to the parent valve
-    device by `registry.parent_link`, while keeping `self._device_id` (and therefore
-    `unique_id`) unchanged.
+    Unique ids are built on the valve's device id. With `zone` on a multi-zone valve in
+    `ZONE_GROUPING_SUBDEVICES` mode the entity attaches to that zone's sub-device, but
+    `_device_id` (and so the unique id) stays the valve's.
     """
 
     _attr_has_entity_name = True
@@ -305,12 +249,10 @@ class KohlerValveEntity(_KohlerDeviceEntity):
 
     @property
     def _update_device_ids(self) -> frozenset[str] | None:
-        """This valve — and, on an account of one valve and one controller, that controller.
+        """This valve, plus the controller when the account has exactly one of each.
 
-        That pairing is the one case in which the two are taken to be the same shower, and
-        the valve's `System Status` reads the controller's warm-up there, so the
-        controller's messages must still reach it. Elsewhere a valve entity reads its own
-        valve only.
+        Only that pairing is treated as one shower; the valve's `System Status` then reads
+        the controller's warm-up.
         """
         coordinator = self.coordinator
         if len(coordinator.valves) == 1 and len(coordinator.controllers) == 1:
@@ -325,10 +267,7 @@ class KohlerValveEntity(_KohlerDeviceEntity):
 class ZoneWordEntity(KohlerValveEntity):
     """A valve entity scoped to one zone, reading that zone's command word.
 
-    Zone number to word is the same two lines wherever it appears, and getting it wrong is
-    not a visible error — it silently reads the *other* zone, so a two-zone shower would
-    report and command the wrong half. Kept in one place for that reason rather than for
-    the five lines.
+    The zone-to-word mapping lives only here: a mistake silently reads the other zone.
     """
 
     def __init__(
@@ -349,20 +288,9 @@ class ZoneWordEntity(KohlerValveEntity):
 class KohlerControllerEntity(_KohlerDeviceEntity):
     """Base for entities belonging to one Anthem Plus system controller.
 
-    Takes the :class:`~.coordinator.Controller` it belongs to, not just the coordinator:
-    the coordinator holds every controller on the account, and an entity reads and commands
-    exactly one of them. Unique ids are built on that controller's device id, so a
-    single-controller install keeps every id it had before the list existed.
-
-    **Available whenever the entry is — deliberately no freshness test.**
-    Session 10 flagged that 18 hours of silence looks healthy here; closed 2026-08-22 as
-    designed. This integration is push-only, so silence is the normal state of an unused
-    shower — "no messages" means "no changes", not "no data" — and the REST reseed
-    refreshes controller state on every reconnect. A staleness timeout would mark a
-    healthy-but-quiet system unavailable on every calm day, and the one honest probe (the
-    local ping) was removed 2026-08-15 as the integration's only polling loop. The
-    controller's Last Update sensor is the freshness surface instead. See
-    `docs/protocol/hub_controller.md` §5.
+    Unique ids are built on the controller's device id. Available whenever the entry is,
+    with no staleness timeout: state is push-only, an idle shower is silent, and the REST
+    reseed refreshes it on every reconnect. The Last Update sensor shows freshness.
     """
 
     _attr_has_entity_name = True
@@ -375,14 +303,13 @@ class KohlerControllerEntity(_KohlerDeviceEntity):
         self._device_id = controller.device_id
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, controller.device_id)},
-            # "Anthem Plus" alone with one controller; suffixed with the Konnect name when
-            # there are several — see `coordinator.controller_names`.
+            # See `coordinator.controller_names`.
             name=controller.name,
             manufacturer="Kohler",
             model="Anthem+ System Controller",
             serial_number=controller.device.serial_number,
-            # The controller's web settings page, from the LAN address in
-            # `hub-configuration`. Kept current by the coordinator after each seed.
+            # LAN web settings page from `hub-configuration`; the coordinator updates it
+            # after each seed.
             configuration_url=controller.settings.web_url,
         )
 

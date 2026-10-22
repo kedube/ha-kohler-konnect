@@ -21,11 +21,11 @@ Confidence markers are explained in the [README](README.md#confidence): **live**
 **Anthem writes need a token from the `B2C_1A_signin` policy.** Tokens from the ROPC policy are accepted for reads but get HTTP 403 on the Anthem's `/commands/*` (live). **The Sensate faucet accepts ROPC tokens for its commands** (`commands/faucet/onoff` and `dispense`, live in `ha-kohler-sensate`), so the restriction is per product, not account-wide. A `B2C_1A_signin` token is what the Konnect app holds for every product, so one sign-in through that policy covers them all; that is what `kohler_konnect` does (its faucet commands with that token are app-confirmed, not yet live). The redirect URI is a custom scheme, so the usual browser round trip is impossible. The integration instead drives the policy server-side, the way the sign-in page's own JavaScript does:
 
 1. `GET /authorize` with PKCE. Keep the cookies, and take `csrf` and `transId` from the page's `var SETTINGS = {...}` blob.
-2. `POST {policy}/SelfAsserted` with the email and password. A small JSON status comes back; `AADB2C90053` means bad credentials.
+2. `POST {policy}/SelfAsserted` with the email and password. It answers HTTP 200 even when it refuses: the result is the JSON `status` (`"200"` or not), with `errorCode` and `message`. `AADB2C90053` means bad credentials. ⚠️ The `x-ms-cpim-*` cookies must go back exactly as received: aiohttp's default cookie jar re-quotes them, and B2C then answers a bare 400 with no error code (live; the integration uses `CookieJar(quote_cookie=False)`).
 3. `GET {policy}/api/CombinedSigninAndSignup/confirmed` **without following redirects**. The `302 Location:` header carries `msauth.com.kohler.hermoth://auth/?code=…`.
 4. `POST /oauth2/v2.0/token` with that code and the PKCE verifier.
 
-**Refresh tokens rotate on every refresh** (live). If you drop the new one, the account is stranded until the next interactive sign-in. They last up to about 90 days. A useful error code: `AADB2C90006` means the redirect URI is not registered.
+**Refresh tokens rotate on every refresh** (live). If you drop the new one, the account is stranded until the next interactive sign-in. They last up to about 90 days. B2C answers `invalid_grant` for a refresh token that was already redeemed, exactly as for an expired or revoked one. `expires_in` sometimes arrives as a string; when it is missing, assume B2C's default of 3600 s. A useful error code: `AADB2C90006` means the redirect URI is not registered.
 
 The access token's claims carry the tenant id (`decode_tenant_id` in `konnect/auth.py`). Every request below needs it.
 
@@ -80,6 +80,8 @@ Konnect models `statusCode` as a **string** and translates it only when the HTTP
 
 Every read carries a device or tenant id in its path. If you log or raise errors that include paths, redact `…/gcs-xxx/<id>`, `…/faucet-xxx/<id>`, `…/customer-device/<id>`, `…/firmware/<type>/<id>`, `?DeviceIds=<id>` and `…/mobile/settings/<tenant>/<identity>`. See `KohlerClient.safe_path` in `konnect/client.py`. Kohler device ids double as cloud addresses.
 
+Configuration replies (`gcs-configuration`, the faucet's configuration) also carry a top-level `iot` block with the device's IoT Hub connection details. Never log or report it.
+
 ## 3. The account
 
 `GET /devices/api/v1/device-management/customer-device/{tenantId}` (live) returns:
@@ -119,7 +121,7 @@ Other account routes (app): `customer-device/{tenantId}/home` (address); `PATCH 
 }
 ```
 
-- **Persist `mobileDeviceId` and reuse it.** A fresh one per connect registers a new "phone" on the account every time. The app uses the phone's `ANDROID_ID`.
+- **Persist `mobileDeviceId` and reuse it.** A fresh one per connect registers a new "phone" on the account every time. The app uses the phone's `ANDROID_ID`. Don't share one between two clients: IoT Hub accepts a second connection with the same client id and immediately drops the older one, so the two knock each other off in turn (observed).
 - **Never persist the password.** It is a short-lived SAS token, so fetch it on every connect.
 - `DELETE /platform/api/v1/mobile/settings/{tenantId}/{mobileDeviceId}` unregisters. The app does this on sign-out.
 
@@ -158,7 +160,7 @@ Status arrives as **direct-method calls** on `$iothub/methods/POST/ExecuteContro
 
 The app also sends a fixed `messageId` and `sysid`. It never publishes control commands; all writes are HTTPS.
 
-**A brand-new registration hears nothing for about the first minute**, despite a clean CONNECT and granted SUBACKs (live). Register once, hold the connection, and treat early silence as meaningless. Reconnecting per command guarantees you receive nothing. It is an **untested hypothesis** that the missing `MOBILECONNECT` event causes this delay; this integration doesn't send it yet.
+**A brand-new registration can hear nothing for up to a minute**, despite a clean CONNECT and granted SUBACKs (live): five sessions on fresh identities each got their first message within 60 s, the earliest at 37 s. Register once, hold the connection, and treat early silence as meaningless. Reconnecting per command guarantees you receive nothing. It is an **untested hypothesis** that the missing `MOBILECONNECT` event causes this delay; this integration doesn't send it yet.
 
 **The broker replays nothing on connect** (live, 27 sessions). The first message is always a change event, never a state dump, and quiet periods of 12 h or more are normal. So read state over REST after every connect.
 
@@ -189,7 +191,13 @@ State reads (`gcs-state/gcsadvancestate`, `hub-state`, the faucet state) carry:
 - `lastConnected` (epoch)
 - `deviceConnectionEventSequenceNumber`
 
-Only `Connected` has been captured. `Disconnected` is the negative the app tests for, and **the app treats a device as online unless the value is exactly `Disconnected`** (app, `mc0/n.java`, `ui/ota/f.java`). The faucet screens are the exception: they compare with `Connected` and default a **missing** value to `Disconnected` (app; see the faucet chapter, §2.2). Nothing pushes this field. Read it when you have a reason to doubt reachability; see `cloud_watch.py` for an event-driven way to decide when.
+Only `Connected` has been captured. `Disconnected` is the negative the app tests for, and **the app treats a device as online unless the value is exactly `Disconnected`** (app, `mc0/n.java`, `ui/ota/f.java`). The faucet screens are the exception: they compare with `Connected` and default a **missing** value to `Disconnected` (app; see the faucet chapter, §2.2). Plain `gcs-state/{id}` carries `connectionState` too (live). Nothing pushes this field, and the document can trail the device: a `Disconnected` can arrive after the device has spoken again (inferred).
+
+Read it when you have a reason to doubt reachability. Silence alone is not one (live, 19-day corpus):
+- the longest provably benign valve silence was 12 h 02 m, and 35 h 49 m across all devices, while the one real outage lasted 12 h 22 m, so no silence threshold separates them;
+- a **contradiction** does: of 437 controller `SHOWER_VALVE_STS` messages reporting a zone on, 435 had a valve message within 60 s, and the two that didn't were the outage. It can only cover the time the controller is active, about 36 % of the valve's silence.
+
+`cloud_watch.py` implements a check on these triggers.
 
 ## 6. Water usage
 
@@ -212,7 +220,9 @@ Only `Connected` has been captured. `Disconnected` is the negative the app tests
   - Buckets: `gcsUsageDataDetailsList[] {intervalKey, volume, onDuration, numberOfTimesValveSwitchedOn, averageBlendTemperature, timestamp}`. `intervalKey` is `yyyy-MM-dd` or `yyyy-MM`.
   - The HUB adds hot inlet temperatures; the faucet list is `faucetUsageDataDetailsList` (live; `SenSateUsageDataDetailsList` is only the name of its model class).
 - **`volume` is litres** whatever the account unit. The app multiplies by `0.264172` for `Standard`.
-- **No unit is known for `averageBlendTemperature`.** The app never displays it, so don't guess one.
+- **No unit is known for `averageBlendTemperature`.** The app never reads it or `numberOfTimesValveSwitchedOn` — neither has a call site (app) — and values around 78 beside 104.9 °F setpoints fit no plausible unit (live). Don't guess one.
+- **A finished session appears late.** It is added only after the valve reports it closed, so a read straight after a shower misses it. 90 s later is usually enough, but not always (live).
+- Some accounts appear to file daily buckets by UTC date, so a US evening's water lands under tomorrow's `intervalKey` (inferred).
 
 ## 7. Firmware
 
@@ -225,7 +235,7 @@ Only `Connected` has been captured. `Disconnected` is the negative the app tests
 
 `<type>` values: `gcs`, `gcs/gateway`, `hub`, `sensate`, `evo`, `numi`, `blade`, `dtvplus`, `aquifer`.
 
-The check returns `{currentFirmware, firmware (the latest), firmwareUpdateAvailable, mandatoryUpdate, otaStatus, skip, estimatedTimeForOTA, fileSizeInMb, url, configuration}`. **The app decides "update available" from `firmwareUpdateAvailable` alone.**
+The check returns `{currentFirmware, firmware (the latest), firmwareUpdateAvailable, mandatoryUpdate, otaStatus, skip, estimatedTimeForOTA, fileSizeInMb, url, configuration}`. **The app decides "update available" from `firmwareUpdateAvailable` alone.** `firmwareUpdateAvailable: true` has never been observed live.
 
 Guards the app applies before installing:
 - no water running;
@@ -252,7 +262,7 @@ Each `ErrorDetail` entry has:
 - `id`, `type`
 - `timestamp` — GCS spells it this way; HUB uses `timeStamp`
 
-The app drops entries whose `errorCode` is `"0"` or empty and shows the server's text. **There is no code-to-meaning table in the app.** strings.xml carries about 40 fault descriptions that no code references.
+The app lists only entries that are `isActive` with an `errorCode` other than `"0"` or empty, and shows the server's text. **There is no code-to-meaning table in the app.** strings.xml carries about 40 fault descriptions that no code references. On a valve, the fault log is the only fault source seen to fire on hardware ([gcs_valve.md §7](gcs_valve.md#7-mqtt-messages)).
 
 ## 9. Customer notifications
 

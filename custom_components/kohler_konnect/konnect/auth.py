@@ -1,28 +1,18 @@
 """Server-side Azure AD B2C sign-in for Kohler Konnect.
 
-Kohler's B2C app registration only accepts a **custom-scheme** redirect URI
-(``msauth.com.kohler.hermoth://auth``) — there is no localhost or web redirect, so the
-usual "let the browser come back to us" OAuth dance is impossible. The previous approach
-sent the user to the sign-in page in a browser and asked them to copy the final
-``msauth://...?code=...`` URL back; modern browsers drop that navigation without ever
-showing the URL, which made it unusable.
+Kohler's B2C app registration accepts only a custom-scheme redirect URI
+(``msauth.com.kohler.hermoth://auth``), so no browser round trip can return the code.
+This module drives the B2C custom policy in-process instead, as the sign-in page's own
+JavaScript does:
 
-This module avoids the problem entirely by driving the B2C custom policy the way the
-sign-in page's own JavaScript does, in-process:
+1. ``GET /authorize`` with PKCE: session cookies, plus ``csrf`` and ``transId`` from the
+   page's ``SETTINGS`` blob.
+2. ``POST /SelfAsserted`` with the email and password: a small JSON status.
+3. ``GET /api/CombinedSigninAndSignup/confirmed`` without following redirects: the code
+   is read from the ``302 Location`` header.
+4. ``POST /token``: the code and PKCE verifier for tokens.
 
-1. ``GET /authorize`` with PKCE — collects session cookies plus the ``csrf`` token and
-   ``transId`` from the page's ``SETTINGS`` blob.
-2. ``POST /SelfAsserted`` with the username and password — returns a small JSON status.
-3. ``GET /api/CombinedSigninAndSignup/confirmed`` **without following redirects** — B2C
-   answers ``302 Location: msauth.com.kohler.hermoth://auth/?code=...``.
-4. ``POST /token`` — exchanges that code, with the PKCE verifier, for tokens.
-
-Step 3 is the whole trick: the unresolvable custom scheme is only ever a string in a
-response header we read ourselves. No browser is involved, so nothing can block it, and
-the user just types an email and password.
-
-Verified live 2026-08-11: the redirect URI is accepted and strictly validated, step 2
-returns ``AADB2C90053`` for bad credentials, and step 3 returns the expected 302.
+See `docs/protocol/platform.md` §1.
 """
 
 from __future__ import annotations
@@ -58,10 +48,7 @@ from .const import (
     TOKEN_EXPIRY_MARGIN_SECONDS,
 )
 
-#: This module handles credentials, so nothing here ever logs a token, a password or a
-#: username — see `client._redact_payload` for the same rule applied to payloads. Its few
-#: messages — a rotated token that could not be persisted, a refused one swapped for a
-#: newer — name no secret.
+#: ⚠️ Never log a token, password or username from this module.
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -69,15 +56,15 @@ _LOGGER = logging.getLogger(__name__)
 _SETTINGS = re.compile(r"var SETTINGS = (\{.*?\});", re.S)
 _B2C_ERROR_CODE = re.compile(r"AADB2C\d+")
 
-#: What failing to reach Kohler at all looks like. aiohttp's total timeout raises a bare
-#: `TimeoutError`, not a `ClientError` — `client.py` catches both for the same reason.
+#: Failing to reach Kohler at all. aiohttp's total timeout raises a bare `TimeoutError`,
+#: which is not a `ClientError`.
 _UNREACHABLE = (aiohttp.ClientError, TimeoutError)
 
 #: OAuth error codes meaning "try later" (RFC 6749 §4.1.2.1), not "this grant is dead".
 _OUTAGE_ERRORS = frozenset({"temporarily_unavailable", "server_error"})
 
 #: Assumed when a token reply carries no usable ``expires_in``: B2C's default access-token
-#: lifetime, and what this module has always assumed when the field was missing.
+#: lifetime.
 DEFAULT_TOKEN_LIFETIME_SECONDS = 3600.0
 
 
@@ -86,24 +73,19 @@ class AuthError(Exception):
 
 
 class AuthUnavailable(AuthError):
-    """Kohler's auth service could not be reached — the credential is not implicated.
+    """Kohler's auth service could not be reached; the credential is not implicated.
 
-    Kept distinct from every other :class:`AuthError` because the two demand opposite
-    responses. A rejected credential can only be fixed by the user re-authenticating; an
-    unreachable token endpoint fixes itself, and prompting for reauth on a transient
-    network blip would be wrong. Callers deciding whether to start a reauth flow should
-    exclude this one — see :func:`credential_is_dead`.
+    An outage fixes itself, so it must never start a reauth flow. See
+    :func:`credential_is_dead`.
     """
 
 
 def credential_is_dead(err: Exception) -> bool:
     """True when `err` means the stored credential was rejected, not that Kohler was down.
 
-    The distinction decides whether to prompt the user, so getting it wrong is expensive in
-    both directions: prompt on a network blip and reauth cards appear whenever the WAN
-    flaps; miss a real rejection and the entry sits silently dead. `AuthUnavailable` is the
-    only `AuthError` raised without Kohler having actually rejected anything, and a
-    `KohlerError` is not an auth failure at all.
+    ⚠️ This decides whether to prompt for reauth: a rejection must surface as reauth, an
+    outage must not. `AuthUnavailable` is the only `AuthError` raised without Kohler
+    rejecting anything, and a `KohlerError` is not an auth failure at all.
     """
     return isinstance(err, AuthError) and not isinstance(err, AuthUnavailable)
 
@@ -123,9 +105,9 @@ class TokenSet:
     access_token: str
     refresh_token: str
     expires_at: float
-    #: How long before `expires_at` to renew. `TOKEN_EXPIRY_MARGIN_SECONDS`, except for a
-    #: token issued with less life than that: it would count as expired from the moment it
-    #: arrived, so every single call would refresh — and rotate the refresh token.
+    #: Seconds before `expires_at` to renew. Capped at half the token's life for a
+    #: short-lived token, which would otherwise count as expired on arrival and make every
+    #: call refresh.
     refresh_margin: float = TOKEN_EXPIRY_MARGIN_SECONDS
 
     @property
@@ -156,13 +138,11 @@ def decode_tenant_id(access_token: str | None) -> str | None:
 
 
 def _token_lifetime(expires_in: Any) -> float:
-    """Seconds a new access token lives, read from the token reply's ``expires_in``.
+    """Seconds a new access token lives, from the token reply's ``expires_in``.
 
-    B2C sends a number, sometimes as a string. Anything else — null, missing, unreadable,
-    not positive — counts as `DEFAULT_TOKEN_LIFETIME_SECONDS` rather than failing the
-    request. It used to be `float(...)` on the raw value, and a null raised a bare
-    `TypeError` *after* B2C had rotated the refresh token: the new one was never stored,
-    and the one still held was already dead.
+    B2C sends a number, sometimes as a string. Anything unusable falls back to
+    `DEFAULT_TOKEN_LIFETIME_SECONDS` rather than raising: B2C has already rotated the
+    refresh token by then, and failing would lose the new one.
     """
     if isinstance(expires_in, bool):
         return DEFAULT_TOKEN_LIFETIME_SECONDS
@@ -190,9 +170,9 @@ def _pkce_pair() -> tuple[str, str]:
 
 
 def _b2c_error_code(value: object) -> object:
-    """A reply's `errorCode`, with B2C's prefix if it was sent as a bare number.
+    """A reply's `errorCode`, given the ``AADB2C`` prefix if it was sent as a bare number.
 
-    Passed over, every code so sent read as a wrong password — a lockout too (2026-10-16).
+    Without the prefix `_raise_for_b2c_error` would not recognise it.
     """
     if (isinstance(value, int) and not isinstance(value, bool)) or (
         isinstance(value, str) and value.strip().isdigit()
@@ -202,11 +182,11 @@ def _b2c_error_code(value: object) -> object:
 
 
 def _raise_for_b2c_error(*texts: object) -> None:
-    """Translate a B2C error code embedded in a response into an exception.
+    """Raise for the first B2C error code (``AADB2C…``) found in ``texts``, if any.
 
-    Each of ``texts`` is whatever the response carried, read as text, searched in turn: an
-    `errorCode` sent as a number (`90053`) raised `TypeError` from the search until
-    2026-10-16, and adding the account failed with "Unknown error".
+    Each of ``texts`` may be any value; it is searched as text. Bad credentials raise
+    `InvalidCredentials`, an unregistered redirect URI `AuthError`, anything else
+    `SignInBlocked`.
     """
     for text in texts:
         if match := _B2C_ERROR_CODE.search(str(text or "")):
@@ -229,8 +209,8 @@ def _raise_for_b2c_error(*texts: object) -> None:
 class KohlerAuth:
     """Signs in to Kohler Konnect and keeps a usable access token.
 
-    Holds the rotating refresh token in memory; callers persist it via
-    :attr:`refresh_token` so a restart does not need the password again.
+    Holds the rotating refresh token in memory and hands each new one to
+    :attr:`on_token_rotated` for persisting, so a restart does not need the password again.
     """
 
     def __init__(
@@ -243,30 +223,24 @@ class KohlerAuth:
         self._session = session
         self._tokens: TokenSet | None = None
         self._refresh_token = refresh_token
-        # Where a newer refresh token can turn up than the one this object holds — for the
-        # integration, its config entry. Read only when B2C refuses the held one as an
-        # invalid grant; see `_adopt_newer_refresh_token`. It answers None wherever taking
-        # a token up would be wrong: a coordinator already unloaded would otherwise redeem
-        # the token its successor is holding, and strand that one instead.
+        # Where a newer refresh token than the held one may be stored (the config entry);
+        # see `_adopt_newer_refresh_token`. It must answer None once its owner is unloaded,
+        # or that owner would redeem the token its successor holds.
         self._refresh_token_source = refresh_token_source
-        # Serialises refreshes. B2C invalidates a refresh token the moment it is redeemed,
-        # so two concurrent refreshes race to redeem the same one and the loser's failure
-        # is indistinguishable from a dead credential. See `async_get_access_token`.
+        # Serialises refreshes; see `async_get_access_token`.
         self._refresh_lock = asyncio.Lock()
-        # The refresh POST in flight, run as its own task — see `async_get_access_token`.
+        # The refresh in flight, run as its own task; see `async_get_access_token`.
         self._refresh_task: asyncio.Task[TokenSet] | None = None
-        #: Called with the new refresh token whenever B2C rotates one, so persistence is a
-        #: property of rotation rather than something a caller has to remember. See
-        #: `_async_token_request`.
+        #: Called with each new refresh token B2C issues, from `_async_token_request`.
+        #: ⚠️ It must persist the token at once: the previous one is already dead.
         self.on_token_rotated: Callable[[str], None] | None = None
 
     @property
     def has_credentials(self) -> bool:
         """Whether a refresh token is held at all.
 
-        False means the integration cannot obtain an access token by itself and needs the
-        password again. It does **not** mean the token is still accepted by Kohler — only a
-        real request can establish that.
+        False means the password is needed again. True does not mean Kohler still accepts
+        the token; only a real request shows that.
         """
         return bool(self.refresh_token)
 
@@ -274,9 +248,7 @@ class KohlerAuth:
     def access_token_expires_at(self) -> float | None:
         """Unix time the current access token lapses, or None if none is held.
 
-        Expiry here is routine, not a fault: the token is refreshed on demand by the next
-        request that needs one. It is worth surfacing only because a refresh that *fails*
-        is how a revoked account first shows itself.
+        Expiry is routine: the next request that needs a token refreshes it.
         """
         return self._tokens.expires_at if self._tokens else None
 
@@ -293,15 +265,11 @@ class KohlerAuth:
     async def async_sign_in(self, username: str, password: str) -> TokenSet:
         """Sign in with an email and password, entirely server-side.
 
-        Runs on a dedicated session rather than the caller's. Two reasons: the B2C
-        transaction cookies are scoped to this sign-in and should not leak into a shared
-        session, and — critically — the jar must be built with ``quote_cookie=False``.
+        Raises `InvalidCredentials`, `SignInBlocked`, `AuthUnavailable` or `AuthError`.
 
-        aiohttp's default jar re-quotes cookie values on the way out, which mangles
-        Microsoft's ``x-ms-cpim-*`` cookies; B2C then rejects the credential POST with a
-        bare ``400 Bad Request`` and no error code, which looks nothing like a cookie
-        problem. Verified live: identical requests differing only in this flag get 400 vs
-        200.
+        Runs on its own session, keeping the B2C transaction cookies out of the shared one.
+        ⚠️ Its jar must use ``quote_cookie=False``: aiohttp's default re-quotes Microsoft's
+        ``x-ms-cpim-*`` cookies, and B2C then refuses the credential POST with a bare 400.
         """
         verifier, challenge = _pkce_pair()
         state = secrets.token_urlsafe(16)
@@ -393,16 +361,10 @@ class KohlerAuth:
             payload = json.loads(body)
         except json.JSONDecodeError as err:
             _raise_for_b2c_error(body)
-            # Reached only when `_raise_for_b2c_error` recognised nothing in the body and
-            # returned. Chained so the original decode failure survives in the traceback —
-            # the body that would not parse is the useful evidence here.
+            # No B2C code found. Chained to keep the decode failure in the traceback.
             raise AuthError("Unexpected response from Kohler during sign-in.") from err
         if not isinstance(payload, dict):
-            # JSON, but not the object this step answers with: `null`, a list, a bare
-            # string. Until 2026-10-16 the `.get` below raised `AttributeError`, which the
-            # setup flow does not catch, and adding the account failed with "Unknown error"
-            # instead of saying Kohler could not be reached. Read like a page that does not
-            # parse, B2C code first.
+            # JSON but not an object: handled like a body that does not parse.
             _raise_for_b2c_error(body)
             raise AuthError("Unexpected response from Kohler during sign-in.")
         if str(payload.get("status")) != "200":
@@ -414,10 +376,10 @@ class KohlerAuth:
     async def _async_collect_code(
         self, session: aiohttp.ClientSession, csrf: str, trans_id: str
     ) -> str:
-        """Read the authorization code out of B2C's redirect, without following it.
+        """Read the authorization code from B2C's redirect, without following it.
 
-        The Location header points at the app's custom scheme, which nothing can resolve.
-        That is fine: the code is a query parameter on it and we only ever read the string.
+        ``Location`` points at the app's custom scheme, which nothing resolves; only its
+        query string is read.
         """
         try:
             async with session.get(
@@ -463,8 +425,8 @@ class KohlerAuth:
     async def async_refresh(self, refresh_token: str | None = None) -> TokenSet:
         """Mint a fresh access token from the refresh token.
 
-        B2C issues a NEW refresh token on every refresh and invalidates the old one, so the
-        result must be persisted or the account is stranded once the old token expires.
+        Unserialised; prefer `async_get_access_token`. B2C rotates the refresh token on
+        every refresh, and `_async_token_request` stores and reports the new one.
         """
         token = refresh_token or self.refresh_token
         if not token:
@@ -481,9 +443,10 @@ class KohlerAuth:
     async def _async_token_request(
         self, data: dict[str, str], *, adopt_newer: bool = True
     ) -> TokenSet:
-        """POST to the token endpoint and store the resulting TokenSet.
+        """POST to the token endpoint, store the resulting `TokenSet`, report a rotation.
 
-        ``adopt_newer`` allows the one retry described at `_adopt_newer_refresh_token`.
+        Raises `AuthUnavailable` for an outage and `AuthError` (or a subclass) for a
+        refusal. ``adopt_newer`` allows the one retry in `_adopt_newer_refresh_token`.
         """
         try:
             async with self._session.post(
@@ -496,8 +459,8 @@ class KohlerAuth:
                 try:
                     payload = await resp.json(content_type=None)
                 except ValueError as err:
-                    # B2C answers in JSON, refusals included; anything else — a gateway's
-                    # HTML 503 page — came from something in front of it.
+                    # B2C answers in JSON, refusals included; anything else (a gateway's
+                    # HTML error page) came from something in front of it.
                     raise AuthUnavailable(
                         f"Kohler's token endpoint sent a non-JSON reply (HTTP {status})"
                     ) from err
@@ -512,10 +475,8 @@ class KohlerAuth:
         if status != 200:
             error = str(payload.get("error") or "")
             detail = payload.get("error_description") or error or f"HTTP {status}"
-            # An outage is not a verdict on the credential, and a reauth prompt would be
-            # wrong: it fixes itself. Only a refusal B2C actually issued is one. 408 (the
-            # request timed out) and 429 (throttled) are outages too, as they are to
-            # `KohlerError.rejected`.
+            # An outage says nothing about the credential and must not prompt reauth.
+            # 408 and 429 count as outages, as in `KohlerError.rejected`.
             if status >= 500 or status in (408, 429) or error in _OUTAGE_ERRORS:
                 raise AuthUnavailable(f"Kohler token request failed: {detail}")
             if (
@@ -545,18 +506,9 @@ class KohlerAuth:
         )
         self._refresh_token = refresh_token
 
-        # **Persist here, not at the caller.** B2C invalidates the old token the moment a new
-        # one is issued, so an unpersisted rotation strands the account: the entry still holds
-        # a token Kohler has already retired, and the next start fails to reauth.
-        #
-        # This used to be the caller's job, and on a push-only install (`SCAN_INTERVAL` is
-        # None) the callers that did it ran once at startup and then effectively never again
-        # — while every valve write and cloud check kept rotating the token behind them. The
-        # window between redeeming and persisting was hours, not milliseconds.
-        #
-        # A failure to persist must not fail the request that triggered it: the token in
-        # memory is still good for this run, and losing it at the next restart is strictly
-        # better than breaking the call in hand.
+        # ⚠️ Persist every rotation here, at once: B2C has already retired the old token, so
+        # an unpersisted rotation strands the account at the next start. A failure to
+        # persist must not fail this request; the token in memory still works for this run.
         if rotated and self.on_token_rotated is not None:
             try:
                 self.on_token_rotated(refresh_token)
@@ -565,21 +517,16 @@ class KohlerAuth:
         return self._tokens
 
     def _adopt_newer_refresh_token(self, data: dict[str, str]) -> str | None:
-        """Take up a newer refresh token from `refresh_token_source`, if it has one.
+        """Install a newer refresh token from `refresh_token_source`, if it holds one.
 
-        For a refresh B2C refused as ``invalid_grant`` — its answer for a token already
-        redeemed, as for one expired or revoked — and only when the source holds a token
-        other than the one refused. That is a reload with a refresh in flight: the
-        coordinator being unloaded lets its refresh finish, shielded, while the new one,
-        built from the entry's token before that refresh had replaced it, sends the same
-        token again. Until 2026-10-16 the loser's refusal read as a dead credential, and
-        the owner was asked to sign in again right after a reload. The winner stores what
-        it was issued, so the loser finds that and tries once more with it.
+        For a refresh B2C refused as ``invalid_grant``, which is also its answer for a token
+        already redeemed. That happens on a reload with a refresh in flight: the unloading
+        coordinator's shielded refresh redeems the token, and its successor sends the same
+        token again. The winner persists what it was issued, so the loser takes that up
+        here and retries once with it.
 
-        Taken up before the retry, so whatever comes back — a rotation, an outage, another
-        refusal — is weighed against the newer token, not the refused one. Never more than
-        once per refresh, and never the token just refused: `_async_token_request` passes
-        ``adopt_newer=False`` to the retry.
+        Returns the newer token, already installed, or None (never the refused token).
+        The retry runs with ``adopt_newer=False``, so this happens at most once per refresh.
         """
         refused = data.get("refresh_token")
         if (
@@ -604,20 +551,11 @@ class KohlerAuth:
         return newer
 
     def invalidate_access_token(self, rejected: str | None = None) -> None:
-        """Mark the current access token as unusable, without touching the refresh token.
+        """Drop the cached access token after a 401, keeping the refresh token.
 
-        For the 401 path: the server has rejected the access token we hold, so the next
-        `async_get_access_token` must mint a new one rather than return the rejected one
-        from cache. Going through that method rather than calling `async_refresh` directly
-        keeps the refresh serialised — two concurrent 401s would otherwise redeem the same
-        rotating refresh token twice.
-
-        ``rejected`` is the token the server refused; given one, the cached token is dropped
-        only while it is still that token. Requests running in parallel all carry the same
-        token, so they all get the 401, and the first to get here mints a new one. Clearing
-        unconditionally threw that fresh token away again for each later 401: N parallel
-        401s during the dozen-odd seed reads became N serial refreshes, every one rotating
-        the refresh token and rewriting the config entry.
+        The next `async_get_access_token` then mints a new one under the refresh lock.
+        Given ``rejected`` (the token the server refused), the cache is dropped only while
+        it still holds that token, so parallel 401s on one token cause a single refresh.
         """
         if rejected is not None and (
             self._tokens is None or self._tokens.access_token != rejected
@@ -628,30 +566,16 @@ class KohlerAuth:
     async def async_get_access_token(self) -> str:
         """Return a valid access token, refreshing it if needed.
 
-        **Serialised, because B2C rotates the refresh token on every use.** Each refresh
-        issues a new one and invalidates the old, so two callers that both find the token
-        expired and both POST the *same* refresh token produce one success and one
-        rejection — and the rejection is a plain `AuthError`, which `credential_is_dead`
-        reads as "these credentials are finished" and turns into a re-authentication prompt
-        the owner did not need. The token that ends up stored is whichever call finished
-        last, which may be the loser's.
+        ⚠️ Refreshes are serialised because B2C rotates the refresh token on every use: two
+        concurrent refreshes would redeem the same token, and the loser's rejection would
+        read as a dead credential (`credential_is_dead`) and prompt a needless reauth. A
+        caller that gets the lock after another refreshed finds the new token and makes no
+        request.
 
-        This is reachable: the coordinator starts several independent API-calling tasks,
-        and the window is widest at startup and immediately after each expiry — exactly
-        when they fire together.
-
-        Double-checked: the second caller re-tests `expired` after taking the lock and, in
-        the ordinary case, finds the winner's fresh token and makes no request at all.
-
-        **The refresh runs as its own task, awaited through a shield.** It used to run inline
-        in whichever task first found the token expired — and that task can be cancelled at
-        any moment: an unload or reload, a superseded check, a cancelled usage read.
-        Cancelled after B2C had redeemed the refresh token but before the reply was read,
-        the rotated token went with it, and the one still held was already dead: the
-        account was stranded until the owner signed in again. Shielded, the refresh
-        finishes regardless and stores (and persists) what B2C issued. A caller that finds
-        such an abandoned refresh still in flight waits for it rather than redeeming the
-        same token a second time.
+        The refresh runs as its own task, awaited through `asyncio.shield`, so cancelling
+        the caller cannot lose a token B2C has already rotated: the task still stores and
+        persists it. A later caller waits for a refresh in flight rather than starting
+        another.
         """
         if self._tokens is not None and not self._tokens.expired:
             return self._tokens.access_token
@@ -659,9 +583,8 @@ class KohlerAuth:
             if self._tokens is None or self._tokens.expired:
                 task = self._refresh_task
                 if task is None or task.done():
-                    # Started eagerly, so it runs exactly as far as the inline call did
-                    # before its first wait; a separate task is only ever an extra step for
-                    # a refresh that has to wait for the network anyway.
+                    # Started eagerly: it runs up to its first await before this line
+                    # returns, as a direct call would.
                     task = asyncio.Task(
                         self.async_refresh(),
                         loop=asyncio.get_running_loop(),
@@ -671,8 +594,7 @@ class KohlerAuth:
                     self._refresh_task = task
                 await asyncio.shield(task)
             if self._tokens is None:
-                # `async_refresh` returns tokens or raises; this cannot happen. Raised
-                # rather than asserted so `python -O` cannot turn it into an
-                # `AttributeError` on the next line.
+                # Unreachable: `async_refresh` returns tokens or raises. Raised rather
+                # than asserted so `python -O` cannot skip it.
                 raise AuthError("Sign-in succeeded but produced no access token.")
             return self._tokens.access_token

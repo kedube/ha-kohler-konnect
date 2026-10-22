@@ -1,38 +1,22 @@
 """Diagnostics for Kohler Konnect — the "Download diagnostics" button.
 
-One report, many buttons: the config entry and every device page (each Anthem Valve, each
-Anthem Plus controller and each faucet) all describe the **whole installation**, by design
-— a hardware report should cover everything, because the products are one plumbing system
-and half a picture has repeatedly misled this project. Every
-device appears in ``valves``, ``controllers`` and ``faucets`` whichever button was pressed.
+Every button (the config entry, and each valve, controller and faucet page) reports the
+**whole installation**, since the products form one plumbing system: every device appears
+in ``valves``, ``controllers`` and ``faucets``. Only ``requested_for`` and the singular
+``valve`` / ``controller`` blocks follow the button and describe the pressed device; a
+faucet's button gets a singular ``faucet`` block instead. The singular blocks keep the
+report's shape for single-device accounts; the lists are the full picture.
 
-Two things do follow the button: ``requested_for``, naming it, and the singular ``valve``
-/ ``controller`` blocks, which describe **that** device. Those singular keys exist only so
-a report from a single-device account reads as it always has; on an account with several,
-pressing the second valve's button and getting the first valve's limits under a
-``valve_1`` label is precisely the half-picture this module is meant to prevent. A
-faucet's button names it ``faucet_<n>`` and gets a singular ``faucet`` block instead of
-either shower block.
+The report is the evidence for the README's hardware support matrix: model and outlet
+split as detected, which devices exist, what each reports, whether limits arrived. Users
+attach it to public "hardware report" issues.
 
-What this is for: **hardware validation reports.** Every claim in this integration is
-verified against very little hardware — a K-28212 with a controller, two K-28210 valves and
-a Sensate faucet — and the support matrix in the README only moves on evidence. This file is the evidence: model and outlet split as
-detected, which devices exist, what the valve and controller are reporting, whether limits
-arrived. A user on unverified hardware attaches this JSON to a "hardware report" issue and
-that model's row can be marked verified.
-
-What deliberately stays out: credentials (refresh token), account identity (username,
-tenant id), and device identity (device ids, serial numbers, the mobile registration id).
-Kohler device serials double as cloud addresses, so they are redacted the same way tokens
-are — presence and SKU are enough for validation. Preset and favorite *names* are the
-owner's own words and stay out too; counts carry the signal.
-
-**Two mechanisms, because they answer different questions.** `TO_REDACT` names the keys whose
-values must never appear, which works for the record shapes this module reproduces
-deliberately. `_version_fields` is the exception: it walks fields no capture has covered, on
-accounts unlike the owner's, so it cannot be driven by a key list — it takes only
-version-shaped keys and then checks the *value* as well, because a device id
-(`gcs-sio32343h7`) is short enough to pass any sane length ceiling.
+⚠️ A report never contains credentials, account identity (username, tenant id), device
+identity (device ids, serials, the mobile registration id — Kohler device ids double as
+cloud addresses), or names the owner chose (presets, favorites, light groups): those are
+counted or replaced with generic labels. `TO_REDACT` covers the entry's known keys; values
+copied from Kohler's records, whose shapes are not fully known, also pass the
+`_identity_shaped` check.
 """
 
 from __future__ import annotations
@@ -62,9 +46,8 @@ from .faucet.diagnostics import faucet_report
 from .konnect import AuthError, GcsState
 from .konnect.valve_hex import ValveHexError, decode_word
 
-# Entry.data/options keys whose VALUES are secrets or identity. Everything else in the
-# entry is validation-relevant configuration (model choice, outlet split, units, per-valve
-# settings) and passes through.
+# Entry data/options keys whose values are secrets or identity. The rest of the entry is
+# configuration a report needs (model, outlet split, units, per-valve settings).
 TO_REDACT = {
     CONF_USERNAME,
     CONF_REFRESH_TOKEN,
@@ -76,19 +59,11 @@ TO_REDACT = {
 def _redact_entry(
     coordinator: KohlerKonnectCoordinator, section: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Redact an entry section, **including the device ids used as dictionary keys.**
+    """Redact an entry section, including the device ids that key `CONF_VALVES`.
 
-    `async_redact_data` replaces the *values* at listed keys and recurses into nested
-    dicts. It never touches dictionary **keys** — and `CONF_VALVES` is keyed by device id,
-    so a plain redaction published every valve's id verbatim while this module's own
-    docstring promised they were held back. Kohler device ids double as cloud addresses,
-    and these reports are written to be attached to public issues.
-
-    The ids are replaced with the same `valve_0`, `valve_1` labels `requested_for` uses, in
-    the cloud's order, so a report stays readable and the per-valve settings can still be
-    matched against the `valves` list further down. An id belonging to no known valve — a
-    device removed from the account since it was written — is replaced with a placeholder
-    rather than passed through, because "unknown to us" is not "safe to publish".
+    `async_redact_data` redacts values, never dictionary keys, so the ids are replaced
+    here with the `valve_<n>` labels `requested_for` uses (cloud order), which still match
+    the `valves` list. An id matching no current valve becomes `valve_unknown`.
     """
     labels = {
         valve.device_id: f"valve_{index}"
@@ -107,9 +82,8 @@ def _redact_entry(
 def _word(word: Any) -> dict[str, Any] | None:
     """One zone's valve word: the wire hex verbatim, then the decoded reading.
 
-    ``raw`` is the word exactly as it arrived (empty for a word seeded from REST, which
-    carries no wire form) — included first because the raw word is what settles disputes
-    when a decode is questioned on foreign hardware.
+    ``raw`` is None for a word seeded from REST, which has no wire form. It is kept
+    because the raw word settles a disputed decode on unfamiliar hardware.
     """
     if word is None:
         return None
@@ -127,15 +101,13 @@ def _word(word: Any) -> dict[str, Any] | None:
     }
 
 
-# Keys whose *values* are version-shaped, wherever they appear in the record. Matched on
-# the key name rather than the value, because a version can be a string ("2.20"), an int
-# (10) or a float — the app shows the valves as bare `10` — and matching on shape alone
-# would sweep up timestamps, ids and counts.
+# Key-name fragments that mark a version, wherever it sits in the record. Matched on the
+# key, not the value: a version may be a string ("2.20"), an int or a float, and matching
+# on value shape would also catch timestamps, ids and counts.
 _VERSION_KEY_HINTS = ("firmware", "version", "swrev", "revision", "build")
 
-# Keys that contain one of the hints above but are NOT a version: update bookkeeping,
-# feature flags, and the type/status labels that sit beside a version. Excluded by exact
-# name so a genuinely new version key is never silently dropped.
+# Keys containing a hint that are not versions (update bookkeeping, flags, type labels).
+# Exact names, so a new version key is never dropped by accident.
 _VERSION_KEY_SKIP = {
     "firmwaretype",
     "firmwareupdate",
@@ -144,18 +116,12 @@ _VERSION_KEY_SKIP = {
     "versionblocks",
 }
 
-# Values that would carry identity rather than a version. A version is short; a device id,
-# serial or GUID is not, and none of them belong in a report that redacts those elsewhere.
+# A version is short; a longer string is described (`_described`), never copied.
 _VERSION_VALUE_MAX_LEN = 24
 
-# ⚠️ **Length alone is not enough.** A Kohler device id is `gcs-sio32343h7` — fourteen
-# characters, well under the ceiling above — so a device id sitting under a version-shaped
-# key (`deviceVersionId`, say) would have been copied out verbatim. No captured payload has
-# such a key today, and this scanner exists precisely to walk fields no capture has covered
-# on accounts unlike the owner's, so the shape is checked as well as the length.
-#
-# Matched on the value, not the key: any string carrying a device prefix, a long hex or
-# GUID run, or an Azure connection-string fragment is reported as its type and length.
+# ⚠️ Length alone does not keep identity out: a device id (`gcs-` plus ten characters)
+# fits under the ceiling above. A copied string matching any of these — device id, GUID,
+# long hex run, connection-string fragment — is described instead.
 _IDENTIFIER_VALUE = re.compile(
     r"(?:^|[^a-z0-9])(?:gcs|hub)-[a-z0-9]{4,}"  # device ids
     r"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"  # GUID
@@ -176,14 +142,10 @@ def _described(value: str) -> str:
 
 
 def _guarded_block(node: Any) -> Any:
-    """A version-shaped block copied whole, with `_version_fields`' value check applied.
+    """A version block copied whole, each string checked as `_version_fields` checks one.
 
-    For `version_blocks`, which reproduce three named blocks in full. Those were trusted
-    on their name alone until 2026-10-16 — "version strings and update state" — while
-    `_version_fields`, walking the same record, checked every value it copied. A block is
-    still Kohler's to shape, and an update record is exactly where a download address, a
-    device id or a signed URL would sit; so every string here passes the same test: too
-    long, or identity-shaped, and it is described instead of copied.
+    An update record is where a download address, device id or signed URL would sit, so
+    a string that is too long or `_identity_shaped` is described rather than copied.
     """
     if isinstance(node, Mapping):
         return {key: _guarded_block(value) for key, value in node.items()}
@@ -201,22 +163,12 @@ def _version_fields(
 ) -> dict[str, Any]:
     """Every version-shaped field in a record, by dotted path.
 
-    **Why this exists.** `gcs-configuration` carries at least three different firmwares —
-    the touchscreen interface, the valve itself, and the gateway — and the Konnect app shows
-    all three as different numbers (2.2, 10, 00.74 on the owner's system). Only the
-    interface's lives in the three blocks `_configuration_report` reproduces in full, so the
-    other two were invisible in every report, and a single `Firmware` entity was silently
-    picking whichever it found first. See `docs/user_guide.md`.
-
-    **Why by path rather than in full.** The blocks these live in (`configuration`, `iot`,
-    `applicationSource`) also describe someone's plumbing and their cloud addressing, which
-    this module redacts everywhere else. Reproducing them whole to find a version would
-    trade the report's discretion for one field. So this walks the record and takes only
-    values whose *key* names a version, leaving every sibling behind.
-
-    Values longer than `_VERSION_VALUE_MAX_LEN` are reported as their type and length rather
-    than their content: a real version is short, and anything long enough to be a device id,
-    a serial or a connection string is exactly what must not be copied out.
+    `gcs-configuration` carries separate interface, valve and gateway firmwares
+    (`docs/protocol/gcs_valve.md` §9), and only the interface's sits in the blocks
+    `_configuration_report` copies whole. The others live in blocks that also describe
+    the plumbing and cloud addressing, so this takes only values whose key names a
+    version, leaving their siblings behind. A string longer than `_VERSION_VALUE_MAX_LEN`,
+    or `_identity_shaped`, is described instead of copied.
     """
     if found is None:
         found = {}
@@ -247,20 +199,17 @@ def _version_fields(
 def _configuration_report(valve: Valve) -> dict[str, Any]:
     """What `gcs-configuration` returned, summarised rather than reproduced.
 
-    Deliberately **not** the raw record. The structural blocks describe someone's plumbing
-    and, on an account that populates them, could carry more identity than a hardware report
-    needs — while the open question only asks *which* fields are populated. So this reports
-    the key names and whether each block is null, plus firmware in full.
-
-    `read: false` distinguishes "the call has not run or failed" from "it ran and everything
-    was null" — indistinguishable otherwise, and the whole point of the exercise.
+    The structural blocks describe the plumbing and may carry identity, so they appear
+    only as present-and-not-null (`populated`); versions are copied through the identity
+    checks. `read: False` means there is no record yet (not read, or the read failed), as
+    distinct from a record whose fields are all null.
     """
     configuration = valve.configuration
     if not configuration:
         return {"read": configuration is not None, "populated": {}, "firmware": None}
 
-    # The structural fields the docs list as null on a controller-attached valve. Reported
-    # by name so a GCS-only account's report says plainly which of them arrived.
+    # Null on a controller-attached valve (`docs/protocol/gcs_valve.md` §1). Named so a
+    # controller-free valve's report shows which of them arrive.
     structural = (
         "zoneone",
         "zonetwo",
@@ -270,12 +219,7 @@ def _configuration_report(valve: Valve) -> dict[str, Any]:
         "systemConfiguration",
         "systemSettings",
     )
-    # Version-shaped blocks, reported in full. These carry no plumbing structure — they are
-    # version strings and update state — and withholding them is what made 0.7.1's
-    # `unknown` firmware unanswerable from a report: the summariser named `firmwareUpdate`,
-    # `otaReportedProperties` and `version` without ever saying what was in them, so the
-    # one question the report existed to answer needed a second round trip. In full, but not
-    # unchecked: see `_guarded_block`.
+    # Version strings and update state, no plumbing: copied whole through `_guarded_block`.
     version_blocks = {
         key: _guarded_block(configuration.get(key))
         for key in ("firmwareUpdate", "otaReportedProperties", "version")
@@ -286,36 +230,28 @@ def _configuration_report(valve: Valve) -> dict[str, Any]:
         "read": True,
         "firmware": valve.firmware,
         "version_blocks": version_blocks,
-        # Every version-shaped field anywhere in the record, including the blocks named but
-        # not dumped below. The interface firmware is the only one the three blocks above
-        # carry; the valve and gateway versions the Konnect app shows live elsewhere, and
-        # without this a report cannot say where.
+        # Every version-shaped field in the record, wherever it sits: the valve and gateway
+        # firmwares are outside `version_blocks`.
         "version_fields": _version_fields(configuration),
-        # True where the key is present AND not null — the distinction the question turns on.
+        # True where the key is present and not null.
         "populated": {key: configuration.get(key) is not None for key in structural},
-        # Every other key the record carried, named but not dumped, so a field nobody has
-        # seen before shows up in a report without its contents going with it.
+        # Every other key, named but not copied, so an unfamiliar field shows up without
+        # its contents.
         "other_keys": sorted(
             key for key in configuration if key not in structural and key != "about"
         ),
-        # Read through `Valve.about`, which knows both nestings. Reading
-        # `configuration["about"]` directly reported `[]` on hardware that populates the
-        # block in full, because this account nests it under the record's own
-        # `configuration` key — the same depth bug that made `Firmware` report an artwork
-        # version. Key names only; the values are versions and reach the report through
-        # `version_fields`.
+        # Through `Valve.about`, which handles both nestings of `about`
+        # (`docs/protocol/gcs_valve.md` §2). Key names only; the versions in it reach the
+        # report through `version_fields`.
         "about_keys": sorted(valve.about),
-        # Timestamps, by value rather than by name. These are the record's own dates —
-        # when Kohler's cloud created the device row and when it last changed — and unlike
-        # the structural blocks they carry no installation detail, so there is nothing to
-        # withhold. `createdTime` is the closest thing to an install date this API has.
+        # When Kohler's cloud created the device record and last changed it.
         "created_time": configuration.get("createdTime"),
         "updated_timestamp": configuration.get("updatedTimestamp"),
     }
 
 
-#: Fields of a firmware read worth reporting. `url` (the image's download address) and
-#: anything else is left out — a report needs the versions and the verdict, not the file.
+#: Fields of a firmware read worth reporting: versions and the update verdict. `url` (the
+#: image's download address) and anything else stay out.
 _FIRMWARE_FIELDS = (
     "currentFirmware",
     "firmware",
@@ -332,11 +268,7 @@ def _firmware_report(info: Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def _about_report(about: Mapping[str, Any] | None) -> dict[str, Any]:
-    """`gcs-configuration/{id}/about`, with every serial reduced to "present or not".
-
-    Serials double as cloud addresses (see the module docstring), so they never appear;
-    models, firmware and status do, because they are what a hardware report is read for.
-    """
+    """`gcs-configuration/{id}/about`, with each serial reduced to `serial_present`."""
     about = about or {}
 
     def part(entry: Any) -> dict[str, Any]:
@@ -363,7 +295,7 @@ def _about_report(about: Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def _fault_log(payload: Mapping[str, Any] | None) -> list[dict[str, Any]]:
-    """`gcs-diagnostics` entries, ids stripped, the app's own `errorCode "0"` filter applied."""
+    """`gcs-diagnostics` entries, ids stripped, minus `errorCode "0"` as the app does."""
     details = (payload or {}).get("errorDetails")
     keep = (
         "errorCode",
@@ -384,13 +316,10 @@ def _fault_log(payload: Mapping[str, Any] | None) -> list[dict[str, Any]]:
 
 
 def _cloud_watch_report(valve: Valve) -> dict[str, Any]:
-    """The reachability watch behind `cloud_connected`, as its sensor's attributes show it.
+    """The `Cloud Connection` sensor's attributes (`CloudConnectionWatch.attributes`).
 
-    A bare `cloud_connected: false` in the owner's reports said nothing about when it was
-    asked, why, or what came back; these are what the Cloud Connection sensor already
-    publishes for that question. The three values Kohler supplies — the state as reported,
-    its timestamp, and an error's text, which can quote a reply body — pass the identity
-    check every other copied value here does.
+    The values Kohler supplies — the reported state, its timestamp, and an error's text,
+    which can quote a reply body — pass the `_identity_shaped` check.
     """
     attributes = dict(valve.cloud_watch.attributes)
     for key in ("connection_state", "cloud_last_connected", "last_error"):
@@ -403,12 +332,9 @@ def _cloud_watch_report(valve: Valve) -> dict[str, Any]:
 def _default_shower_report(valve: Valve) -> dict[str, Any]:
     """Preset 1's stored words, and what the `Shower on` switch would send from them now.
 
-    Added in 1.09. From 1.08 the switch sends preset 1's words rather than running the
-    preset, and 1.08's reports could not say whether it would start or refuse: preset 1
-    showed only as a count. `refused_because` is the switch's own reason, from the same
-    `Valve.default_shower_words`; otherwise `would_send` holds each zone's command word and
-    its reading. Outlets are named by the valve's type codes, never by anything the owner
-    chose.
+    `refused_because` is the switch's own reason (`Valve.default_shower_words`);
+    otherwise `would_send` holds each zone's command word and its reading. Outlets are
+    named by the valve's type codes, never by anything the owner chose.
     """
     gcs = valve.gcs_state
     preset = gcs.presets.get(SHOWER_ON_PRESET_ID)
@@ -458,8 +384,8 @@ def _valve_report(valve: Valve) -> dict[str, Any]:
     gcs = valve.gcs_state
     model = valve.model
     return {
-        # The layout this valve actually decodes with — its own, which can differ from the
-        # entry's `model` when the account has several valves.
+        # The layout this valve decodes with; can differ from the entry's `model` when the
+        # account has several valves.
         "model": {
             "sku": model.sku,
             "outlets_valve1": model.outlets_valve1,
@@ -471,26 +397,21 @@ def _valve_report(valve: Valve) -> dict[str, Any]:
         "warmup_mode": gcs.warmup_mode,
         "warmup_in_progress": gcs.warmup_in_progress,
         "active_preset_id": gcs.active_preset_id,
-        # The valve's own session flag, beside the decoded `is_running`/`is_paused` above.
-        # A disagreement between them is worth seeing in a bug report.
+        # The valve's own session flag (`currentSystemState`), to compare with the decoded
+        # `is_running` / `is_paused`.
         "system_state": gcs.system_state,
         "water": {
-            # `totalFlow` exactly as the cloud sent it. **Not a meter** — it takes three
-            # distinct values and shifts between two scales 4x apart with no water running
-            # (see `GcsState.total_flow`). Reported because it is the evidence for that open
-            # question, not because it means anything.
+            # `totalFlow` as sent. Not a meter (`GcsState.total_flow`,
+            # `docs/protocol/gcs_valve.md` §2); reported as evidence of what it is.
             "total_flow_raw": gcs.total_flow,
-            # Undocumented unit; recorded so the question can be settled from real reports.
+            # Unit unknown; reported so real reports can settle it.
             "total_volume": gcs.total_volume,
         },
         "presets": {
             "slots_seen": len(gcs.presets),
-            # **`selectable` counts before the hidden ids are removed; `offered` counts
-            # after.** They differ by the default-shower slot (`PRESET_HIDDEN_IDS`), which
-            # is startable but never listed, so a valve with no user favorites reports
-            # `selectable: 1` and `offered: 0`. Reading the first as "one usable
-            # favorite" and expecting the picker to show it is a mistake this pair of
-            # numbers exists to prevent — `offered` is what the dropdown actually holds.
+            # `selectable` counts before `PRESET_HIDDEN_IDS` are removed; `offered` counts
+            # after, and is what the picker holds. They differ by the default-shower slot,
+            # which is startable but never listed.
             "selectable": sum(1 for p in gcs.presets.values() if p.is_selectable),
             "offered": len(gcs.selectable_presets(hidden=PRESET_HIDDEN_IDS)),
             "hidden_ids_present": sorted(
@@ -510,27 +431,19 @@ def _valve_report(valve: Valve) -> dict[str, Any]:
                 "maximum_flow_byte": lim.maximum_flow_byte,
                 "maximum_run_time": lim.maximum_run_time,
                 "default_flow_byte": lim.default_flow_byte,
-                # The valve's own type code for this outlet, unmapped. Recorded so the
-                # codes seen across real installs can be compared with what the Konnect
-                # app shows for the same fixture — only three of them are documented, and
-                # a name map has to be built from evidence rather than guessed.
+                # The valve's type code, unmapped (`docs/protocol/gcs_valve.md` §1.2).
                 "outlet_type": lim.outlet_type,
-                # None for a code this integration cannot name yet — which is the useful
-                # signal in a hardware report, since it says exactly which codes still
-                # need an owner to confirm what the fixture is.
+                # None for a code `OUTLET_TYPE_NAMES` cannot name, which flags it for an
+                # owner to confirm.
                 "outlet_type_name": (
                     None
                     if lim.outlet_type is None
                     else OUTLET_TYPE_NAMES.get(lim.outlet_type)
                 ),
-                # The scald limit, in tenths of °C. Added to `OutletLimits` in 0.11.1 and
-                # missing from this report until 0.11.3 — so the first reports carrying the
-                # new sensor could not say whether the valve had sent the field or the
-                # parser had missed it, which is the one question such a report exists to
-                # answer.
+                # The scald limit, in tenths of °C.
                 "maximum_temperature_tenths": lim.maximum_temperature_tenths,
-                # The other three fields `writeoutletconfig` replaces. Reported so a report
-                # can confirm what a write would have to echo back — see `OutletLimits`.
+                # The other fields `writeoutletconfig` replaces, so a report shows what a
+                # write must echo back (`OutletLimits`).
                 "minimum_temperature_tenths": lim.minimum_temperature_tenths,
                 "default_temperature_tenths": lim.default_temperature_tenths,
                 "outlet_flags": lim.outlet_flags,
@@ -540,17 +453,9 @@ def _valve_report(valve: Valve) -> dict[str, Any]:
         "last_update": gcs.last_update,
         "cloud_connected": valve.cloud_watch.connected,
         "cloud_watch": _cloud_watch_report(valve),
-        # `gcs-configuration`, read once at the first seed.
-        #
-        # **This block exists to settle an open question.** On the reference install — a
-        # valve wired to an Anthem Plus controller — every structural field comes back
-        # null, because such a valve reports its configuration through the controller, and
-        # `docs/protocol/gcs_valve.md` records that whether a **GCS-only** install populates them is
-        # unknown and untested. A report from a controller-free account answers it.
-        #
-        # Which fields are `populated` rather than the values: the structural blocks would carry
-        # installation detail, and what the question needs is which keys are populated, not
-        # what is in them. Firmware is named in full because it is the useful part today.
+        # `gcs-configuration`, read once at the first seed. Its `populated` shows whether a
+        # controller-free valve fills the structural fields a controller-attached one
+        # leaves null.
         "configuration": _configuration_report(valve),
         "run_time": {
             "limits_seconds": {
@@ -565,12 +470,12 @@ def _valve_report(valve: Valve) -> dict[str, Any]:
             "auto_restore": valve.warmup_auto_restore,
             "restores_to": valve.last_warmup_mode,
         },
-        # `currentSystemState` is reported above; `has_fault` folds in its `error` value,
-        # which no capture has carried, so the first one shows in a report.
+        # Includes `currentSystemState == error`, never yet captured
+        # (`docs/protocol/gcs_valve.md` §7).
         "has_fault": gcs.has_fault,
-        # What the Problem sensor turns on for, from the last read of the fault log — each
-        # seed, and twice a day — code, area, valve and timestamp only. `fault_log`, read as
-        # the report is built, carries the whole log beside it.
+        # What the Problem sensor turns on for, from the last fault-log read (each seed and
+        # twice a day): code, area, valve and timestamp only. `fault_log`, read as the
+        # report is built, holds the whole log.
         "active_faults": [dict(fault) for fault in valve.active_faults],
         "dispensed_volume": gcs.dispensed_volume,
         "about": _about_report(valve.about_parts),
@@ -584,11 +489,9 @@ def _valve_report(valve: Valve) -> dict[str, Any]:
 def _light_groups_report(lights: Mapping[str, bool]) -> dict[str, bool]:
     """Each light group's on/off, keyed by Kohler's group letter or a generic label.
 
-    A group's key is the bare letter MQTT names it by (`lightgroupA` → `a`), but REST can
-    name a group by its **display name** — the owner's own words, which this report keeps
-    out everywhere else (preset and favorite names are counted, not copied). So a key that
-    is a single letter passes, and any other becomes `group_1`, `group_2`, ... in a stable
-    order, like the `valve_0` labels that stand in for device ids.
+    MQTT names a group by letter (`lightgroupA` → `a`), but REST can name it by the
+    display name the owner chose. A single-letter key passes; any other becomes
+    `group_<n>`, in sorted order.
     """
     named = iter(range(1, len(lights) + 1))
     return {
@@ -608,8 +511,8 @@ def _controller_report(controller: Controller) -> dict[str, Any]:
     model = controller.model
     settings = controller.settings
     return {
-        # The layout this controller actually decodes with — its own, which can differ
-        # from the entry's `model` above when the account has several controllers.
+        # The layout this controller decodes with; can differ from the entry's `model`
+        # when the account has several controllers.
         "model": {
             "sku": model.sku,
             "outlets_valve1": model.outlets_valve1,
@@ -646,8 +549,7 @@ def _controller_report(controller: Controller) -> dict[str, Any]:
             {k: e.get(k) for k in ("errorCode", "title", "component", "isActive")}
             for e in controller.active_errors
         ],
-        # The controller's own settings. The LAN address is reduced to its presence: it
-        # identifies a home network, and a report needs only to know it was published.
+        # The LAN address is reduced to its presence: it identifies a home network.
         "settings": {
             "max_shower_duration_minutes": settings.max_shower_duration_minutes,
             "shower_max_temperature": settings.shower_max_temperature,
@@ -675,14 +577,11 @@ def _build(
 ) -> dict[str, Any]:
     """The whole installation, as this integration currently understands it.
 
-    ``valve_index`` / ``controller_index`` say which device the singular ``valve`` /
-    ``controller`` blocks should describe — the one whose Download-diagnostics button was
-    pressed. The full ``valves`` / ``controllers`` lists are unaffected and always carry
-    every device; see the note beside those blocks for why the singular keys still exist.
-
-    ``faucet_index`` is set when a faucet's button was pressed. The singular block is then
-    ``faucet``, and there is no ``valve`` or ``controller``: a faucet is never part of a
-    shower, so neither would describe the device the report was asked about.
+    ``valve_index`` / ``controller_index`` pick the device the singular ``valve`` /
+    ``controller`` blocks describe: the one whose button was pressed. With
+    ``faucet_index`` set, the singular block is ``faucet`` and there is no ``valve`` or
+    ``controller``. The ``valves`` / ``controllers`` / ``faucets`` lists always carry
+    every device.
     """
     model = coordinator.model
 
@@ -700,8 +599,6 @@ def _build(
             "valve_present": bool(coordinator.valves),
             "valve_count": len(coordinator.valves),
             "controller_present": bool(coordinator.controllers),
-            # More than one is a configuration this project has never seen run; the count
-            # is what tells a report from such an account apart.
             "controller_count": len(coordinator.controllers),
             "faucet_count": len(coordinator.faucets),
         },
@@ -714,27 +611,13 @@ def _build(
         },
     }
 
-    # One entry per valve, in the cloud's order. `valve`, `run_time` and `warmup`
-    # (singular) are kept so reports from before 2026-09-08 and after read the same on a
-    # single-valve account; `valves` carries all of them, each with its own `run_time`
-    # and `warmup` nested inside. (`run_time` was `endless_shower` until 2026-10-08.)
-    #
-    # **The singular block describes the valve whose button was pressed, not always the
-    # first.** Until 2026-09-09 it was hardcoded to index 0, so a report downloaded from
-    # the second valve's page carried `requested_for: valve_1` above a `valve` block
-    # describing valve 0 — two valves on one account can differ in exactly the fields this
-    # block is read for (a 30-minute and a 60-minute run-time limit, on the account that
-    # found this). The full picture was always present in `valves`; the label was the lie,
-    # which is the failure mode this module's header exists to warn about.
-    #
-    # **A faucet's button gets no `valve` block at all** (2026-10-16). The owner's reports
-    # from a faucet page carried valve 0's as if it described the faucet — the same
-    # half-picture, from the other side.
+    # One entry per valve, in the cloud's order, each with its own `run_time` and `warmup`.
+    # The singular `valve`, `run_time` and `warmup` describe the pressed valve, and are
+    # left out of a faucet's report.
     shower_blocks = faucet_index is None
     reports = [_valve_report(valve) for valve in coordinator.valves]
     if reports and shower_blocks:
-        # Defensive: an out-of-range index would be a caller bug, but a diagnostics report
-        # that raises is a report nobody can attach to an issue.
+        # An out-of-range index is a caller bug, but the report must still build.
         primary = (
             reports[valve_index] if 0 <= valve_index < len(reports) else reports[0]
         )
@@ -746,10 +629,8 @@ def _build(
     if reports:
         payload["valves"] = reports
 
-    # One entry per controller, in the cloud's order. `controller` (singular) is kept so
-    # reports from before 2026-09-08 and after read the same on a single-controller
-    # account; `controllers` carries all of them. Follows the pressed device for the same
-    # reason as the valve block above, and is left out of a faucet's report likewise.
+    # One entry per controller, in the cloud's order. The singular `controller` describes
+    # the pressed controller, and is left out of a faucet's report.
     reports = [_controller_report(controller) for controller in coordinator.controllers]
     if reports and shower_blocks:
         payload["controller"] = (
@@ -760,8 +641,8 @@ def _build(
     if reports:
         payload["controllers"] = reports
 
-    # One entry per faucet, in the cloud's order, and — from a faucet's own button — that
-    # faucet's report again as the singular `faucet`.
+    # One entry per faucet, in the cloud's order; from a faucet's button, its report again
+    # as the singular `faucet`.
     if coordinator.faucets:
         payload["faucets"] = [faucet_report(faucet) for faucet in coordinator.faucets]
         if faucet_index is not None and 0 <= faucet_index < len(payload["faucets"]):
@@ -781,25 +662,16 @@ async def _async_add_fault_logs(
 ) -> dict[str, Any]:
     """Attach each valve's `gcs-diagnostics` fault log, read now.
 
-    Read whole on demand: the seed keeps only the active entries (`active_faults`), and the
-    full log is only ever wanted at the moment someone is building a report. A read that
-    fails costs that valve's log, never the report.
+    The seed keeps only active entries (`active_faults`); the whole log is read only for
+    a report. A failed read costs that valve's log, never the report.
 
-    ⚠️ **A failed read is reported as one, not as an empty log** (2026-10-16). The client
-    answers `{}` for a request it could not make, and that came out as `fault_log: []` —
-    "no faults", the one reading a report must not invent. A log that answers carries
-    `errorDetails`, empty or not; anything else is `fault_log: None` with
-    `fault_log_error` saying so, as `Valve.async_refresh_faults` treats it.
+    ⚠️ A failed read is never reported as an empty log: only a reply carrying an
+    `errorDetails` list becomes `fault_log`; anything else is `fault_log: None` with
+    `fault_log_error`, as `Valve.async_refresh_faults` treats it. An `AuthError` (which
+    the client does not catch) is recorded the same way, and the remaining valves are
+    not asked, since each would fail alike.
 
-    ⚠️ **A sign-in failure used to cost the whole report** (fixed 2026-10-16). The token
-    layer under the read raises `AuthError` — `AuthUnavailable` when Kohler's sign-in is
-    down — and neither is a `KohlerError`, so it passed the client's own guard and the
-    download failed exactly when a report was most wanted. It is caught here, recorded
-    beside each log it cost as `fault_log_error`, and the remaining valves are not asked:
-    each would only fail the same way, after its own attempt to sign in.
-
-    The singular `valve` block takes the log of the valve it describes (``valve_index``),
-    and a report without one — a faucet's — is not given one.
+    The singular `valve` block, when present, gets the log of the valve it describes.
     """
     failure: str | None = None
     for index, valve in enumerate(coordinator.valves):
@@ -841,15 +713,13 @@ async def async_get_device_diagnostics(
 ) -> dict[str, Any]:
     """Diagnostics from any device page.
 
-    The whole-installation payload is the same whichever button was pressed — that is the
-    point of this module. What follows the button is `requested_for` and the singular
-    `valve` / `controller` — or, for a faucet, `faucet` — blocks, which describe the device
-    whose page it came from.
+    The same whole-installation report as the config entry's, with `requested_for` and
+    the singular `valve` / `controller` (or, for a faucet, `faucet`) blocks set to the
+    device whose page it came from.
     """
     coordinator = _coordinator(hass, entry)
     requested_for = "unknown_device"
-    # Default to the first of each, which is what the config-entry button reports and what
-    # every single-device account has always produced.
+    # Default to the first of each, as the config-entry button does.
     valve_index = 0
     controller_index = 0
     faucet_index: int | None = None
@@ -866,8 +736,8 @@ async def async_get_device_diagnostics(
                 valve_index = index
         for index, controller in enumerate(coordinator.controllers):
             if identifier == controller.device_id:
-                # Plain "controller" with one, as every report so far has said; an index
-                # into `controllers` when there are several, since ids are redacted.
+                # Plain "controller" with one; an index into `controllers` with several,
+                # since ids are redacted.
                 requested_for = (
                     "controller"
                     if len(coordinator.controllers) == 1
@@ -876,8 +746,7 @@ async def async_get_device_diagnostics(
                 controller_index = index
         for index, faucet in enumerate(coordinator.faucets):
             if identifier == faucet.device_id:
-                # Always indexed: a bare "faucet" named no device in a report whose
-                # singular block, until 2026-10-16, described valve 0 instead.
+                # Always an index into `faucets`.
                 requested_for = f"faucet_{index}"
                 faucet_index = index
     return await _async_add_fault_logs(

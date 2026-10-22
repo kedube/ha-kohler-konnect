@@ -1,26 +1,16 @@
 """A JSONL debug journal written beside the raw MQTT capture. Off by default.
 
-One writer, parameterised by file prefix and README, so a journal is a few lines to add.
-Today it serves one: the **warmup journal** (`warmup_*.jsonl`), which records every change
-to the valve's warmup mode with the traffic around it — see `WARMUP_README` below. Until
-2026-10-08 it also wrote the run-time cutoff decision log for Endless Shower, which has
-been removed.
+One writer, parameterised by file prefix and README. It serves the **warmup journal**
+(`warmup_*.jsonl`), which records every change to the valve's warmup mode with the
+traffic around it; `WARMUP_README` describes the records.
 
 Records stamp `ts` as ISO-8601 UTC with a `Z` suffix, the same clock and format as
 `mqtt_raw_*.jsonl` in the same directory, so the two interleave by sorting on it.
 
-Switching it on:
-
-* **Permanently** — the journal's `ENABLE_*` constant in `const.py`
-  (`ENABLE_WARMUP_DEBUG_LOG`).
-* **From the UI, no restart** — Developer Tools → Actions → `logger.set_level`:
-
-      action: logger.set_level
-      data:
-        custom_components.kohler_konnect.konnect.journal: debug
-
-Volume is a handful of lines per shower. Files are one per Home Assistant run, each capped
-at `max_bytes`, and pruned to the newest `keep_files`.
+Switched on permanently by the journal's `ENABLE_*` constant in `const.py`
+(`ENABLE_WARMUP_DEBUG_LOG`), or until restart by `logger.set_level` with this module at
+`debug` (`docs/mqtt/capture_runbook.md`). One file per Home Assistant run, each capped at
+`max_bytes`, pruned to the newest `keep_files`.
 
 Thread safety: `note()` runs on the event loop and never touches the file or the lock — it
 queues the line and raises `wants_open`. Everything that does file I/O (`prepare`, `roll`,
@@ -46,33 +36,21 @@ _LOGGER = logging.getLogger(__name__)
 # for output — see `RawMqttLog.enabled` for why `.level` and not `isEnabledFor()`.
 _SWITCH_LOGGER = _LOGGER
 
-#: None means no limit — every log file is kept forever. This is the default; the
-#: directory is diagnostic output the owner wants to keep, not a rotating buffer.
-# Matches `RAW_MQTT_LOG_MAX_BYTES`. See `_max_bytes` for why a cap exists at all.
+# Per file; matches `RAW_MQTT_LOG_MAX_BYTES`.
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
+#: None keeps every file: the directory is diagnostic output, not a rotating buffer.
 DEFAULT_KEEP_FILES: int | None = None
 #: Records queued for `prepare()` to write. A handful arrive per shower.
 _PENDING_MAX = 200
 
 WARMUP_README = """\
 Kohler Anthem — warmup journal
-==================================
+==============================
 
-These `warmup_*.jsonl` files were built to answer what was once this project's oldest open
-question: **what keeps setting the Anthem valve's warmup mode back to `warmUpDisabled`?**
-
-SOLVED, 2026-08-21 — it is the Anthem Plus hub's web UI. Ordinary signed-in use of it (a
-PIN sign-in alone is enough; so is an SD-card music scan) runs a fixed routine that writes
-the valve's warmup mode, and the value written is `warmUpDisabled` every time — a constant
-in the hub's login/UI routine, not a stored setting: no hub surface, local or cloud, holds
-the literal, and `get_valve_settings.warmupmode` read `on` during the very logins that
-pushed the disable. Reproduced live six times in one day (four UI actions, three with
-deliberately empty 120 s before-windows, plus two PIN-probe logins); auto-restore recovered
-every one in 63-69 s. The durable record with both evidence tables is `docs/protocol/gcs_valve.md`
-§3h.
-
-The journal stays on as the watchdog: it is what proved the mechanism, it verifies every
-auto-restore end to end, and it is what would first notice a second, different writer.
+These `warmup_*.jsonl` files record every change to the Anthem valve's warmup mode, with
+the MQTT traffic around it, so a change Home Assistant didn't make can be traced to its
+source. The known source is the Anthem Plus controller's web UI, which writes
+`warmUpDisabled` on every signed-in use (docs/protocol/gcs_valve.md §5).
 
 {keep_desc}
 
@@ -80,32 +58,23 @@ Records
 -------
   baseline          the first line of every file: the mode in force when the journal opened,
                     read over REST at setup, plus whether auto-restore is armed and what it
-                    would restore to. The valve never volunteers its mode on connect — over
-                    all 74 raw captures the first `GCS_WARM_STS` in a file lands between
-                    137 s and 7 h in — so without this line a file has no idea what it
-                    started from, and cannot say how long the mode had been in force.
-  mode              the mode moved. `before` -> `after`, `ours` (did we write it), and
-                    `source`: `mqtt` if the valve announced it, `rest` if a reseed found it
-                    already changed. A `rest` one means the move happened while the stream
-                    was down, so it can never carry a `before_window` — but since 2026-08-22
-                    it carries `restoring` and a discovered disable is restored through the
-                    same machinery as an announced one (a hub sign-in during an outage was
-                    the hole). Journals before that date carry `restored: false` here
-                    instead: recorded, deliberately never restored.
+                    would restore to. The valve doesn't announce its mode on connect, so
+                    without this line a file can't say what it started from.
+  mode              the mode moved. `before` -> `after`, `ours` (did we write it), `restoring`,
+                    and `source`: `mqtt` if the valve announced it, `rest` if a reseed found it
+                    already changed — the move happened while the stream was down, so a
+                    `rest` record has no `before_window`.
   announced         the valve restated a mode it was already in. Carries `mode` and `ours`.
-                    No decision attached — 28 of the 43 announcements in the raw corpus are
-                    these. ⚠️ **Check `ours` before reading one as the valve volunteering.**
-                    Setting the mode from the dropdown lands here rather than on a `mode`
-                    record: the write reads itself back over REST immediately, so our state
-                    has already moved by the time the valve's echo arrives ~3.4 s later.
+                    Setting the mode from Home Assistant usually lands here rather than on a
+                    `mode` record, because the write reads itself back over REST before the
+                    valve's echo arrives. Check `ours` before reading one as the valve
+                    volunteering.
   disabled          the mode went to `warmUpDisabled`. Carries `ours` (did we write it),
                     `restoring` (is auto-restore acting), and `before_window`: every MQTT
                     message seen in the {before}s leading up to it.
   context           written {after}s later, holding `after_window` — the messages that
-                    followed. `SYSTEM_STS: SYSTEM_READY` appearing here is the signature seen
-                    7-9 s after two of the four known disables. The window deliberately
-                    closes before auto-restore could act, so this record never contains our
-                    own write.
+                    followed. The window closes before auto-restore could act, so this
+                    record never contains our own write.
   restore*          what auto-restore did: scheduled, deferred (water running — it writes
                     once the water has stopped), resumed (owed when Home Assistant stopped
                     or reloaded, and taken up again by the next seed), skipped, done, or
@@ -120,25 +89,22 @@ interleave:
     jq -c '{{ts, src:"raw", topic}}' mqtt_raw_*.jsonl > /tmp/b.jsonl
     sort -m /tmp/a.jsonl /tmp/b.jsonl
 
-What a hub-UI disable looks like
---------------------------------
-The machine fingerprint, constant to the tenth of a second across eight days of instances:
-the `disabled` record, then the hub's five-snapshot burst at +2.6-3.2 s, then
-`READ_GCS_EXPERIENCE_STS` at +4.7-5.0 s. The write itself never appears on this MQTT
-channel — only the valve's echo does. A `disabled` record WITHOUT that follower pattern
-would be news: a different writer than the one identified.
+What a controller web-UI disable looks like
+-------------------------------------------
+The `disabled` record, then the controller's five-snapshot burst about 3 s later, then
+`READ_GCS_EXPERIENCE_STS` about 5 s later; `SYSTEM_STS: SYSTEM_READY` often follows within
+7-9 s. The write itself never appears on MQTT, only the valve's echo. A `disabled` record
+without that pattern points to a different writer.
 
-⚠️ Absence of a message means "nothing was pushed", never "nothing happened" — MQTT here is
-the Konnect app's UI channel, not device-to-device traffic.
+Absence of a message means "nothing was pushed", never "nothing happened": MQTT here is the
+Konnect app's channel, not device-to-device traffic.
 
-Auto-restore and this journal
------------------------------
-A single disable is recorded identically whether the Warmup Auto-Restore switch is on or off:
-both windows close before a restore could fire. The disable cannot be prevented from outside
-the hub's firmware, so **auto-restore on is the standing mitigation** — every hub web UI
-sign-in will disable warmup, and the restore puts it back a minute later. Our own writes stay
-identifiable in the records (`ours: true`, and the `restore*` events carry timestamps).
-
+Auto-restore
+------------
+A disable is recorded the same way whether the Warmup Auto-Restore switch is on or off. The
+disable can't be prevented from outside the controller's firmware, so auto-restore is the
+mitigation: it puts the mode back about a minute later. Our own writes are marked
+(`ours: true`, and the `restore*` events).
 
 Turning it off
 --------------
@@ -174,11 +140,8 @@ class DebugJournal:
         self._readme = readme
         self._readme_fields = readme_fields or {}
         self._label = label
-        # **A single file must not grow without bound.** This writer had no size cap at all
-        # until 2026-09-10, while `RawMqttLog` beside it has always rolled at 8 MB — so a
-        # busy or misbehaving valve could grow one journal indefinitely on what is usually
-        # an SD card. Volume is normally a handful of lines per shower; the cap is a
-        # backstop, not an expected path.
+        # A backstop so a busy or misbehaving valve cannot grow one file without bound
+        # (often on an SD card); normal volume is a handful of lines per shower.
         self._max_bytes = max_bytes
         self._written = 0
         self._lock = threading.Lock()
@@ -210,30 +173,19 @@ class DebugJournal:
     def wants_open(self) -> bool:
         """True when :meth:`prepare` should be called: a record is queued for it to write.
 
-        Unlike `RawMqttLog`, this log is written from the **event loop**, where its callers
-        run. Opening a file, creating a directory, writing and flushing are all blocking
-        calls that must not happen on it — and a `disabled` record carries up to 400
-        messages — so `note()` never touches the file. It queues the record and raises this
-        flag, and the caller schedules `prepare()` in an executor, which opens a file if
-        there is none, rolls a full one, and writes everything queued, in order.
-
-        ⚠️ Until 2026-10-16 only the *open* was deferred: with a file already open, `note()`
-        wrote and flushed on the loop, under a lock an executor could be holding.
-
+        `note()` runs on the event loop, where file I/O must not happen, so it only queues
+        the record and raises this; the caller then schedules `prepare()` in an executor.
         Also raised when a record arrives after the log was switched off with a file still
         open, so `prepare()` can release it off the loop.
         """
         return self._wants_open
 
     def prepare(self) -> None:
-        """Write what `note()` queued — opening a file first if there is none.
+        """Write what `note()` queued, opening a file first if there is none.
 
-        At setup there is nothing queued, and the empty file that results is the point: it
-        shows the journal is switched on and working. Switched off, it writes what was
-        queued while it was on and releases the file instead.
-
-        Blocking file I/O: call it from an executor, not the event loop. Does nothing after
-        `close()`.
+        The first call opens a file even with nothing queued, so an empty file shows the
+        journal is on. Switched off, it writes what was queued while on and releases the
+        file. Blocking file I/O: call from an executor. Does nothing after `close()`.
         """
         with self._lock:
             self._wants_open = False
@@ -241,16 +193,15 @@ class DebugJournal:
                 self._pending.clear()
                 return
             if not self.enabled:
-                # Here rather than in `note()`, which noticed the switch but runs on the
-                # loop. The records queued before it was switched off still belong.
+                # Here rather than in `note()`, which runs on the loop. Records queued
+                # before the switch-off still belong.
                 self._drain_locked(roll_full=False)
                 self._close_locked()
                 self._pending.clear()
                 return
             if self._handle is None and not self._pending and self._opened:
-                # Only the first call opens an empty file. Every note schedules one of
-                # these, and one that finds its record already written — by an earlier
-                # one — has nothing to open a fresh file for.
+                # Only the first call opens an empty file; a later one whose record an
+                # earlier call already wrote has nothing to do.
                 return
             if self._handle is None:
                 try:
@@ -264,8 +215,8 @@ class DebugJournal:
     def note(self, event: str, **fields: Any) -> None:
         """Queue one decision or transition for :meth:`prepare`. Cheap no-op when off.
 
-        Never touches the file or the lock: it runs on the event loop. See `wants_open`.
-        Also a no-op after `close()`.
+        Runs on the event loop, so never touches the file or the lock (`wants_open`). A
+        no-op after `close()`.
         """
         if self._closed:
             return
@@ -279,9 +230,7 @@ class DebugJournal:
             "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "event": event,
         }
-        # Rounded on the way in: these are seconds measured off a monotonic clock, and
-        # sixteen significant figures of float noise makes the log harder to read for no
-        # gain.
+        # Rounded: monotonic-clock seconds carry float noise that only hurts readability.
         for key, value in fields.items():
             record[key] = round(value, 2) if isinstance(value, float) else value
 
@@ -290,19 +239,18 @@ class DebugJournal:
         except (TypeError, ValueError):  # pragma: no cover - defensive
             return
 
-        # Serialised here, so the record is the state at this moment however late the
-        # write. `deque.append` is atomic, and `prepare()` pops from the other end under
-        # the lock, so order is kept whichever executor thread writes.
+        # Serialised now, so the record is the state at this moment however late the
+        # write. `deque.append` is atomic and `prepare()` pops under the lock, so order is
+        # kept whichever executor thread writes.
         self._pending.append(line + "\n")
         self._wants_open = True
 
     def _drain_locked(self, *, roll_full: bool) -> None:
         """Write the queued records in order, into the open file.
 
-        A full file is rolled — closed and a new one opened — when ``roll_full``: rather
-        than truncate, since the older records are the ones a bug report needs. Without it
-        (closing) nothing new is opened, and what does not fit is dropped, as a record held
-        for a roll always was. Nothing is opened when no file is.
+        With ``roll_full`` a full file is rolled to a new one; without it (closing) nothing
+        new is opened and what does not fit is dropped. Nothing is written when no file is
+        open.
         """
         while self._pending:
             if self._handle is not None and self._written >= self._max_bytes:
@@ -373,11 +321,7 @@ class DebugJournal:
             pass
 
     def _prune(self) -> None:
-        """Keep the newest `keep_files` logs so the directory stays bounded.
-
-        A no-op when `keep_files` is None — unlimited is the default, and the owner wants
-        this directory to hold everything.
-        """
+        """Keep the newest `keep_files` logs; a no-op when it is None (the default)."""
         if self._keep_files is None:
             return
         try:
@@ -398,14 +342,10 @@ class DebugJournal:
                 pass
 
     def roll(self) -> str | None:
-        """Start a new file immediately. Returns its path, or None if the log is off.
+        """Start a new file immediately. Returns its path, or None if off or closed.
 
-        Rolled together with the raw capture so a pair of files always covers the same
-        experiment — matching them up afterwards by timestamp is the bookkeeping this
-        avoids.
-
-        Blocking file I/O — call it from an executor, not the event loop. None after
-        `close()`, too.
+        Rolled together with the raw capture, so a pair of files covers the same
+        experiment. Blocking file I/O: call from an executor.
         """
         if not self.enabled or self._closed:
             return None
@@ -427,17 +367,13 @@ class DebugJournal:
     def close(self) -> None:
         """Write what is queued into the open file, then close it. For unload. **Final.**
 
-        Records queued with no file open — or with the file full and waiting for a roll —
-        are dropped rather than a file opened only to be closed. Holds the lock, so it waits
-        out a `prepare()` already writing rather than racing it. Blocking file I/O: call it
-        from an executor, as the coordinator does.
+        Records queued with no file open, or with the file full, are dropped rather than a
+        file opened only to be closed. Holds the lock, so it waits out a `prepare()` already
+        writing. Blocking file I/O: call from an executor.
 
-        ⚠️ **Nothing reopens a file through this object afterwards** (2026-10-16), as with
-        `ReportLog.close`: `note()`, `prepare()` and `roll()` all do nothing once it has run.
-        Before, a decision noted after unload queued a record and raised `wants_open`, and the
-        `prepare()` that followed opened a file nothing would ever close — as did a setup's
-        first `prepare()` that lost the race with the unload's `close()`. A reload builds a
-        new journal, which opens its own.
+        ⚠️ Nothing reopens a file through this object afterwards: `note()`, `prepare()` and
+        `roll()` do nothing once it has run, so a late record or a `prepare()` racing the
+        unload cannot leak a handle. A reload builds a new journal.
         """
         with self._lock:
             self._closed = True

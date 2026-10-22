@@ -33,9 +33,8 @@ TO_REDACT = {
 
 # Blocks that address the faucet in Kohler's cloud rather than describe it, dropped whole
 # wherever they appear (compared without case). `faucet-configuration` is a
-# `DeviceConfigurationResponse`, whose top-level `iot` carries a valve's IoT Hub connection
-# string, SharedAccessKey included; the valves' report never copies it, and nothing stops a
-# faucet's reply from carrying one too.
+# `DeviceConfigurationResponse`, whose top-level `iot` can carry an IoT Hub connection
+# string, SharedAccessKey included.
 _CLOUD_BLOCKS = frozenset({"iot", "iothub", "iothubsettings"})
 # Secrets by their shape, whatever the field is called: a connection string or its key, a
 # shared access signature, a signed URL. The whole value goes, host and device id included.
@@ -77,7 +76,7 @@ def _redact_values(data: Any, pattern: re.Pattern[str]) -> Any:
 def faucet_report(faucet: FaucetCoordinator) -> dict[str, Any]:
     """What one faucet reports, with its identity taken out.
 
-    Preset names stay out, as the showers' favorite names do: they are the owner's own
+    Preset names stay out, as the showers' favorite names do: they are the user's own
     words, and the count and amounts carry the signal.
     """
     firmware = faucet.firmware

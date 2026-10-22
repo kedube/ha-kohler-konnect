@@ -1,33 +1,27 @@
-"""Outlet switches for the Anthem valve.
+"""Switches for the Anthem valve and the Anthem Plus controller.
 
-One switch per outlet, showing state and accepting commands — the same element does both,
-like the Konnect app. Because ``is_on`` reads the valve's reported state rather than
-remembering what Home Assistant last sent, a switch follows changes from **any** origin:
-the app, the physical touchscreen, a preset, or another automation.
+Valve outlet switches show state and accept commands. ``is_on`` reads the valve's
+reported state, so a switch follows changes from any origin: app, touchscreen, preset or
+automation.
 
-Outlets are addressed **per zone**, matching the hardware: a multi-outlet Anthem is
-physically two valve bodies joined, and every API surface addresses them separately. That
-also removes a whole class of bug — a global "outlet 1-6" numbering has to be split across
-zones differently on every model (2+2 on a K-28211, 3+3 on a K-28212), and getting that
-split wrong silently operates the wrong outlet.
+Outlets are addressed per zone, matching the hardware: a multi-outlet Anthem is two
+valve bodies, every API surface addresses them separately, and a global numbering would
+need a per-model split (2+2 on a K-28211, 3+3 on a K-28212) that could operate the wrong
+outlet.
 
-Turning one on re-sends the complete valve command with that outlet's bit set and every
-other outlet in both zones preserved, at whatever the zone's temperature and flow numbers
-hold. The valve accepts no partial write. In a **paused** zone — whose outlets all read off
-— on opens only that outlet, and off drops it from the assignment the pause would resume
-to; see `Valve.async_set_zone_outlet`. During a **warm-up** the outlets preserved are the
-shower's being warmed up, not the warm-up's own, and a toggle is refused when that shower
-was started elsewhere; see `Valve._warmup_shower`.
+Turning one on re-sends the full valve command with that outlet's bit set and every
+other outlet in both zones kept, at the zone's current temperature and flow; the valve
+accepts no partial write. In a paused zone, on opens only that outlet and off drops it
+from the assignment the pause would resume to (`Valve.async_set_zone_outlet`). During a
+warm-up the outlets kept are the shower's, not the warm-up's, and a toggle is refused
+when that shower was started elsewhere (`Valve._warmup_shower`).
 
-Switches are **optimistic**: the toggle moves immediately and holds until the device
-reports the same position — about a second later on real hardware, when the valve echoes
-back — or a grace period runs out, when the device's own answer takes over. Without that,
-every tap would sit visibly stuck for the round trip (measured 1.1-2.1 s).
+Switches are optimistic (`OptimisticSwitchMixin`), so a tap moves at once rather than
+waiting a second or two for the device's echo.
 
-No ``PARALLEL_UPDATES``: a platform-wide semaphore would queue every switch on the account —
-faucets and controllers too — behind one slow valve POST, and would still not cover the
-actions or the custom-shower watcher, which write without an entity. Valve writes are
-serialised where they are built, per valve — see `Valve.async_apply_valve`.
+No ``PARALLEL_UPDATES``: a platform-wide semaphore would queue every switch on the
+account behind one slow valve POST and still not cover the services or the custom-shower
+watcher. Valve writes are serialised per valve in `Valve.async_apply_valve`.
 """
 
 from __future__ import annotations
@@ -71,15 +65,10 @@ _LOGGER = logging.getLogger(__name__)
 def _async_purge_valve_only_warmup_restore(
     hass: HomeAssistant, entry: ConfigEntry, valve: Valve
 ) -> None:
-    """Drop `Warmup Auto-Restore` from a valve on a controller-free account.
+    """Remove a stale `Warmup Auto-Restore` from a valve on a controller-free account.
 
-    For an account whose controller has gone since the switch was created. Matched on
-    **this valve's own device id**, not a bare suffix: an account can pair one valve with a
-    controller and leave another standing alone, and only the second should lose the switch.
-
-    **Cleanup, so it never fails setup.** A stale registry row is cosmetic; the switches
-    this platform exists to create are not. Registry trouble is logged and stepped over,
-    which also keeps the platform constructible against a test double carrying no registry.
+    Matched on this valve's own device id. Cleanup only, so registry trouble is logged
+    and skipped rather than failing setup (and a test double needs no registry).
     """
     stale = f"{valve.device_id}_warmup_auto_restore"
     try:
@@ -113,14 +102,10 @@ async def async_setup_entry(
     for valve in coordinator.valves:
         model = valve.model
         entities.append(ShowerSwitch(coordinator, valve))
-        # ONLY WHERE THE FAULT CAN OCCUR. The single identified cause of a spontaneous
-        # `warmUpDisabled` is the Anthem Plus controller's web UI writing it as a fixed step
-        # of its signed-in routine — hub firmware, with the valve merely the recipient. On a
-        # controller-free account every `warmUpDisabled` in the corpus traces to that routine
-        # or to a post-reboot restatement where the mode did not change, so there is nothing
-        # here to defend against and the switch could only add an unprompted writer to the
-        # valve. `_attr_entity_registry_enabled_default = False` already hid it; not creating
-        # it is the honest version of the same judgement.
+        # Only with a controller: its web UI is the one known cause of a spontaneous
+        # `warmUpDisabled`. Without one the switch would only add an unprompted writer.
+        # Per account, not per valve: which valve a controller fronts can't be told from
+        # the cloud, so a standalone valve on a mixed account gets it too (off by default).
         if coordinator.controllers:
             entities.append(WarmupAutoRestoreSwitch(coordinator, valve))
         else:
@@ -138,8 +123,7 @@ async def async_setup_entry(
             HubSystemSwitch(coordinator, controller),
             ControllerReportLogSwitch(coordinator, controller),
         ]
-        # Only where a steam generator is attached — the same `parts` gate as the Steam
-        # binary sensor. A controller with no steam has nothing for `steamcontrol` to run.
+        # Only with a steam generator, the same `parts` gate as the Steam binary sensor.
         if controller.capabilities.steam:
             entities.append(HubSteamSwitch(coordinator, controller))
 
@@ -152,24 +136,16 @@ async def async_setup_entry(
 class OptimisticSwitchMixin:
     """Hold a just-commanded position until the device agrees, or the grace runs out.
 
-    The switch counterpart of `select.OptimisticOptionMixin`, for the same reason: this
-    coordinator pushes an update for **every** message on the account, so clearing the guess
-    on any update dropped it the moment an unrelated message arrived — a controller's
-    `MUSIC_STS`, another valve's status — and the switch snapped back before the device's
-    own answer flipped it forward again.
+    The coordinator pushes an update for every message on the account, so the guess
+    clears only when the device reports the position asked for, or when
+    `OPTIMISTIC_GRACE_SECONDS` expires and the device's own position shows. The grace
+    bounds how long a device that did something else is misreported. A subclass supplies
+    `_device_is_on`; this supplies `is_on`. `select.OptimisticOptionMixin` follows the
+    same rule.
 
-    So the guess clears on exactly the two things the select's does: **the device
-    reporting the position asked for**, or **the grace expiring** — after which the
-    device's own position shows, whatever it is. A subclass supplies `_device_is_on`; this
-    supplies `is_on`.
-
-    ⚠️ **Not "this device reported anything".** Until 2026-10-16 the guess also cleared on
-    any message from the switch's own device, told apart by its state's `last_update` — but
-    every message advances that: a controller's `MUSIC_STS`, `STEAM_STS`, `LIGHT_STS` and
-    `SYSTEM_STS`, a valve's `GCS_RECIEVED_STS` and its unprompted outlet-config records. Any
-    of them landing before the answer brought back the very snap-back-then-flip this exists
-    to prevent. The cost of holding is bounded by the grace: a device that does something
-    other than what was asked shows the guess for at most `OPTIMISTIC_GRACE_SECONDS`.
+    ⚠️ Never clear on "this device sent something": devices send unrelated messages
+    (`MUSIC_STS`, `GCS_RECIEVED_STS`, outlet-config records) before the answer, and the
+    switch would snap back.
     """
 
     _optimistic: bool | None = None
@@ -189,11 +165,9 @@ class OptimisticSwitchMixin:
     async def _async_switch(self, target: bool, action: Awaitable[Any]) -> None:
         """Show ``target`` at once, send ``action``, and hold it until the device agrees.
 
-        🚨 **Any exit but success clears the guess, cancellation included** (2026-10-16).
-        Since the guess clears only when the device agrees, one left behind stands until it
-        does — and `CancelledError` is not an `Exception`, so a script stopped mid-action or
-        an automation in `mode: restart` re-triggering, cancelling a Stop in flight, left
-        "Shower on" reading off for as long as the water ran.
+        ⚠️ Any exit but success clears the guess, cancellation included
+        (`CancelledError` is not an `Exception`): a guess left behind stands until the
+        device agrees, so a cancelled Stop would show the shower off while water runs.
         """
         self._cancel_optimistic_timer()
         self._optimistic = target
@@ -201,8 +175,7 @@ class OptimisticSwitchMixin:
         try:
             await action
         except BaseException:
-            # The command failed or was cancelled, so stop showing a position the device
-            # may never reach: its own report is the honest answer now.
+            # Failed or cancelled: show the device's own report again.
             self._clear_optimistic()
             raise
         self._cancel_optimistic_timer()
@@ -230,9 +203,8 @@ class OptimisticSwitchMixin:
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        # The one clear that is always right: the device now reports what was asked for.
-        # Anything else — another device's message, or this one's on some other subject —
-        # leaves the guess to the grace timer.
+        # Clear only when the device reports what was asked for; anything else is left
+        # to the grace timer.
         if self._optimistic is not None and self._device_is_on == self._optimistic:
             self._cancel_optimistic_timer()
             self._optimistic = None
@@ -246,38 +218,23 @@ class OptimisticSwitchMixin:
 class ShowerSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
     """Whole-shower start and stop, as ``switch.anthem_valve_shower_on``.
 
-    **Off stops the system**, sending mask byte ``0x00`` on both zones while each zone keeps
-    its own temperature — see ``async_stop_shower()``.
+    **On** runs the default shower: `Valve.async_start_default_shower` sends preset 1's
+    stored outlets, temperature and flow as one ``solowritesystem``, as the touchscreen
+    and the app's Simple Start do. It never activates or writes preset 1, so Preset
+    Active stays off and only the outlets' ``maximumRunTime`` ends it. What it starts is
+    set in the Konnect app (`docs/protocol/gcs_valve.md` §3.4).
 
-    It used to *pause* (``0x40``), which showed as "Paused" in the status sensor. It moved
-    to ``0x00`` on 2026-08-13 so a stop could never be mistaken for the valve's own run-time
-    cutoff, which also pauses; see ``async_stop_shower()`` for why it stays.
+    **Off** sends mask ``0x00`` on both zones, keeping each zone's temperature, rather
+    than a ``0x40`` pause that could be mistaken for the run-time cutoff. It supersedes
+    commands queued before it; see `Valve.async_stop_shower`.
 
-    **On runs the default shower from preset 1's stored words** —
-    ``Valve.async_start_default_shower()``, one ``solowritesystem``. The valve has no "run
-    my default" and no place of its own for its default outlets, so they live, with the
-    default temperature and flow, in preset 1: a hidden template that the touchscreen and
-    Simple Start on the Konnect app's valve card send as a plain valve write, never run as a
-    preset. This switch does the same, so it neither activates nor writes preset 1, Preset
-    Active stays off while it runs, and only the outlets' ``maximumRunTime`` ends it. Until
-    1.08 it activated preset 1, whose hidden 30-minute timer then ended the shower early.
-
-    **Not redundant with the outlet switches, despite both running water.** They answer
-    different questions. An outlet switch opens *one* outlet at whatever temperature the
-    zone already holds — manual control, one outlet at a time. This runs the shower the
-    owner configured: outlets, temperature and flow together, in a single command, from
-    defaults set in the Konnect app rather than in this integration. The redundancy is only
-    at the *off* end, where both stop the water.
-
-    Which means **what "on" does is stored on the valve, not here.** Change the defaults in
-    the Konnect app and this switch starts something different, with no code change.
+    Unlike an outlet switch, which opens one outlet at the zone's current settings, this
+    runs the whole configured shower in one command.
     """
 
     _attr_icon = "mdi:shower"
-    # **Renamed from "Shower" in 0.6.5.** Beside the outlet switches — `Rainhead`,
-    # `Showerhead`, `Handshower` — a plain "Shower" read as one more outlet, when it is the
-    # opposite: the whole-shower control that drives the valves themselves. The name says
-    # which thing it acts on rather than what the water comes out of.
+    # Not plain "Shower": beside outlet switches named after fixtures, that reads as one
+    # more outlet rather than the whole-shower control.
     _attr_name = "Shower on"
 
     def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
@@ -311,54 +268,29 @@ class ShowerSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
 class WarmupAutoRestoreSwitch(KohlerValveEntity, SwitchEntity):
     """Put the warmup mode back when something outside Home Assistant turns it off.
 
-    **The problem this exists for.** The valve's warmup mode does not stay where it is put:
-    the Anthem Plus hub writes it back to `warmUpDisabled` on every signed-in use of its web
-    UI — a constant in the hub's login/UI routine, solved 2026-08-21 after six live
-    reproductions in a day. Nothing reachable from outside the hub's firmware prevents it,
-    so putting the mode back is the fix that exists. See `docs/protocol/gcs_valve.md` §5.
+    An Anthem Plus controller's web UI writes ``warmUpDisabled`` on every signed-in use,
+    from its own firmware, and nothing outside it can prevent that
+    (`docs/protocol/gcs_valve.md` §5), so this undoes it.
 
-    **What this does.** When warmup goes to `warmUpDisabled` and this integration did not
-    cause it — announced by the valve over MQTT, or discovered by the reconnect reseed after
-    an MQTT outage (a hub sign-in during one causes exactly that; the reseed path acts since
-    2026-08-22) — wait 60 seconds, re-check that it is still disabled, and set the mode back
-    to the last enabled one seen on the valve. That target is remembered in the entry
-    options, so it survives a restart and reinstates what the fixture actually had — never a
-    default, because "all outlets" and "selected outlets" are different fixtures' worth of
-    water. With no remembered mode it does nothing and says so.
+    When warmup goes to ``warmUpDisabled`` without this integration causing it (reported
+    over MQTT, or found by the reseed after a reconnect), it waits
+    `WARMUP_AUTO_RESTORE_DELAY_SECONDS`, checks it is still disabled, and restores the
+    last enabled mode seen on the valve. That target is kept in the entry options so it
+    survives a restart; never a default, since "all" and "selected" outlets are
+    different amounts of water. With no target it does nothing and says so.
 
-    ⚠️ **This treats a symptom.** It cannot stop the hub's routine writing the field — that
-    is hub firmware — and a restore is a write to Kohler's cloud like any other. It is off by
-    default because only installs whose hub web UI gets used ever see the disable; turn it on
-    when the reverting is actually bothering you.
-
-    Three things it deliberately will not do:
-
-    * **Undo you.** Choosing `Off` on the Warmup dropdown is a write this integration made,
-      and a disable it caused is recognised and ignored. Otherwise `Off` would be unusable.
-    * **Fight forever.** If the mode is disabled again after each restore, it stops after five
-      consecutive attempts and logs why. A retry loop against something actively rewriting the
-      field is not a fix, it is just traffic.
-    * **Interrupt a shower.** The write is refused while water is running, mirroring the
-      Konnect app. The next disable schedules another attempt.
-
-    State lives in the config entry's options, read live by the coordinator, so a toggle takes
-    effect on the next message rather than needing a restart.
+    It will not undo an ``Off`` chosen in Home Assistant, will stop after five
+    consecutive restores that don't stick, and never writes while water runs. Its on/off
+    setting lives in the entry options, read live, so a toggle needs no restart.
+    Behaviour lives in `warmup_manager.py`; see `docs/user_guide.md` (Warmup
+    auto-restore).
     """
 
     _attr_name = "Warmup Auto-Restore"
     _attr_icon = "mdi:restore-alert"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    # Off unless someone goes looking for it: this is a workaround for a device fault, not a
-    # feature of the shower, and an owner who has never seen the mode revert does not need it.
-    #
-    # ⚠️ **Specifically a fix for a HUB fault.** The one identified cause of a spontaneous
-    # disable is the Anthem Plus controller's web UI, which writes `warmUpDisabled` to the
-    # valve as a fixed step of its signed-in routine (`docs/protocol/gcs_valve.md` §5) — the write
-    # originates in the hub's firmware and the valve is only the recipient. On a
-    # **controller-free account there is no known cause at all**, and every `warmUpDisabled`
-    # in the corpus traces to that routine or to a post-reboot restatement where the mode did
-    # not change. So on a valve-only system this switch defends against nothing observed, and
-    # enabling it only adds an unprompted writer to the valve.
+    # Off by default: a workaround for a controller fault, and an owner who has never
+    # seen the mode revert does not need another writer to the valve.
     _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
@@ -376,12 +308,7 @@ class WarmupAutoRestoreSwitch(KohlerValveEntity, SwitchEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """What it would restore to, and how long it waits.
-
-        It exists only on an account with an Anthem Plus controller, whose firmware is the
-        one identified cause of a spontaneous disable — so there is no `hub_present` to
-        report: it would always be true.
-        """
+        """What it would restore to, and how long it waits."""
         return {
             "restores_to": self._valve.last_warmup_mode,
             "delay_seconds": WARMUP_AUTO_RESTORE_DELAY_SECONDS,
@@ -438,8 +365,8 @@ class ZoneOutletSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
     def _outlet_exists(self) -> bool:
         """Whether the valve's current layout still has this outlet.
 
-        `Valve._apply_topology` can shrink the model after setup; until the entry reloads,
-        this entity must read as unavailable rather than index past the zone's outlets — one
+        `Valve._apply_topology` can shrink the model after setup; until the entry
+        reloads this reads unavailable rather than index past the zone, since one
         listener that raises stops every listener after it.
         """
         return self._outlet <= self._valve.model.outlets_in_zone(self._zone)
@@ -475,16 +402,13 @@ class ZoneOutletSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
             return {}
         assigned = state.zone_outlets(self._zone, flowing=False)
         attributes: dict[str, Any] = {"assigned": assigned[self._outlet - 1]}
-        # The valve's own type code for this outlet — 62, 52, 1, 11, 39, 21 and so on. It
-        # is the only per-outlet identity the hardware reports, and it is what tells a
-        # handshower from a tub filler on an install whose outlets are otherwise just
-        # numbers. Published raw beside its name. Absent until the valve announces this
-        # outlet — the messages arrive one at a time, unprompted.
+        # The valve's type code for this outlet (`docs/protocol/gcs_valve.md` §1.2), the
+        # only per-outlet identity it reports. Absent until the valve announces the
+        # outlet; those records arrive one at a time, unprompted.
         outlet_type = self._outlet_type(state)
         if outlet_type is not None:
             attributes["outlet_type"] = outlet_type
-            # From the app's own table — see `OUTLET_TYPE_NAMES`. A code outside it (none
-            # is known) leaves these keys absent rather than inventing a fixture name.
+            # Named from the app's table (`OUTLET_TYPE_NAMES`); unknown codes get none.
             name = OUTLET_TYPE_NAMES.get(outlet_type)
             if name is not None:
                 attributes["outlet_type_name"] = name
@@ -494,12 +418,10 @@ class ZoneOutletSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
         return attributes
 
     def _outlet_type(self, state: Any) -> int | None:
-        """This outlet's type code, looked up by the valve's own flat 0-based `outLetId`.
+        """This outlet's type code, looked up by the valve's flat 0-based `outLetId`.
 
-        `outlet_limits` is keyed by that flat id, while this entity is addressed per zone —
-        the deliberate split described in `ValveModel.outlet_id`. Each valve body
-        occupies three `outLetId` slots, so the conversion goes through the model rather
-        than assuming the two numbering schemes line up.
+        `outlet_limits` is keyed by that id; `ValveModel.outlet_id` converts from this
+        entity's per-zone address.
         """
         flat = self._valve.model.outlet_id(self._zone, self._outlet)
         limits = state.outlet_limits.get(flat)
@@ -512,9 +434,8 @@ class ZoneOutletSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
         await self._async_set(False)
 
     async def _async_set(self, target: bool) -> None:
-        # No flow passed: the write takes the zone's `zone_flow` — the Flow number's value —
-        # when it is built, not when this was asked for, so a flow change queued ahead of
-        # this toggle is not undone by it. See `Valve.async_set_zone_outlet`.
+        # No flow passed: the write takes the zone's `zone_flow` when it is built, so a
+        # flow change queued ahead is not undone. See `Valve.async_set_zone_outlet`.
         await self._async_switch(
             target, self._valve.async_set_zone_outlet(self._zone, self._outlet, target)
         )
@@ -523,28 +444,14 @@ class ZoneOutletSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
 class HubShowerSwitch(OptimisticSwitchMixin, KohlerControllerEntity, SwitchEntity):
     """The controller's own shower, via ``valvecontrol {valveOnOff}``.
 
-    **The only bare on/off in the whole system.** It works because the controller stores its
-    own default water configuration, so "on" has a meaning without naming a scene. The GCS
-    valve has no equivalent — every start there must specify the complete valve state, which
-    is why the valve's shower switch sends the default outlets stored in its preset 1 instead.
+    A bare on/off: the controller stores its own default water configuration, so "on"
+    needs no scene. Off stops water only; the System switch stops everything.
 
-    Off stops **water only**, leaving music, steam, and lighting untouched. For a true
-    system-wide stop use the System switch, which calls ``stopall``.
-
-    ``is_on`` follows reported state rather than what we last sent, so a shower started from
-    the touchscreen or the app shows up here too.
-
-    **It reports the controller's view only — never the valve's.** A shower driven straight
-    at the valve through ``solowritesystem`` — which is every shower Home Assistant starts —
-    reaches this switch only if the controller happens to register it, which is unreliable
-    (51 of 95 immediately, 12 late, 32 never; preset-driven ones never). That is the
-    intended reading, not a gap: the switch shows what the controller knows, and its own
-    ``valvecontrol OFF`` can only stop a session the controller is party to. For whether
-    water is physically running, read the **Anthem Valve** device's Shower on switch and
-    sensors, which are authoritative.
-
-    See ``Controller.water_is_running`` for the 2026-08-18 measurement that made this
-    the rule.
+    It reports the controller's view (`Controller.water_is_running`). A shower driven
+    straight at the valve, as every Home Assistant shower is, shows here only if the
+    controller registers it, which is unreliable (`docs/protocol/hub_controller.md` §5);
+    its ``valvecontrol OFF`` can stop only a session the controller knows of. The Anthem
+    Valve device answers whether water is running.
     """
 
     _attr_name = "Shower"
@@ -572,28 +479,16 @@ class HubShowerSwitch(OptimisticSwitchMixin, KohlerControllerEntity, SwitchEntit
 
 
 class HubSystemSwitch(OptimisticSwitchMixin, KohlerControllerEntity, SwitchEntity):
-    """Is anything running **that the controller knows about**, and the one control that
-    stops all of it.
+    """Whether anything the controller knows of is running, and the stop for all of it.
 
-    ``is_on`` is true when **any** subsystem is active — water, music, steam, or lighting —
-    so it answers "is the shower room doing something" in a single row, with an attribute
-    breakdown naming which. Off calls ``stopall``, the only command that idles everything.
+    On when any subsystem is active (water, music, steam, lighting); the attributes name
+    which. All four are the controller's view, water included: a valve-driven shower is
+    invisible here, and ``stopall`` would not stop it either, so the switch covers what
+    its off action reaches.
 
-    **All four subsystems are the controller's own view, water included.** A shower driven
-    at the valve through ``solowritesystem`` is invisible here, because it is invisible to
-    the controller — and ``stopall``, this switch's off action, would not stop it either.
-    Scoping the switch to what its own off action can reach is the point: it stays honest
-    about both. The **Anthem Valve** device owns the question "is water running".
-
-    **The two directions are deliberately asymmetric, and this is the honest part.** There is
-    no "start everything" concept: the controller cannot turn on music and steam and water
-    from one command, and inventing a meaning would be guesswork. So turning it **on** runs
-    the controller's default shower (``valvecontrol ON``) — the nearest thing to "on" the
-    hardware offers — while turning it **off** stops every subsystem.
-
-    If that asymmetry is unwanted, the alternative is a read-only binary sensor plus a
-    separate stop button. That is arguably cleaner but costs two dashboard rows for what is
-    usually one glance and one tap.
+    Deliberately asymmetric: Off sends ``stopall``, the only command that idles
+    everything, but there is no "start everything", so On runs the controller's default
+    shower (``valvecontrol ON``).
     """
 
     _attr_name = "System"
@@ -611,9 +506,8 @@ class HubSystemSwitch(OptimisticSwitchMixin, KohlerControllerEntity, SwitchEntit
         if state is None:
             return {}
         return {
-            # The controller's own outlet arrays, deliberately — not the valve's. Reading
-            # the valve here made this switch report sessions the controller had never been
-            # told about; see `Controller.water_is_running`.
+            # The controller's own outlet arrays, not the valve's; see
+            # `Controller.water_is_running`.
             "water": self._controller.water_is_running,
             "music": state.music_on,
             "steam": state.steam_on,
@@ -629,16 +523,15 @@ class HubSystemSwitch(OptimisticSwitchMixin, KohlerControllerEntity, SwitchEntit
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Which subsystems are on, so "System: on" is never a mystery.
+        """Which subsystems are on.
 
-        Accessories the controller does not have report ``None`` rather than ``False``: it
-        emits STEAM_STS and LIGHT_STS even for hardware that is not installed, so a flat
-        False would imply a steam generator that is merely idle.
+        An accessory the controller lacks reads None, not False: it sends STEAM_STS and
+        LIGHT_STS even for absent hardware, and False would imply an idle one.
         """
         return dict(self._subsystems)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        # Water only — see the class docstring on why "on" cannot mean everything.
+        # Water only: there is no "start everything" command.
         await self._async_switch(
             True, self.coordinator.async_set_hub_shower(self._controller, True)
         )
@@ -652,18 +545,13 @@ class HubSystemSwitch(OptimisticSwitchMixin, KohlerControllerEntity, SwitchEntit
 class HubSteamSwitch(OptimisticSwitchMixin, KohlerControllerEntity, SwitchEntity):
     """The controller's steam generator, at its own default temperature and time.
 
-    ``steamcontrol {steamOnOff}`` — the steam twin of the Shower switch's ``valvecontrol``,
-    and the same thing the Konnect app's "Steam start" card sends. There is no temperature
-    or duration in the command: the controller runs ``steamSettings.defaultTemperature`` for
-    ``defaultTime``, set in the app or on the controller.
+    ``steamcontrol {steamOnOff}``, as the app's "Steam start" card sends; the controller
+    runs ``steamSettings.defaultTemperature`` for ``defaultTime``. Refused while the
+    shower runs, as in the app (`KohlerKonnectCoordinator.async_set_hub_steam`).
+    App-confirmed only.
 
-    **Added 2026-10-07, app-confirmed but never run against hardware by this integration** —
-    no steam generator is attached to the reference system. The app refuses to start steam
-    while the shower runs, and so does this (`KohlerKonnectCoordinator.async_set_hub_steam`).
-
-    ``is_on`` reads ``STEAM_STS``; a generator running its self-clean (``POWERCLEAN``)
-    reads off with ``power_clean`` true, because it is not steaming for anyone and should
-    not be stood in.
+    Reads ``STEAM_STS``; a generator self-cleaning (``POWERCLEAN``) reads off with
+    ``power_clean`` true, since nobody should stand in it.
     """
 
     _attr_name = "Steam"
@@ -673,8 +561,7 @@ class HubSteamSwitch(OptimisticSwitchMixin, KohlerControllerEntity, SwitchEntity
         self, coordinator: KohlerKonnectCoordinator, controller: Controller
     ) -> None:
         super().__init__(coordinator, controller)
-        # Distinct from the Steam binary sensor's `_steam`, which stays for existing
-        # automations; this is the control, that is the plain reading.
+        # Not the Steam binary sensor's `_steam`: that is the reading, this the control.
         self._attr_unique_id = f"{self._device_id}_steam_control"
 
     @property
@@ -706,27 +593,15 @@ class HubSteamSwitch(OptimisticSwitchMixin, KohlerControllerEntity, SwitchEntity
 
 
 class _ReportLogSwitch(SwitchEntity):
-    """Shared half of the Report Log switch — the consumer-side raw MQTT capture.
+    """Shared half of the Report Log switch: a raw MQTT capture for bug reports.
 
-    **What it is for.** A user who hits a bug — or wants to document a healthy run on
-    hardware this integration has never been verified against — flips this on, uses the
-    shower, flips it off, and attaches the resulting file to a GitHub issue. It is the
-    quick evidence switch, distinct from the development capture in
-    `/config/kohler_konnect_raw/` (pinned by `const.py`, per-run files): this one is
-    **one file per switch-on**, and a Home Assistant restart mid-capture appends to the
-    **same** file rather than starting a new one, because "it breaks when I restart" is a
-    bug report too. Semantics live in `konnect/report_log.py`.
+    One file per switch-on; a Home Assistant restart mid-capture appends to the same
+    file. The valve and controller copies toggle the one capture and refresh together
+    through `async_update_listeners`. Behaviour lives in `konnect/report_log.py`; see
+    `docs/mqtt/capture_runbook.md`.
 
-    **One capture, two switches.** The same switch appears on the valve and the controller
-    device pages (whichever exist), mirroring the diagnostics buttons — both toggle the one
-    underlying capture and always show the same state, refreshed together through
-    `async_update_listeners`.
-
-    Files land inside the integration's own folder
-    (`custom_components/kohler_konnect/reports/`) — the owner's choice, so reports sit
-    with the code they describe. Known consequence, also stated in the folder's README: a
-    HACS update or reinstall replaces that folder, so files worth keeping should be moved
-    out before updating.
+    Files go to `custom_components/kohler_konnect/reports/`; a HACS update or reinstall
+    replaces that folder and deletes them.
     """
 
     _attr_name = "Report Log"

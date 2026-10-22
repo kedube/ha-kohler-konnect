@@ -1,13 +1,12 @@
 """One faucet's coordinator: polled state, dispenses, leaks, usage and the safety limit.
 
-Unlike the showers, which are push-only, a faucet polls. That is the cadence the separate
-``kohler_sensate`` integration settled on against a real faucet: the MQTT stream is a
-speed-up, proven per faucet before polling relaxes, and a poll that finds a change the stream
-never announced puts polling back in charge (`_check_push_announced`).
+Unlike the showers, which are push-only, a faucet polls. The MQTT stream is a speed-up:
+polling relaxes once the stream has proven it delivers for this faucet, and a poll that
+finds a change the stream never announced puts polling back in charge
+(`_check_push_announced`). The cadence is described in `docs/user_guide.md`, "How it works".
 
-Everything else is shared with the showers and owned by the account coordinator — the
-sign-in, the REST client and the one MQTT connection. It hands this faucet its messages and
-tells it when the connection comes and goes (`async_push_activity`).
+The sign-in, REST client and MQTT connection belong to the account coordinator, which hands
+this faucet its messages and connection changes (`async_push_activity`).
 """
 
 from __future__ import annotations
@@ -88,19 +87,16 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Leak events are {"leakDetectionTime": <epoch seconds>}, and are keyed by that time. One
-# without it — none has been seen — is keyed by one of these ids, else a hash of the event.
+# Leak events are {"leakDetectionTime": <epoch seconds>} (`docs/protocol/sensate_faucet.md`
+# §2.2) and are keyed by that time; one without it by one of these ids, else a hash.
 _LEAK_ID_KEYS = ("id", "eventId", "leakId")
 _LEAK_TIME = "leakDetectionTime"
 
 # Fields whose values are recorded for diagnostics.
 TRACKED_FIELDS = ("status", "progress", "handleState")
-# A safety auto-off that has not turned the water off — the command failed, or Kohler took
-# it and the water is still not reported off — is sent again after each of these delays in
-# turn (seconds), then every 15 minutes, for as long as the water may be running. Never
-# given up: 1.03 stopped after ten failures a minute apart and forgot the limit, so eleven
-# minutes of cloud outage left the water running for good (2026-10-16). It used to warn every
-# minute instead; now it warns once, and raises a repair issue if it goes on.
+# Delays (seconds) before each retry of a safety auto-off that has not turned the water
+# off (the OFF failed, or was taken but no reading shows the water off); the last repeats.
+# ⚠️ Never give up while the water may be running.
 AUTO_OFF_BACKOFF = (60.0, 120.0, 300.0, 600.0, 900.0)
 # The tries in a row that have not turned the water off before the repair issue is raised.
 AUTO_OFF_FAILURES_BEFORE_ISSUE = 3
@@ -109,11 +105,9 @@ ISSUE_FAUCET_AUTO_OFF_FAILED = "faucet_auto_off_failed"
 # then a poll's "off" may predate the command. Water never seen running is reliably off
 # once two readings after this say so. See `_polls_caught_up`.
 _NEVER_RAN_AFTER = 60.0
-# A re-read a message asked for that failed — or a first read that has never answered —
-# is tried again after this many seconds, doubling each time up to the configuration's own
-# interval: not at every poll, which while water runs without a trusted stream is every
-# 5 s. The doublings are counted only as far as that cap needs; counted on, a read failing
-# for days overflowed the float (2026-10-16).
+# A failed re-read (one a message asked for, or a first read that has never answered) is
+# retried after this many seconds, doubling up to FAUCET_CONFIG_REFRESH_INTERVAL, rather
+# than at every poll. The doublings are capped so a read failing for days cannot overflow.
 _REREAD_RETRY = 60.0
 _REREAD_DOUBLINGS = 8
 # The dispense timer fires this long after the limit, so float rounding of the deadline
@@ -190,10 +184,9 @@ def _push_signature(state: dict[str, Any]) -> bool | None:
 def _may_change_config(event: FaucetEvent | None) -> bool:
     """Whether a faucet message can change what the configuration read holds.
 
-    Only a water or handle report is known not to. A leak alert, an install result, a preset
-    run (perhaps of a preset added since) or a message not understood may. Re-reading for
-    every message cost about four REST calls per water on or off, on the account's shared
-    rate limit.
+    A water or handle report cannot; anything else (a leak alert, an install result, a
+    preset run, a message not understood) may. Skipping the re-read for water reports
+    spares REST calls on the account's shared rate limit.
     """
     return event is None or not (event.status or event.handle)
 
@@ -207,9 +200,8 @@ async def _side_by_side(*reads: Coroutine[Any, Any, Any]) -> list[Any]:
     """Run independent reads at once; the first to raise is raised once all have finished.
 
     Each read catches its own failures, so what escapes is a dead credential (or a bug).
-    Raising it straight away would leave the others updating what they hold after the
-    refresh had failed. Started eagerly, so reads with nothing to do (most of them, most
-    polls) finish without a trip round the event loop.
+    Waiting for all keeps the others from updating state after the refresh has failed.
+    Eager tasks let reads with nothing to do finish without a trip round the event loop.
     """
     results = await asyncio.gather(
         *(create_eager_task(read) for read in reads), return_exceptions=True
@@ -264,8 +256,7 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         #: The device name in Home Assistant — the faucet's Konnect name.
         self.device_name = name
         self.serial_number = device.serial_number
-        # Sent with every command. The app takes it from the account's device list, never
-        # from the faucet's own state, and so does this.
+        # Sent with every command; from the account's device list, as the app does.
         sku = device.sku.upper()
         self.sku: str = sku if sku in FAUCET_SKUS else SKU_SENSATE
         self.device = FaucetDevice(self.client, self.device_id, self.sku)
@@ -318,18 +309,16 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._app_preset: str | None = None
         self._water_was_running: bool | None = None
         # Ends a dispense whose end never arrives, at its dispense_limit(): one timer for
-        # Home Assistant's dispense ("dispense") and one for the app's preset ("preset").
-        # They overlap; one shared timer let a preset cancel the dispense's, which then
-        # showed as dispensing until the next poll.
+        # Home Assistant's dispense ("dispense") and one for the app's preset ("preset"),
+        # since the two can overlap.
         self._dispense_timers: dict[str, CALLBACK_TYPE] = {}
         # The stream's latest water status and handle position, with when each arrived
         # (monotonic), so a poll that read the faucet before then cannot put the older
         # state back. See `_stream_values_since`.
         self._stream_values: dict[str, tuple[float, str]] = {}
         # When the water status in `data` was learned (monotonic), and whether the stream
-        # reported it rather than a poll. The status's own time: until 2026-10-16 any
-        # stream field stamped the whole state, so a handle report made an old "off" look
-        # new enough for `_known_off`.
+        # reported it rather than a poll. Only a status report sets it, not a handle
+        # report; see `_known_off`.
         self._status_at: float | None = None
         self._status_from_feed = False
         # Water usage, as the raw monthly and daily series — the same shape the valves
@@ -401,46 +390,36 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             if isinstance(value := stored.get(key), (int, float)):
                 setattr(self, attr, float(value))
-        # A reload or restart must not lose the safety limit, nor whether the water it
-        # covers was seen running — unless the limit has been turned off since (0
-        # minutes), which is the owner's call to stop it (2026-10-16).
+        # ⚠️ A reload or restart must not lose the safety limit, nor whether its water was
+        # seen running, unless the limit has since been set to 0 minutes, which drops it.
         deadline = stored.get("auto_off_at")
-        # 🚨 **One turned off is saved as dropped** (2026-10-16), at the end, once the rest
-        # is back for the save to keep. Left in the store, the old deadline came back with
-        # the limit: turned on again an hour later, the reload restored it long past, and
-        # 30 s on it cut off whoever was using the faucet by then.
+        # A dropped limit is saved as dropped (at the end, once the rest is loaded), so a
+        # stale deadline cannot come back if the limit is turned on again later.
         dropped = isinstance(deadline, (int, float)) and self.max_run_minutes <= 0
         if isinstance(deadline, (int, float)) and not dropped:
             now = time.time()
             set_at = stored.get("auto_off_set_at")
             if not isinstance(set_at, (int, float)):
-                # Kept by a version that did not save it: as long before the deadline as
-                # the limit is long.
+                # Not stored: assume it was set one limit's length before the deadline.
                 set_at = deadline - self.max_run_minutes * 60
             self._auto_off_at = float(deadline)
             self._auto_off_set_at = min(float(set_at), now)
             self._seen_running = stored.get("auto_off_seen_running") is True
-            # From when the water was turned on, not from setup: a read at setup is then
-            # as good as any other once the cloud has had time to catch up with the
-            # command, and decides whether a deadline that passed meanwhile needs an OFF.
+            # Counted from when the water was turned on, not from setup, so a read at
+            # setup can already count as caught up with the command (`_known_off`).
             self._auto_off_armed_at = time.monotonic() - (now - self._auto_off_set_at)
-            # Not before a read has had the chance to say whether the water is still on.
-            # A deadline that passed while Home Assistant was down fired at once, during
-            # setup, before anything was known — so an OFF went out blind, to water
-            # perhaps turned on by hand since (2026-10-16). If the read fails, the OFF is
-            # sent all the same.
+            # Not before a read has had the chance to say whether the water is still on,
+            # so a deadline that passed while Home Assistant was down does not send a
+            # blind OFF. If the read fails, the OFF is sent all the same.
             self._schedule_auto_off(
                 max(deadline - now, FAUCET_COMMAND_FOLLOW_UP.total_seconds())
             )
-        # The stream's proof that it delivers for this faucet, so a restart does not poll
-        # every 30 seconds until the faucet is next used: the owner's diagnostics after one
-        # showed no messages, unverified, 120 state reads an hour (2026-10-16). Polling
-        # still relaxes only while the stream is connected (`push_trusted`), and a missed
-        # change still takes the verification away again (`_async_push_check`).
+        # Restored so a restart does not fall back to fast polling until the faucet is next
+        # used. Polling still relaxes only while the stream is connected (`push_trusted`),
+        # and a missed change still revokes it (`_async_push_check`).
         self.push_verified = self.push_restored = stored.get("push_verified") is True
-        # What this faucet's own preset list held when it last answered: after a restart a
-        # 404 from it means its presets were deleted, and the account list, standing in,
-        # shows only these — it could bring deleted ones back (2026-10-16).
+        # What this faucet's own preset list last held; see
+        # `FaucetDevice.async_get_presets` for how it is used after a restart.
         ids = stored.get("faucet_preset_ids")
         if isinstance(ids, list):
             self.device.faucet_preset_ids = frozenset(str(i) for i in ids)
@@ -532,12 +511,10 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         # Errors fall back to slow polling; no point hammering a failing cloud.
         self.update_interval = self._idle_interval
-        # The reads beside the state come first, side by side, so that none sits between
-        # reading the state and applying it. They used to come after, one by one: a stream
-        # message in that gap was overwritten by the older state, and the re-read it asked
-        # for was dropped while this refresh held the lock — the water flickered on, off
-        # and on, or stuck until the next poll (2026-10-16). After a failed poll they wait
-        # for the state to answer again, for the same reason as the slow polling.
+        # The configuration, preset, firmware and usage reads come first, so none sits
+        # between reading the state and applying it: a stream message arriving in that gap
+        # would be overwritten by older state. After a failed poll they wait until the
+        # state answers again.
         if self.last_update_success:
             await self._async_refresh_extras()
         polled_at = time.monotonic()
@@ -599,10 +576,10 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else FAUCET_SCAN_INTERVAL_ACTIVE
             )
         elif self._auto_off_at is not None and not self._seen_running:
-            # Water Home Assistant turned on and nobody has seen run: read on until it is
-            # seen, or reliably off (`_note_water_for_auto_off`). The stream announces a
-            # change, never that nothing happened, and five minutes between reads left the
-            # limit armed for whoever used the faucet next.
+            # Water Home Assistant turned on that has not been seen running: keep reading
+            # quickly until it is, or is reliably off (`_note_water_for_auto_off`). The
+            # stream never announces that nothing happened, so idle polling would leave
+            # the limit armed for whoever uses the faucet next.
             self.update_interval = min(
                 self.update_interval, FAUCET_SCAN_INTERVAL_PUSH_ACTIVE
             )
@@ -628,25 +605,16 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("New faucet %s value: %s", field, value)
 
     async def _async_refresh_extras(self) -> None:
-        """Refresh the configuration, presets, firmware check and water usage.
-
-        None depends on another, so they run at once. One after another they added up to
-        six round trips to every setup, part of the 14 s the owner's diagnostics showed.
-        """
+        """Refresh the configuration, presets, firmware check and water usage, at once."""
         await _side_by_side(self._async_refresh_config(), self._async_refresh_usage())
 
     async def _async_refresh_config(self) -> None:
         """Refresh firmware, leak history and presets; failures keep the old copy.
 
         On its interval, every read; between, only what a message asked for (a leak, an
-        install, a new preset) that has not worked yet. **Each such read is retried on its
-        own, and not at every poll** (2026-10-16): one that failed used to keep all three
-        due, so while Kohler's firmware check answered 503 every poll re-read the
-        configuration and both preset lists with it — five calls where one was due, every
-        5 s while the water ran. A failed one now waits `_REREAD_RETRY`, doubling, up to the
-        interval. **So does a first read that has never answered** (2026-10-16): a
-        configuration Kohler would not serve was read again, with both preset lists, at every
-        poll — 14 configuration and 28 preset reads a minute while the water ran.
+        install, a new preset) or what has never answered, until it works. Each failed read
+        is retried on its own after `_REREAD_RETRY`, doubling up to the interval, not at
+        every poll.
         """
         now = time.monotonic()
         if self._config_due:
@@ -761,8 +729,8 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         The daily series is what moves — it covers this month and the last, which is
         everything Today, This Week and This Month read. The monthly series only adds the
-        months before that, which no longer change, so it is read as the valves read it: at
-        startup and once the month turns, not on every refresh.
+        months before that, which no longer change, so it is read at startup and with the
+        first refresh of a new month, not on every refresh.
         """
         now = time.monotonic()
         today = dt_util.now().date()
@@ -881,11 +849,10 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             status = event.status.lower()
             if status in STATUS_ON or status in STATUS_OFF:
                 self._note_water(status in STATUS_ON, from_feed=True, at=now)
-        # Like the app, take the stream's water and handle state at once; the re-read that
-        # follows confirms it. Each is timed, so a poll that read the faucet before it
-        # arrived does not put the older state back, and recorded, so the state sensors
-        # accept a value only the stream has reported (an enum sensor rejects a state
-        # missing from its options).
+        # Like the app, apply the stream's water and handle state at once; the re-read that
+        # follows confirms it. Each is timed, so an older poll cannot put the previous
+        # state back (`_stream_values_since`), and recorded, so an enum state sensor
+        # accepts a value only the stream has reported.
         reported = {
             field: value
             for field, value in (
@@ -981,13 +948,9 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # from an earlier run — retrying, or restored — must not cut it off.
                 await self._async_cancel_auto_off()
             if not on and self._auto_off_at is not None:
-                # 🚨 **Only the water seen off ends the limit, never Kohler taking an OFF**
-                # (2026-10-16). This tested whether the limit had started trying, which is
-                # not saved: after a restart past the deadline it read "not yet", and an OFF
-                # the faucet ignored dropped the limit with the water still running — as did
-                # any such OFF before the deadline. The first reading after this OFF that
-                # says "off", once the polls have caught up with the ON, ends it
-                # (`_note_water_for_auto_off`); polling is quickened so that comes promptly.
+                # ⚠️ Only a reading of the water off ends the limit, never Kohler accepting
+                # an OFF, which the faucet may ignore. `_note_water_for_auto_off` ends it
+                # at the first "off" read after this OFF; poll quickly so that comes soon.
                 self._auto_off_sent_at = sent_at
                 self._fast_poll_until = (
                     time.monotonic() + FAUCET_COMMAND_FOLLOW_UP.total_seconds()
@@ -997,15 +960,12 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_water_on_with_limit(self) -> None:
         """Turn the water on, under the safety limit.
 
-        The limit is set and saved before the command is sent. Until 2026-10-16 it was set
-        once the command was through, so a reload while the command was on its way set it
-        in the copy being unloaded, after the next setup had read the store — which that
-        copy's late save then overwrote — and nothing turned that water off. A limit
-        already set stays as it is until this command is through, then starts again.
+        The limit is set and saved before the command is sent, so a reload while it is in
+        flight cannot lose it. A limit already set stays as it is until this command is
+        through, then starts again.
 
-        If the command fails, the limit it set is dropped only if Kohler certainly did not
-        carry it out: one that got no answer may have turned the water on, and its limit
-        stays until the water is known off (`_note_water_for_auto_off`).
+        If the command fails, its limit is dropped only if Kohler certainly did not carry
+        it out (`_not_carried_out`); otherwise it stays until the water is known off.
         """
         self._check_command(starts_water=True)
         armed = None
@@ -1101,10 +1061,10 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # --- safety auto-off ------------------------------------------------------------
     #
-    # Two rules. While the water is not known to be off, the limit never stops trying to
-    # turn it off once it is reached — however long Kohler cannot be reached, and across
-    # restarts and reloads. And it never cuts off water someone turned on by hand after Home
-    # Assistant's run ended: it is dropped as soon as the water is known to be off.
+    # ⚠️ Two rules. Once reached, the limit never stops trying to turn the water off while
+    # it is not known to be off, however long Kohler is unreachable and across restarts and
+    # reloads. And it never cuts off water someone turned on by hand after Home Assistant's
+    # run ended: it is dropped as soon as the water is known to be off.
 
     def _schedule_auto_off(self, delay: float) -> None:
         if self._auto_off_timer is not None:
@@ -1153,14 +1113,9 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     ) -> None:
         """Follow the water for the safety limit, from polls and the stream alike.
 
-        The limit is for water Home Assistant turned on and nobody turned off, so it is
-        dropped once that water is known to be off: it ran and stopped, or an OFF went out
-        before the reading, or it was never seen running and two readings well after the
-        command say "off". Only polls used to count: water that ran and stopped between
-        them kept the limit, which then cut off whoever used the faucet next. And until
-        2026-10-16 water never seen running kept it to the deadline whatever the readings
-        said, so after an ON that did not take, someone using the faucet by hand at minute
-        8 was cut off at minute 10.
+        The limit is dropped once its water is known to be off: it ran and stopped, or an
+        OFF went out before the reading, or it was never seen running and two readings
+        well after the command say "off".
         """
         if self._auto_off_at is None:
             return
@@ -1181,21 +1136,12 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._auto_off_sent_at is not None and at >= self._auto_off_sent_at
             )
         ):
-            # 🚨 **A poll can predate Home Assistant's ON until the cloud has had the
-            # longest it is allowed** (2026-10-16): the cloud had not caught up, still said
-            # "off", and the limit on water the stream had seen running was dropped — the
-            # stream's own guard (`_may_lag_stream`) holds only while the stream is
-            # trusted, and a drop or a reconnect ends that. Until then only the stream may
-            # say this water stopped, whatever OFF went out meanwhile. **Nor does a poll
-            # that showed it running vouch for the rest**: that can be a run that ended just
-            # before the ON, and the "off" after it that run's end — which dropped the
-            # limit with Home Assistant's water running. Polled quickly until then, so the
-            # first reading that may count comes within seconds of it rather than at the
-            # next idle poll, before a short limit runs out over water already off. **Not
-            # over an OFF sent from here before the read**: its "off" is the OFF's doing,
-            # as for water never seen running, below. Held for the minute too, it kept a
-            # 1-minute limit to its deadline whatever came first, and cut off whoever used
-            # the faucet by hand after the `Water` switch turned it off.
+            # Until the polls have caught up with the ON (`_polls_caught_up`), a poll may
+            # show the state from before it: "off", or a run that ended just before it.
+            # So only the stream may say this water stopped, trusted or not (unlike
+            # `_may_lag_stream`). An "off" read after an OFF sent from here does count, as
+            # that OFF's doing. Poll quickly meanwhile, so the first reading that counts
+            # comes within seconds.
             self._fast_poll_until = max(
                 self._fast_poll_until, self._auto_off_armed_at + _NEVER_RAN_AFTER + 1
             )
@@ -1203,9 +1149,9 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self._seen_running and not (
             self._auto_off_sent_at is not None and at >= self._auto_off_sent_at
         ):
-            # Never seen running, and no OFF sent before this read: one soon after the
-            # command can say "off" while the cloud catches up, so only later ones count,
-            # and two of them — from the stream too.
+            # Never seen running, and no OFF sent before this read: a reading soon after
+            # the command can say "off" while the cloud catches up, so it takes two later
+            # ones, from polls or the stream.
             if at - self._auto_off_armed_at < _NEVER_RAN_AFTER:
                 return
             self._off_readings += 1
@@ -1236,22 +1182,17 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _polls_caught_up(self, at: float) -> bool:
         """Whether a poll sent at ``at`` is late enough to show Home Assistant's ON.
 
-        `_NEVER_RAN_AFTER` after it, counted from when the water was turned on — for a
-        restored limit too. Nothing a poll shows earlier can say so: "running" may be a run
-        that ended just before the ON, the cloud behind (2026-10-16).
+        That is `_NEVER_RAN_AFTER` after the water was turned on, for a restored limit too.
+        An earlier poll may show the state from before the ON, "running" included.
         """
         return at - self._auto_off_armed_at >= _NEVER_RAN_AFTER
 
     def _known_off(self) -> bool:
         """The water is off by what was learned since the safety limit was set.
 
-        Learned once the cloud had time to catch up with the command, that is: a read right
-        after it can still say "off" — for a restored limit too, counted from when the water
-        was turned on. Nothing learned since (failed polls, a silent stream) is not "off",
-        nor is a poll that may lag the stream. **A poll's "off" counts once the polls have
-        caught up** (`_polls_caught_up`; 2026-10-16): with a 1-minute limit and the cloud
-        45 s behind, the last poll before the deadline — 30 s after the ON — said "off",
-        and the limit was dropped over water running.
+        Only a reading taken once the cloud has had time to catch up with the command
+        counts (for a poll, `_polls_caught_up`), and not a poll that may lag the stream.
+        Having learned nothing (failed polls, a silent stream) does not count as off.
         """
         at = self._status_at
         if self.water_running is not False or at is None:
@@ -1277,8 +1218,8 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _auto_off_trouble(self, error: str) -> Callable[..., None]:
         """Count a try that has not turned the water off, and say how to log it.
 
-        Warned once: a faucet out of reach would otherwise warn at every try. The third in
-        a row also raises a repair issue, which goes with the limit.
+        Only the first is a warning; the `AUTO_OFF_FAILURES_BEFORE_ISSUE`th in a row also
+        raises a repair issue, which is cleared with the limit.
         """
         self._auto_off_failures += 1
         if self._auto_off_failures == AUTO_OFF_FAILURES_BEFORE_ISSUE:
@@ -1297,10 +1238,8 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Turn off water Home Assistant turned on and nobody turned off, until it is off.
 
         An OFF that fails, or that Kohler takes when nothing after it shows the water off,
-        is sent again after each of `AUTO_OFF_BACKOFF` in turn, then every 15 minutes, for
-        as long as it takes — the deadline stays saved, so a restart or reload carries on.
-        Until 2026-10-16 ten failures gave up and dropped the limit, and an accepted OFF
-        ended it whatever the faucet did.
+        is sent again after each of `AUTO_OFF_BACKOFF` in turn, for as long as it takes. The
+        deadline stays saved, so a restart or reload carries on.
         """
         self._auto_off_timer = None
         deadline = self._auto_off_at
@@ -1336,10 +1275,8 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             await self.device.async_set_water(False)
         except (AuthError, KohlerError) as err:
-            # Unloaded — the next setup carries on from the store — or the limit was
-            # dropped or set again meanwhile. Both used to be overlooked: an OFF that failed
-            # while the stream reported the water off was retried a minute later, and cut
-            # off whoever had turned it on again (2026-10-16).
+            # Unloaded (the next setup carries on from the store), or the limit was dropped
+            # or set again meanwhile: a retry could cut off water turned on since.
             if self._shut_down or self._auto_off_at != deadline:
                 return
             delay = self._auto_off_delay(err)
@@ -1353,8 +1290,7 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._schedule_auto_off(delay)
             return
         if self._shut_down or self._auto_off_at != deadline:
-            # Nor is a limit set again meanwhile — water turned on again from Home
-            # Assistant while this OFF was on its way — this one's to end.
+            # A limit set again while this OFF was in flight is not this one's to end.
             return
         # Kohler took it. Only a reading that says "off" confirms it
         # (`_note_water_for_auto_off`); until then the next try waits its turn.
@@ -1391,10 +1327,9 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """The stream's first connect, which this faucet's first read stands in for.
 
         That read went out moments ago, so the faucet is not read again
-        (`KohlerKonnectCoordinator._handle_connected`) — but a change in the seconds between
-        it and the connect could not have been announced, and the next poll finding it took
-        it for a missed announcement, dropping the instant-update verification restored at
-        setup (2026-10-16). The stream is answerable from now on.
+        (`KohlerKonnectCoordinator._handle_connected`). The stream is answerable only from
+        now: a change between that read and the connect was never announced and must not
+        count as missed.
         """
         self._push_synced_at = time.monotonic()
 
@@ -1416,10 +1351,9 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if _may_change_config(event):
                 self._config_due = True  # a leak, an install, a new preset...
         else:
-            # Connected or dropped: the water may have stopped in the gap, unreported, so
-            # polls can say so again — as after a restart — until the stream next reports
-            # it running. Otherwise the limit held to its deadline (`_may_lag_stream`), and
-            # cut off whoever was using the faucet by then.
+            # Connected or dropped: the water may have stopped unreported in the gap, so
+            # polls may say so again until the stream next reports it running
+            # (`_may_lag_stream`).
             self._feed_saw_running = False
         if event is not None:
             self._note_event(event)
@@ -1471,9 +1405,9 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def faucet_online(self) -> bool:
         """False when Kohler reports the faucet is not connected to the cloud.
 
-        A missing `connectionState` counts as online, unlike in the app: it has always been
-        present, and treating its absence as offline would refuse every command on a reply
-        that merely left it out.
+        A missing `connectionState` counts as online, unlike in the app
+        (`docs/protocol/sensate_faucet.md` §2.2), so a reply that merely leaves it out does
+        not refuse every command.
         """
         return self.connection_state is None or (
             self.connection_state.lower() == CONNECTION_CONNECTED.lower()

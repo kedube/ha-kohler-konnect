@@ -1,62 +1,36 @@
 """Keep a custom shower running past the valve's warm-up pause. Pure decision logic.
 
-**What the valve does on its own.** With warm-up enabled, every complete write that opens an
-outlet first runs the warm-up set — on the reference install zone 1 outlets 1–3 and zone 2
-outlets 1–2, masks ``0x07``/``0x03`` — and when the water is warm the valve **pauses for
-two minutes**, just as it always does (``0x40`` on both zones, assignment cleared). A person
-may pick outlets at the wall inside those two minutes; otherwise the pause self-terminates. So a write from Home Assistant
-on such a valve has never produced a running shower by itself: it warms up, pauses, and ends.
+With warm-up enabled, a write that opens an outlet first runs the warm-up. When the water
+is warm the valve pauses for two minutes (``0x40`` on both zones, outlets cleared) and,
+unless someone picks outlets at the wall, the session ends there. So a write from Home
+Assistant on such a valve never produces a running shower by itself. When ``custom_shower``
+asks to keep the shower on, the coordinator feeds every GCS report to
+:meth:`WarmupResume.observe`, which says when to re-send the caller's own words, once.
+Only the GCS stream is read: the controller's ``showerwarmup`` flag does not track the
+valve's warm-up.
 
-**Corpus, 2026-08-07 → 2026-09-06, 33 valve warm-ups, 31 natural endings** (two were
-interrupted by Home Assistant writes and are excluded):
+⚠️ A pause is not proof the warm-up finished. The Konnect app and the first-generation
+touchscreen stop with the same word, ``0x40`` and no outlets (``docs/protocol/gcs_valve.md``
+§3.1). So a resume also needs the primary word's at-temperature bit
+(``ValveWord.at_temperature``, byte 0 ``0x04``) on a report while the warm-up ran or as it
+ended. Without it the pause is left alone, with a WARNING, so a valve that never sets the
+bit shows up in the log.
 
-* the pause bit ``0x40`` appears on at least one zone in **30 of 31**, on both zones within
-  0.2 s in 29 of 31 — 24 immediately (the two ``custom_shower`` runs of 2026-09-06
-  included), 5 after a transitional report 0.1–0.2 s earlier that
-  still showed the warm-up set (or zone 2's half of it) with ``warmUpStatus`` already cleared;
-* the one ending with no pause bit was a **restart from the wall** — a fresh warm-up began
-  14 s later — and reads as a plain stop, masks ``0x00`` with no ``0x40``.
+Decisions:
 
-The controller's ``showerwarmup`` flag never coincides with the valve's ``warmUpStatus``
-(0 of 30, 0 of 50 in session 24), so this reads the **GCS stream only**.
+* ``WAIT`` — nothing to do yet, including a report just after the warm-up that still shows
+  some or all of its own outlets, within the settle window;
+* ``NO_WARMUP`` — no ``warmUpInProgress`` within the window after the write (warm-up
+  disabled, or the water already warm), so the shower is running as written;
+* ``RESUME`` — the warm-up ran, reached temperature and paused: re-send the caller's words;
+* ``ABANDON`` — a pause with no at-temperature evidence (``Outcome.warn`` set), a plain
+  stop, outlets outside the warm-up's own running unpaused (someone picked them at the
+  wall), the warm-up's outlets running unpaused past the settle window, or a deadline.
 
-🚨 **A pause is not proof the warm-up finished.** The Konnect app and the first-generation
-touchscreen *stop* with exactly that word — ``0x40``, no outlets (`docs/protocol/gcs_valve.md`
-§4.1) — so a Stop pressed during the warm-up reads, report for report, like the warm-up's
-natural end. Until 2026-10-16 any pause after a warm-up resumed, which re-sent the shower over
-that Stop and put the water back on. No capture of a mid-warm-up manual stop exists to tell
-them apart by timing, so the evidence asked for is the valve's own: the primary word's
-**at-temperature** bit (``ValveWord.at_temperature``, byte 0 ``0x04``), seen on a report while
-the warm-up ran or on the reports where it ended. A warm-up ends because the water is warm; a
-Stop pressed before then has not got there. Without that bit the pause is left alone, and the
-reason says why at WARNING, so a pause the valve never marks this way shows up in the log
-rather than as a shower that quietly stopped resuming.
-
-**How this is used.** ``custom_shower`` fires its write ONCE, so it can never disrupt the
-warm-up. When the caller ticks "No pausing warm-up", the coordinator feeds every GCS
-report to :meth:`WarmupResume.observe`. The decisions:
-
-* ``WAIT`` — nothing to do yet, including a transitional report after the warm-up that still
-  shows its own outlets, or only some of them (zone 2's half, say), within the settle window;
-* ``NO_WARMUP`` — no ``warmUpInProgress`` within the window after the write (warm-up disabled,
-  or the water was already warm), so the shower is simply running as written;
-* ``RESUME`` — the warm-up was seen, the valve reported reaching temperature, and the valve
-  has now paused: re-send the caller's own words, once;
-* ``ABANDON`` — the warm-up ended in a pause with no at-temperature evidence (possibly a Stop
-  from the app or the touchscreen; ``Outcome.warn`` is set), or in a plain stop (someone
-  stopped it), or the outlets changed hands (a report after the warm-up shows outlets outside
-  the warm-up's own, unpaused — someone picked them at the wall), or the warm-up's own outlets
-  kept running unpaused past the settle window, or a deadline passed.
-
-The "changed hands" rule is what keeps a later pause from being mistaken for the warm-up's:
-once a person has picked outlets, anything they do afterwards — including pausing — is theirs,
-and the decision is already ``ABANDON`` and sticky by then.
-
-Terminal decisions are sticky, so ``RESUME`` can only be returned once.
-
-This is **not** a write baseline, does not gate any other write, and never delays the
-original write — the owner's 2026-09-06 constraints. It re-sends only what its own caller
-sent, only after the pause that ends a warm-up its own write started.
+Once someone has picked outlets the decision is already ``ABANDON``, so a later pause of
+theirs cannot be mistaken for the warm-up's. Terminal decisions are sticky, so ``RESUME``
+is returned at most once. This never delays or gates the original write or any other; it
+re-sends only what its own caller sent.
 """
 
 from __future__ import annotations
@@ -65,19 +39,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 
-# The valve's first echo lands 1.1–2.1 s after the REST call returns, and it already carries
-# `warmUpStatus`. Ten seconds is five times that, with room for a slow cloud.
-#
-# Both bounds also decide, since 2026-10-16, whether a warm-up in progress is the one the
-# last words sent from Home Assistant started, and so whose outlets a command sent during it
-# keeps (`Valve._warmup_shower` in the coordinator). Change them with that in mind.
+# How long after the write to wait for `warmUpStatus`. The valve's first report, which
+# already carries it, arrives within about 2 s of the REST call returning; 10 s allows for a
+# slow cloud. This and `RESUME_DEADLINE_SECONDS` also decide whether a warm-up in progress
+# is the one Home Assistant's last words started, and so whose outlets a command sent during
+# it keeps (`Valve._warmup_shower`).
 WARMUP_WINDOW_SECONDS = 10.0
-# Corpus maximum warm-up is 69 s. If the valve is still warming up this long after the write,
-# something else is going on and this watcher should not be the thing that acts on it.
+# Well past the longest warm-up measured (about 70 s). A warm-up still running this long
+# after the write is something else, and this watcher should not act on it.
 RESUME_DEADLINE_SECONDS = 180.0
-# After `warmUpStatus` clears, the pause follows within 0.2 s in every natural ending that
-# showed a transitional word. A person picking outlets at the wall takes seconds, so open
-# outlets with no pause for longer than this mean the shower is being driven by hand.
+# The valve pauses within 0.2 s of `warmUpStatus` clearing; picking outlets at the wall
+# takes seconds. Unpaused outlets for longer than this mean someone took over.
 SETTLE_SECONDS = 3.0
 
 
@@ -130,8 +102,8 @@ class WarmupResume:
         # The masks as last reported while the warm-up ran. After it ends, unpaused outlets
         # outside these were picked by a person, not left by the warm-up.
         self._warmup_masks: tuple[int, ...] | None = None
-        # Whether the valve said it had reached temperature during this warm-up or as it
-        # ended — the only thing that tells its pause from a Stop. See the module docstring.
+        # Whether the valve reported reaching temperature during this warm-up or as it
+        # ended: the only thing that tells its pause from a Stop.
         self._at_temperature_seen = False
         self.outcome: Outcome | None = None
 
@@ -146,15 +118,13 @@ class WarmupResume:
         return self.outcome
 
     def _transitional(self, masks: Sequence[int]) -> bool:
-        """Whether unpaused masks are still the warm-up's own, or part of them.
+        """Whether unpaused masks are within the warm-up's own outlets.
 
-        The valve can clear ``warmUpStatus`` a report before it pauses, and that report can
-        show the whole warm-up set or only some of it — zone 2's half, or zone 1's. Anything
-        within the set is the warm-up winding down; an outlet outside it is a person. A
-        person who picks one *inside* it reads the same way until the settle window passes,
-        and a pause at temperature inside that window would be resumed — the residual risk,
-        accepted because the valve's own pause follows its transitional report within 0.2 s
-        while a pick and then a pause are two actions by hand.
+        The valve can clear ``warmUpStatus`` a report before it pauses, showing all or part
+        of the warm-up set. An outlet outside the set is a person. A person picking one
+        inside it looks the same until the settle window passes — an accepted risk, since
+        the valve's own pause follows within 0.2 s while a pick and then a pause are two
+        actions by hand.
         """
         own = self._warmup_masks or ()
         if len(own) != len(masks):
@@ -175,9 +145,8 @@ class WarmupResume:
         ``paused`` and ``masks`` carry one entry per zone the model has. ``warmup_in_progress``
         is the valve's ``warmUpStatus`` as last reported; ``None`` (never reported) counts as
         not in progress. ``at_temperature`` is the primary word's at-temperature bit
-        (`GcsState.at_temperature`, system-level); ``None`` or ``False`` is no evidence, which
-        is also what leaving it out means — so a caller that does not pass it can never get
-        ``RESUME``.
+        (`GcsState.at_temperature`, system-level); ``None``, ``False`` or omitted is no
+        evidence, so a caller that does not pass it never gets ``RESUME``.
         """
         if self.outcome is not None:
             return self.outcome

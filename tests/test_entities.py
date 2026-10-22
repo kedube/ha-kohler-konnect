@@ -2443,10 +2443,11 @@ def test_report_log_will_not_resume_outside_its_directory(tmp_path):
 
     log = ReportLog(str(tmp_path / "reports"), max_bytes=10_000)
     try:
-        log.resume("../../../../../../tmp/kohler_pwned_report")
-        # Rejected, and a fresh legitimate episode started in its place.
-        assert log._stem is not None
-        assert log._stem.startswith("report_")
+        started = log.resume("../../../../../../tmp/kohler_pwned_report")
+        # Rejected, and a fresh legitimate episode started in its place, returned so
+        # the caller can persist it.
+        assert started == log._stem
+        assert started.startswith("report_")
         assert not Path("/tmp/kohler_pwned_report.jsonl").exists()
         for written in (tmp_path / "reports").glob("*.jsonl"):
             assert written.parent == tmp_path / "reports"
@@ -2456,7 +2457,7 @@ def test_report_log_will_not_resume_outside_its_directory(tmp_path):
     # A name this class could have written is still honoured.
     log2 = ReportLog(str(tmp_path / "reports"), max_bytes=10_000)
     try:
-        log2.resume("report_20260911T120000Z")
+        assert log2.resume("report_20260911T120000Z") == "report_20260911T120000Z"
         assert log2._stem == "report_20260911T120000Z"
     finally:
         log2.close()

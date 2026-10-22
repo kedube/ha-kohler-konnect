@@ -143,10 +143,33 @@ def test_a_non_finite_usage_bucket_is_left_out_of_the_totals():
     assert totals["2026-10"]["onDuration"] == 300.0
 
 
+def _zone_temperature(raw: str, *, fahrenheit: bool = True) -> float | None:
+    zone = SimpleNamespace(temperature=raw)
+    entity = SimpleNamespace(
+        _state=SimpleNamespace(zones={1: zone}), _zone=1, _account_fahrenheit=fahrenheit
+    )
+    return ControllerZoneTemperatureSensor.native_value.fget(entity)
+
+
 @pytest.mark.parametrize("raw", ["NaN", "Infinity", "-inf"])
 def test_a_controller_zone_temperature_that_is_not_finite_reads_as_unknown(raw):
-    zone = SimpleNamespace(temperature=raw)
-    entity = SimpleNamespace(_state=SimpleNamespace(zones={1: zone}), _zone=1)
-    assert ControllerZoneTemperatureSensor.native_value.fget(entity) is None
-    zone.temperature = "38.5"
-    assert ControllerZoneTemperatureSensor.native_value.fget(entity) == 38.5
+    assert _zone_temperature(raw) is None
+    assert _zone_temperature("102") == 102
+
+
+@pytest.mark.parametrize(
+    ("raw", "fahrenheit", "reported"),
+    [
+        # A Fahrenheit account reads °F, full cold included (live).
+        ("102", True, 102),
+        ("32", True, 32),
+        # A Celsius account: whichever unit the controller uses, the reading lands in °F.
+        ("102", False, 102),
+        ("38.9", False, 102.0),
+        ("15", False, 59.0),
+    ],
+)
+def test_a_controller_zone_temperature_is_reported_in_fahrenheit(
+    raw, fahrenheit, reported
+):
+    assert _zone_temperature(raw, fahrenheit=fahrenheit) == reported

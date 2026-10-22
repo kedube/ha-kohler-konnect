@@ -1,26 +1,21 @@
-"""Encode and decode the Anthem GCS 4-byte valve command word.
+"""Encode and decode the Anthem GCS valve command word and 3-byte preset word.
 
-Single source of truth for the valve word. This replaces three implementations that
-previously had to agree by hand: a Jinja encoder in ``scripts.yaml``, a decoder in the
-standalone ``mqtt_capture.py``, and a subtly wrong ``ValveMode`` reading in the
-``kohler-anthem`` library.
-
-Layout, identical for reads and writes::
+The single source of truth for both formats. Command word layout, identical for reads
+and writes::
 
      0 1 | 2 3 | 4 5 | 6 7
       01 | 84  | C8  | 07
       ^     ^     ^     ^
-      |     |     |     └─ outlet mask
+      |     |     |     └─ outlet mask + flags
       |     |     └─────── flow
-      |     └───────────── temperature
-      └─────────────────── prefix
+      |     └───────────── temperature (low byte)
+      └─────────────────── valve index + temperature high bits
 
-Only the first 8 of the field's 16 hex characters carry the command; the trailing 8 were
-``00000001`` in every captured message.
+A status report's field is 16 hex characters; the trailing 8 are live feedback
+(:func:`decode_word`), and a command uses only the first 8.
 
-Every constant here is validated against 315 ``GCS_SOLO_STS`` messages correlated with the
-HUB's ``SHOWER_VALVE_STS``. ``docs/gcs/valve_hex.md`` is the byte-by-byte reference, and
-``docs/protocol/gcs_valve.md`` §3.2 has what the app adds to it.
+``docs/gcs/valve_hex.md`` is the byte-by-byte reference, and
+``docs/protocol/gcs_valve.md`` §3.2-3.3 has what the app adds to it.
 """
 
 from __future__ import annotations
@@ -31,114 +26,52 @@ from dataclasses import dataclass, field
 
 from .models import ValveModel
 
-# Sent for a valve the model does not populate. It must still be present in the payload.
-#
-# The firmware ignores this **whole word** (live: an all-zero `primaryValve1` is the "could
-# turn on but never off" bug). It is not that a 0x00 first byte "addresses no valve", as
-# this once said: valve 1's index nibble is 0, so every valve-1 word below 25.6 °C starts
-# 0x00 too — 4.0 °C is `0028C8xx`, full cold `0000C8xx` — and those are ordinary words.
-# Why the all-zero one is inert is unestablished — one candidate is its flow byte, 0x00,
-# below the 0x10 floor every capture respects. The code treats only this exact word as the
-# sentinel.
+# Sent for a valve the model does not populate; the field must still be present.
+# ⚠️ Never send it for a valve that exists: the valve ignores the word, and as
+# ``primaryValve1`` it is the "turns on but never off" bug
+# (`docs/protocol/gcs_valve.md` §3.1). Only this exact word is the sentinel: a 0x00
+# first byte alone is an ordinary valve-1 word below 25.6 °C.
 UNUSED_VALVE_WORD = "00000000"
 
-# Byte 0 layout (resolved from the app decompile, `p315jj/h.java`, and verified against 363
-# captured messages). READ and WRITE differ:
+# Byte 0. Status and command words differ:
 #
 #     status:  [valve index : 4][atFlow : 1][atTemp : 1][temperature high : 2]
 #     write:   [valve index : 4][   0       0        ][temperature high : 2]
 #
-# `atFlow` (0x08) and `atTemp` (0x04) are read-only status the device asserts; the client
-# always writes them as zero, which is why they never appear in a command word. They land in
-# `ValveStatusModel.atFlow` / `.atTemp` in the app.
-#
-# `atTemp` is what made 0x05 look mysterious: it means "this valve has reached its
-# temperature setpoint", which is sticky, uncorrelated with outlets, and appears about half
-# the time. It was never set during warmup in the captures — correct, since the valve is
-# still climbing to temperature then.
-#
-# `atFlow` was never observed set on the test system — but that system has flow control
-# DISABLED at the fixture (a workaround for it being broken on HUB firmware 2.88), so the
-# flat zero probably reflects the setting rather than the firmware. The measured-flow byte
-# is also zero there, which fits. Unconfirmed: needs a system with flow control enabled.
+# atFlow (0x08) and atTemp (0x04) are read-only: the valve has reached its flow /
+# temperature setpoint. A command always writes them as zero.
 VALVE_INDEX_SHIFT = 4
 VALVE1_INDEX = 0
 VALVE2_INDEX = 1
 AT_FLOW_BIT = 0x08
 AT_TEMP_BIT = 0x04
-# Kept as the values actually written for a temperature at or above 25.6 °C.
+# Byte 0 as written for each valve at 25.6 °C or above; `encode_word` keeps only the
+# index nibble and sets the temperature bits itself.
 VALVE1_PREFIX = 0x01
 VALVE2_PREFIX = 0x11
 
-# Temperature is a 16-BIT value spanning bytes 0 and 1: tenths of a degree Celsius, with
-# the high byte in bit 0 of byte 0 and the low byte in byte 1.
+# Temperature: a 10-bit value in tenths of °C, its high bits in byte 0 and low byte in
+# byte 1, so 0.0-102.3 °C is representable:
 #
-#     °C = ((byte0 & 0x01) << 8 | byte1) / 10
-#
-# This supersedes the earlier reading of "25.6 + byte1/10", which was the same arithmetic
-# in disguise — 256/10 is 25.6, so that formula silently assumed the high bit was always
-# set. It agrees on all 357 captured words where the bit IS set, and is wrong where it is
-# not: the words 0000C800 and 1000C800 are 0.0 °C, which the old formula reported as
-# 25.6 °C.
-#
-# It also explains the mysterious "base": there is no base. 25.6 °C is simply the smallest
-# temperature whose high byte is 1.
+#     °C = ((byte0 & 0x03) << 8 | byte1) / 10
 TEMPERATURE_TENTHS_PER_DEGREE = 10
-# TWO bits of byte 0, not one: temperature is 10-bit, so up to 102.3 C is representable.
-# Bit 0x02 was never set across 363 captures (no temperature reached 51.2 C), which is why a
-# one-bit reading agreed with every sample while still being the narrower model.
 TEMPERATURE_HIGH_BITS = 0x03
-# The Konnect app never sends above 48.8 °C (488 tenths), so writes clamp there rather than
-# at the 102.3 °C the 10-bit encoding could carry. Whether the firmware enforces that cap or
-# only the app does is untested, so the app's limit is the one honoured.
+# Writes clamp at 48.8 °C, the most the Konnect app ever sends. Whether the firmware
+# enforces a cap is untested, so the app's limit is honoured.
 TEMPERATURE_MAX_TENTHS = 488
-# Kept as documentation of the encoding, not because anything here reads them: the wire
-# format is `base + tenths * step`, and these name the two halves of that so the tenths
-# arithmetic below is checkable against the reference decoder in `docs/gcs/valve_hex.md`
-# (which calls them `VALVE_TEMPERATURE_BASE_C` / `VALVE_TEMPERATURE_STEP_C`). Derived, not
-# magic. The comment here used to claim callers still used them — none have since the codec
-# moved to tenths.
+# Not read by the codec, which works in tenths: 25.6 °C is the weight of byte 0's low
+# temperature bit, and each step of byte 1 is 0.1 °C.
 TEMPERATURE_BASE_C = 25.6
 TEMPERATURE_STEP_C = 0.1
 
-# ---------------------------------------------------------------------------
-# ⚠️ Fahrenheit is a LOOKUP TABLE, not arithmetic — Konnect 3.0.1 `p315jj/h.java:1971`,
-#    unchanged in 3.0.6 (`db0/c.java` `A()`, duplicated in `mc0/n.java`)
-# ---------------------------------------------------------------------------
-# `h.z()` maps a displayed whole °F to tenths of a °C directly, and it is **not**
-# `round((f - 32) * 50 / 9)`. Above 86 °F it sits exactly one tenth *below* that formula at
-# sixteen entries — 87, 89, 91, 93, 96, 98, 100, 102, 105, 107, 109, 111, 114, 116, 118, 120 —
-# precisely the set where naive rounding would round up.
-#
-# **That low bias is the mechanism, not a rounding artefact.** It is what makes the app's
-# round trip idempotent: with `h.j(c) = round(c * 1.8 + 32)` for display, `z(j(t)) == t` holds
-# for all 64 entries. Naive arithmetic breaks it on 12 of the 34 values this integration's
-# slider can produce, every one by +1 tenth:
-#
-#     102 °F -> ours 0x185 (389), Kohler 0x184 (388)
-#     100 °F -> ours 0x17A (378), Kohler 0x179 (377)
-#      98 °F -> ours 0x16F (367), Kohler 0x16E (366)
-#
-# Measured consequence, 2026-08-17: the owner reported the temperature coming back "one more"
-# after the shower restarted itself, and 0x185 (389) appears 11 times in this system's capture
-# corpus. `z()` cannot produce it, and the Celsius path writes whole degrees (380/390/400), so
-# **no Kohler client emits it in a direct write** — which is what makes this table right for
-# `solowritesystem`.
-#
-# ⚠️ **Correction, 2026-10-07 (Konnect 3.0.6): the app does emit 389 — in favorites.** Its
-# favorite path converts a °F default temperature arithmetically, `(F - 32) * 0.5555`
-# formatted to one decimal (`db0/c.java` `J()`), so a favorite saved at 102 °F stores 38.9 °C
-# = 0x185, and a running favorite's temperature is what the valve word then reports. Those
-# 11 captured words could therefore be favorites as much as this integration's writes; the
-# earlier note calling 389 "a value no Kohler client can emit" was wrong. The conclusion for
-# direct writes stands. See `PRESET_ECHO_MAX_TENTHS` for the one place this changes code.
-#
-# The valve accepts off-ladder values perfectly well — nothing here is a protocol requirement.
-# What it costs is that a setpoint written from Home Assistant no longer sits where the
-# touchscreen would put it, so the next panel adjustment starts from a value one tenth off.
-#
-# Outside 59–122 °F the app returns 0, which for a device that opens water valves would mean
-# "full cold". `unit_to_celsius` falls back to the arithmetic rather than doing that.
+# Whole °F to tenths of °C, the app's table for direct writes
+# (`docs/protocol/gcs_valve.md` §3.2). It sits one tenth below
+# `round((f - 32) * 50 / 9)` at sixteen entries above 86 °F, which makes the app's
+# display conversion `round(c * 1.8 + 32)` round-trip exactly. The valve accepts any
+# value; the table keeps a setpoint written from Home Assistant where the touchscreen
+# would put it. Presets convert arithmetically instead (see `PRESET_ECHO_MAX_TENTHS`).
+# Outside 59-122 °F the app sends 0, full cold, so `unit_to_celsius` falls back to
+# arithmetic there.
 FAHRENHEIT_TO_TENTHS_C = {
     59: 150,
     60: 156,
@@ -206,71 +139,34 @@ FAHRENHEIT_TO_TENTHS_C = {
     122: 500,
 }
 
-# Byte 2 — flow. The SAME byte is expressed on three different scales depending on where
-# you read it, which is a standing source of 2x and 4x errors:
+# Byte 2 — flow. One quantity on three scales, a standing source of 2x and 4x errors:
 #
-#   byte            0x00-0xC8   the wire format, here and in MQTT
-#   flowSetpoint    0-50        the GCS device's own native unit (gcs-state), byte / 4
+#   byte            0x10-0xC8   the wire format, MQTT and outlet-record flow limits
+#   flowSetpoint    0-50        `gcs-state`, byte / 4
 #   percent         0-100       HUB favorite `flowrate` and HA entities, byte / 2
 #
-# Verified live: with the shower idle, gcs-state reports flowSetpoint "50" on both valves,
-# and 50 * 4 = 0xC8 = the maximum flow byte. The outlet configuration's documented
-# "flow 16-200" range is in BYTE units (0x10-0xC8), not either of the other two.
-#
-# The HUB has no independent flow of its own — its favorite `flowrate` is just read and
-# written through to the GCS valve, so the valve is always the real source.
-# **Confirmed 2026-09-10 against the owner's two valves**: every one of their six outlets
-# reports `maximumFlowRate: 200`, so `byte / 2` is exactly right on this hardware, and the
-# live words decode to the percentages the diagnostics show (byte 49 -> 24.5 %, byte 53 ->
-# 26.5 %). The reference integration hardcodes the same 2 and additionally truncates with
-# `byte // 2`, losing the half-percent on the odd bytes both of these valves actually carry.
-#
-# **Only a default, since 0.8.2.** Percent is a ratio against the outlet's own
-# `maximumFlowRate` — see `flow_byte_to_percent` below — and the Flow entity uses this zone's
-# real ceiling. This constant remains for callers with no per-outlet context (`decode_word`
-# and `encode_word` have 28 call sites and no per-valve context), where it reproduces exactly
-# what every release before 0.8.2 did.
+# Percent is really a ratio against the outlet's own `maximumFlowRate`
+# (`flow_byte_to_percent`). FLOW_PER_PERCENT is the default for callers with no
+# per-outlet context, exact for the usual ceiling of 200. Don't truncate (`byte // 2`):
+# odd bytes are common.
 FLOW_PER_PERCENT = 2
 FLOW_PER_SETPOINT = 4
 
-# The flow byte is the valve's own flow rate, and its scale **does not start at zero**.
-# Every outlet reports `minimumFlowRate: 16` / `maximumFlowRate: 200` in
-# `READ_GCS_OUTLET_CONFIG_CFG`, and across every capture the byte has never once fallen
-# outside 16-200 (31 distinct values). So the usable percent range is 8-100, not 0-100.
-#
-# **The valve honours a directly written flow byte.** Verified against hardware: 74 and 100
-# commanded with one, two, and three outlets open in a zone, every echo matching exactly, and
-# the other zone untouched.
-#
-# That needs saying because touchscreen-driven captures look nothing like this — the byte
-# moves on its own when outlets change, and the same outlet set tops out at 200 in one
-# session and 69 in another. That is the **touchscreen** computing linked-zone scaling and
-# its own ceiling before it sends; the valve just obeys whoever wrote last. The Konnect app
-# is a third actor and has removed flow control entirely. Writing directly, none of the
-# touchscreen's behaviour applies to us.
-#
-# Consequence for a client: encode against [16, 200] and expect it to stick — but keep
-# treating the echo as truth, since the touchscreen can overwrite at any time.
-#
-# The byte is continuous over that range, which is why it is frequently **not** a multiple
-# of 4: values like 17, 19, and 165 are ordinary. `flowSetpoint` (byte/4, the 0-50 figure
-# `gcs-state` reports) is a derived display value, not the underlying quantity, so treating
-# it as an integer scale invents a precision the device does not use.
+# The flow byte's range is 16-200 (0x10-0xC8), not from zero, so the usable percent
+# range is 8-100. It is continuous over that range: `flowSetpoint` (byte / 4) is a
+# derived display value, not an integer scale. The valve holds a directly written flow
+# byte; the touchscreen applies its own scaling before it writes, so treat the echo as
+# truth.
 FLOW_BYTE_MIN = 0x10
 FLOW_SETPOINT_MAX = 50
 FLOW_BYTE_MAX = 0xC8
 
 
 def flow_byte_to_percent(byte: int, max_flow_byte: int = FLOW_BYTE_MAX) -> float:
-    """Flow byte to percent, as a ratio against the outlet's own ceiling.
+    """Flow byte to percent of the outlet's ceiling: ``byte * 100 / max``.
 
-    **This is what the Konnect app does**, confirmed from its bytecode: `jj.h$a.X(value, max)`
-    computes `value * 100 / max`, where `max` is that outlet's `maximumFlowrate` read at
-    runtime from the device's own settings. There is no divisor of 2 anywhere in the app's
-    flow path — `byte / 2` is only correct because a ceiling of 200 makes the two agree.
-
-    `max_flow_byte` defaults to 200 so a caller without per-outlet limits behaves exactly as
-    every release before 0.8.2 did.
+    As the app computes it. ``max_flow_byte`` is the outlet's ``maximumFlowrate``; the
+    default, 200, gives ``byte / 2``.
     """
     if max_flow_byte <= 0:  # pragma: no cover - defensive
         return 0.0
@@ -278,10 +174,7 @@ def flow_byte_to_percent(byte: int, max_flow_byte: int = FLOW_BYTE_MAX) -> float
 
 
 def flow_percent_to_byte(percent: float, max_flow_byte: int = FLOW_BYTE_MAX) -> int:
-    """Percent to flow byte — the exact inverse, matching `jj.h$a.Y(percent, max)`.
-
-    The app computes `percent * max / 100` and rounds; so does this.
-    """
+    """Percent to flow byte, the inverse of `flow_byte_to_percent`, rounded."""
     if max_flow_byte <= 0:  # pragma: no cover - defensive
         return FLOW_BYTE_MIN
     return round(percent * max_flow_byte / 100)
@@ -289,26 +182,17 @@ def flow_percent_to_byte(percent: float, max_flow_byte: int = FLOW_BYTE_MAX) -> 
 
 # Byte 3 = [0x80][pause 0x40][0 0 0][outlet3 0x04][outlet2 0x02][outlet1 0x01]
 #
-# Bit 0x80 differs by direction, like byte 0: on READ it is `errorFlag`, paired with the
-# error code in byte 7; on WRITE it is `skipWarmUp` (start without triggering warmup).
-# Corroborated by gcs-state, which reports errorFlag "0" / errorCode "1" while captures show
-# byte3 & 0x80 clear and byte7 = 0x01. Never observed set on hardware.
+# 0x80 differs by direction: read, `errorFlag` (paired with the error code in byte 7);
+# write, `skipWarmUp`, which the app sets only for bath fill
+# (`docs/protocol/gcs_valve.md` §8) and this integration never sends.
 #
-# Konnect 3.0.6 sets it in exactly one place: **bath fill** (`qb0/m0.java`). Starting a fill
-# writes bit 7 plus the tub filler's outlet bit (fixture type 21) on top of whatever is open,
-# at the current temperature and flow, and stopping one writes `0xC0`. Every other app write
-# leaves it clear. So the write meaning is app-confirmed; what the valve does with it is not.
-#
-# The outlet mask is ONLY the low three bits. 0x40 is an INDEPENDENT pause bit that
-# round-trips the device's pauseFlag (write: `Pi/r.java` getPauseFlag(); read: decodes into
-# ValveStatusModel.pauseFlag) — it is not a mask value, and it coexists with outlet bits:
+# The outlet mask is only the low three bits. 0x40 is an independent pause flag that
+# coexists with them, so a paused valve keeps the outlets it will resume to:
 #
 #     00  idle, nothing assigned          01/02/04  running to outlet 1/2/3
 #     40  paused, nothing assigned        41/42/44  paused, outlet 1/2/3 still assigned
 #
-# So a paused valve retains which outlet it will resume to. Treating 0x40 as a whole-mask
-# sentinel makes 0x41 unrepresentable and misreads a paused-with-assignment valve as running.
-# The library's "0x40 = preset-mode" and "0x01 = SHOWER mode" were both misreads of this byte.
+# Never treat 0x40 as a mask value: 0x41 would be unrepresentable.
 OUTLET_MASK_BITS = 0x07
 VALVE_PAUSE_FLAG = 0x40
 VALVE_SKIP_WARMUP_FLAG = 0x80  # write meaning of bit 0x80
@@ -318,22 +202,15 @@ OUTLETS_PER_VALVE = 3
 
 VALVE_WORD = re.compile(r"^[0-9A-Fa-f]{8}$")
 
-# A preset's hexString is 3 bytes — [byte0][temp low][flow] — and byte0 carries BOTH the
-# temperature high bit and the outlet flags, at DIFFERENT bit positions from a command word:
+# A preset hexString is 3 bytes, [byte0][temp low][flow], with no valve-index nibble
+# (the field name identifies the valve). Byte 0 carries the temperature high bits and
+# the outlet flags, at different positions from a command word
+# (`docs/protocol/gcs_valve.md` §3.3):
 #
 #     preset  byte0:  0x04 outlet1   0x08 outlet2   0x10 outlet3   0x01 temp high bit
 #     command byte3:  0x01 outlet1   0x02 outlet2   0x04 outlet3
 #
-# There is no valve-index nibble in a preset: the valve is identified by field position.
-# Confirmed on all four valve entries of two live presets:
-#
-#     018448  byte0 0x01 -> no outlets, 38.8 C      (Default shower Valve1)
-#     05849C  byte0 0x05 -> outlet1,    38.8 C      (Default shower Valve2)
-#     1190C8  byte0 0x11 -> outlet3,    40.0 C      (Test favorite Valve1)
-#     0589C8  byte0 0x05 -> outlet1,    39.3 C      (Test favorite Valve2)
-#
-# An earlier revision concluded presets carried no outlet mask at all. That was wrong: it
-# tested the command word's bit positions (0x01/0x02/0x04) against preset bytes.
+# e.g. 05849C: byte0 0x05 -> outlet 1 at 38.8 °C, flow 0x9C.
 PRESET_OUTLET_BITS = (0x04, 0x08, 0x10)
 PRESET_WORD = re.compile(r"^[0-9A-Fa-f]{6}$")
 
@@ -341,11 +218,10 @@ PRESET_WORD = re.compile(r"^[0-9A-Fa-f]{6}$")
 def encode_preset_word(
     temperature_celsius: float, flow_percent: float, outlet_mask: int
 ) -> str:
-    """Build a 3-byte preset hexString for one valve.
+    """Build one valve's 3-byte preset hexString (``writepreset``, ``createpreset``).
 
-    Used by ``writepreset`` and ``createpreset``, which take this format — NOT the 4-byte
-    command word. Sending a command word where a preset word is expected is accepted by the
-    backend and then silently ignored.
+    Temperature (°C) and flow (percent) are clamped as in :func:`encode_word`. Those
+    endpoints silently ignore a 4-byte command word, so never send one there.
     """
     if outlet_mask & ~OUTLET_MASK_BITS:
         raise ValveHexError(f"Outlet mask 0x{outlet_mask:02X} sets unknown bits")
@@ -357,11 +233,6 @@ def encode_preset_word(
     for index, bit in enumerate(PRESET_OUTLET_BITS):
         if outlet_mask >> index & 1:
             byte0 |= bit
-    # Clamp to the device's own range, not 0x00. Confirmed against the Konnect
-    # decompile: the app's encoder is `hex(round(setpoint_0_50 * 4))` with no clamp of
-    # its own — all clamping happens upstream at the slider, bounded by the per-outlet
-    # `minimumFlowRate`/`maximumFlowRate`. Our `* 2` on percent is arithmetically the
-    # same value, since percent = 2 x setpoint.
     flow_byte = min(
         max(round(flow_percent * FLOW_PER_PERCENT), FLOW_BYTE_MIN), FLOW_BYTE_MAX
     )
@@ -371,9 +242,7 @@ def encode_preset_word(
 def preset_word_temperature(word: str) -> float:
     """Read the commanded temperature, in °C, out of a 3-byte preset hexString.
 
-    The inverse of :func:`encode_preset_word`'s temperature half, and the only part of a
-    preset word worth reading back: it is the one field that can hurt someone. Raises
-    :class:`ValveHexError` if the word is not six hex characters.
+    Raises :class:`ValveHexError` if the word is not six hex characters.
     """
     text = str(word or "").strip()
     if not PRESET_WORD.match(text):
@@ -383,33 +252,21 @@ def preset_word_temperature(word: str) -> float:
     return round(tenths / TEMPERATURE_TENTHS_PER_DEGREE, 1)
 
 
-#: The ceiling for a preset word **read back** from the cloud and sent on to the valve:
-#: 48.9 °C.
-#:
-#: One tenth above `TEMPERATURE_MAX_TENTHS`, because that is the highest value the Konnect
-#: app itself stores in a favorite: its favorite path converts °F arithmetically (see the
-#: correction above the Fahrenheit table), and 120 °F — the top of the older app's
-#: Max Temperature range — becomes `48.884` -> `"48.9"` -> 489. With the old ceiling the
-#: preset-timer sync (removed in 1.08) dropped that valve's word from a favorite the owner
-#: made in the app, silently changing the favorite. The valve still clamps any outlet at its
-#: own `maximumOutletTemperature`, which the app never writes above 48.8 °C, so admitting the
-#: app's own value admits nothing hotter than the valve would run.
+#: The ceiling for a preset word read back from the cloud and sent on to the valve:
+#: 48.9 °C, one tenth above `TEMPERATURE_MAX_TENTHS`, because the app converts a
+#: preset's °F arithmetically and stores 120 °F as 489
+#: (`docs/protocol/gcs_valve.md` §3.3). The valve still clamps each outlet at its
+#: `maximumOutletTemperature`, which the app never writes above 48.8 °C.
 PRESET_ECHO_MAX_TENTHS = 489
 
 
 def check_preset_word(word: str) -> str:
-    """Return ``word`` normalised, or raise if it is malformed or commands a scald.
+    """Return ``word`` normalised, or raise `ValveHexError` if malformed or too hot.
 
-    Used on words **read back from the cloud** before they become a command: preset 1's
-    words are what the Shower switch sends (:func:`preset_words_to_pair`), so a value the
-    integration never computed passes through it to the valve. That is a narrow trust
-    boundary, but a real one, and it is cheap to close: a preset word carries the same
-    10-bit temperature the command word does, so a corrupted or hostile record could ask
-    for 102.3 °C and this integration would be the thing that sent it.
-
-    The ceiling is :data:`PRESET_ECHO_MAX_TENTHS` — one tenth above what
-    :func:`encode_preset_word` clamps to, so a word this integration wrote always passes,
-    and so does anything the Konnect app can store; only a foreign value can fail.
+    For preset words read back from the cloud before they become a command
+    (:func:`preset_words_to_pair`): a corrupted record could otherwise ask for up to
+    102.3 °C. The ceiling is :data:`PRESET_ECHO_MAX_TENTHS`, so anything this
+    integration or the app stores passes.
     """
     text = str(word or "").strip().lower()
     ceiling = PRESET_ECHO_MAX_TENTHS / TEMPERATURE_TENTHS_PER_DEGREE
@@ -439,18 +296,14 @@ class ValveWord:
     at_temperature: bool = False
     at_flow: bool = False
     error_flag: bool = False
-    # Live sensor feedback from the second half of a 16-character status word. None when
-    # only the 8-character command half was available.
+    # Live feedback from the second half of a 16-character status word; None when only
+    # the command half was available.
     measured_temperature_celsius: float | None = None
     measured_flow_percent: float | None = None
     error_code: int | None = None
-    # The word exactly as it arrived, so anything wanting to *show* the wire value never
-    # re-encodes it from the decoded fields — a reconstruction silently goes stale whenever
-    # the codec is corrected, and it cannot represent bits this dataclass does not model.
-    # Empty for a word built from a REST read, which carries no wire word.
-    #
-    # Excluded from equality: two words that decode identically are the same state, and
-    # letting a reserved-bit difference count as a change would wake every entity.
+    # The word exactly as received, for showing the wire value without re-encoding it
+    # (which would drop bits this class does not model). Empty for a word built from a
+    # REST read. Excluded from equality so a reserved-bit difference wakes no entity.
     raw: str = field(default="", compare=False)
 
     @property
@@ -486,12 +339,9 @@ def normalize_word(value: str | None) -> str:
 
 
 def decode_word(value: str) -> ValveWord:
-    """Decode a valve word.
+    """Decode an 8-character command word or a 16-character status word.
 
-    Accepts both forms. The 8-character word is what ``solowritesystem`` sends: setpoints,
-    flags, and the outlet mask. The 16-character word the device *reports* appends four
-    more bytes of **live sensor feedback** — so the full status word is symmetric,
-    "what was commanded" followed by "what the valve is actually doing":
+    A status word appends four bytes of live feedback:
 
     ===== ============================================================
     byte  meaning
@@ -501,13 +351,8 @@ def decode_word(value: str) -> ValveWord:
     7     error code, pairing with ``errorFlag`` in byte 3
     ===== ============================================================
 
-    On the hardware tested these read `00000001` — zero measurement, error code 1 — even
-    across 239 messages with an outlet open, so this valve does not appear to report
-    measurements over MQTT. The mapping is corroborated by ``gcs-state``, which reports the
-    matching ``errorFlag: "0"`` / ``errorCode: "1"``.
-
-    Byte 4's upper six bits are unused, and the app writes the same measurement to all three
-    per-outlet sub-objects: it is one per-valve reading, stored redundantly.
+    The hardware tested always reports ``00000001`` there: no measurement, and error
+    code 1.
     """
     full = str(value or "").strip().upper()
     word = normalize_word(full)
@@ -553,12 +398,12 @@ def encode_word(
     paused: bool = False,
     skip_warmup: bool = False,
 ) -> str:
-    """Build one valve command word.
+    """Build one 8-character valve command word.
 
-    Temperature and flow are clamped to what the device accepts rather than rejected,
-    matching the Jinja encoder this replaces. The outlet mask is not clamped: a caller
-    passing something outside 0x00-0x07 or the 0x40 PAUSE sentinel has a bug worth
-    surfacing rather than silently reinterpreting as a different set of open outlets.
+    ``prefix`` is :data:`VALVE1_PREFIX` or :data:`VALVE2_PREFIX`. Temperature (°C, up to
+    :data:`TEMPERATURE_MAX_TENTHS`) and flow (percent) are clamped to what the device
+    accepts. An outlet mask outside 0x00-0x07 raises `ValveHexError` rather than being
+    reinterpreted; pause is the ``paused`` flag, never part of the mask.
     """
     if outlet_mask & ~OUTLET_MASK_BITS:
         raise ValveHexError(
@@ -569,18 +414,11 @@ def encode_word(
         max(round(temperature_celsius * TEMPERATURE_TENTHS_PER_DEGREE), 0),
         TEMPERATURE_MAX_TENTHS,
     )
-    # The temperature's high bit lives in byte 0 alongside the valve index. Callers pass
-    # the already-composed byte (0x01 / 0x11), so keep its nibble and set the bit from the
-    # temperature rather than trusting what was handed in.
-    # Only the valve index and the temperature high bits are ours to set; atFlow/atTemp
-    # stay zero because they are status the device reports, not something we command.
+    # Keep only the prefix's valve-index nibble and set the temperature bits from the
+    # temperature; atFlow/atTemp are status, never commanded.
     byte0 = (prefix & 0xF0) | ((tenths >> 8) & TEMPERATURE_HIGH_BITS)
-    # Clamp to 0xC8, not 0xFF: 0xC8 is 100% / flowSetpoint 50, the device's maximum.
-    # Clamp to the device's own range, not 0x00. Confirmed against the Konnect
-    # decompile: the app's encoder is `hex(round(setpoint_0_50 * 4))` with no clamp of
-    # its own — all clamping happens upstream at the slider, bounded by the per-outlet
-    # `minimumFlowRate`/`maximumFlowRate`. Our `* 2` on percent is arithmetically the
-    # same value, since percent = 2 x setpoint.
+    # Clamp to the valve's flow range. The app's encoder has no clamp of its own: its
+    # slider is bounded by the outlet's flow limits instead.
     flow_byte = min(
         max(round(flow_percent * FLOW_PER_PERCENT), FLOW_BYTE_MIN), FLOW_BYTE_MAX
     )
@@ -607,13 +445,11 @@ def encode_pair(
     flow_percent: float,
     outlets: list[bool],
 ) -> tuple[str, str]:
-    """Build both valve words from this model's outlet flags.
+    """Build both valve words from this model's flat outlet flags.
 
-    ``outlets`` has one flag per physical outlet, so its length depends on the model. The
-    split between valve1 and valve2 is the model's, NOT a fixed 3+3 — on a 4-outlet
-    K-28211 it is 2+2, so outlet 3 is valve2's first outlet.
-
-    When the model has no second valve, ``secondaryValve1`` is the all-zero ignore word.
+    ``outlets`` has one flag per physical outlet, split between the valves by the model
+    (on a K-28211, outlet 3 is valve 2's first). A model with no second valve gets
+    :data:`UNUSED_VALVE_WORD` for valve 2.
     """
     valve1_flags, valve2_flags = model.split_outlets(outlets)
     valve1 = encode_word(
@@ -634,18 +470,13 @@ def encode_shower(
 ) -> tuple[str, str]:
     """Build both words for a whole-shower command from per-zone flags and temperatures.
 
-    The stateless sibling of `encode_pair`, written for the ``custom_shower`` action: the
-    words say everything, and nothing in them comes from what the valve last reported. A
-    zone missing from ``zone_flags``, or with no flag set, is written **closed** (mask
-    ``0x00``) — never "left as it was", because "as it was" is exactly the report that lags
-    a write (GitHub issue #1, 2026-09-03). ``temperatures_celsius`` is per zone, like the
-    valve's own setpoints; zone 2 falls back to zone 1's when not given.
+    Stateless, for the ``custom_shower`` action: nothing comes from what the valve last
+    reported. A zone missing from ``zone_flags`` or with no flag set is written closed
+    (mask ``0x00``), never "left as it was", because that report lags a write.
+    ``temperatures_celsius`` is per zone; zone 2 falls back to zone 1's.
 
-    Flags are ZONE-LOCAL — index 0 is that zone's outlet 1 — unlike `encode_pair`'s flat
-    list, because the global numbering is model-dependent (`ValveModel.outlet_location`)
-    and a per-zone form cannot get it wrong. A flag set beyond the outlets the zone has
-    raises `ValveHexError` rather than being dropped or shifted onto another outlet; on a
-    single-zone model that includes any zone 2 flag at all.
+    Flags are zone-local (index 0 is that zone's outlet 1). A flag beyond the zone's
+    outlets raises `ValveHexError`, including any zone 2 flag on a single-zone model.
     """
 
     def mask_for(zone: int) -> int:
@@ -658,8 +489,8 @@ def encode_shower(
             )
         return outlet_mask(*flags[:capacity])
 
-    # Both masks are checked before anything is built, so a zone 2 flag on a single-zone
-    # model is an error rather than something silently swallowed by the sentinel below.
+    # Check both masks first, so a zone 2 flag on a single-zone model raises rather than
+    # vanishing into the sentinel.
     mask1 = mask_for(1)
     mask2 = mask_for(2)
     celsius1 = temperatures_celsius[1]
@@ -694,22 +525,13 @@ def stop_pair(
     temperature_celsius: float = 38.0,
     flow_percent: float = 100,
 ) -> tuple[str, str]:
-    """Build the pair of words that stops every outlet.
+    """Build the pair of words that stops every outlet (mask ``0x00``).
 
-    Mask ``0x00`` is STOP. The temperature and flow bytes are ignored by the firmware for a
-    stop but still have to be well-formed — which is why the library's ``turn_off()``,
-    sending the all-zero :data:`UNUSED_VALVE_WORD` as ``primaryValve1``, is ignored. The
-    whole word is the sentinel, not its ``0x00`` first byte, which any valve-1 word below
-    25.6 °C shares.
-
-    ⚠️ **Deliberately not what the Konnect app sends.** The app's Stop writes byte 3 =
-    ``0x40`` — the pause bit with no outlets, exactly :func:`pause_pair` with no mask
-    (Konnect 3.0.6 ``db0/c.java``: the solo-write builder sets the per-valve pause bit when
-    stopping and zeroes the outlets; the older screens send the same). The Anthem Plus
-    controller stops with ``0x00``. This integration chose ``0x00`` on 2026-08-13 so its stop
-    could never look like the valve's own run-time cutoff, which also pauses; that mattered to
-    Endless Shower, removed 2026-10-08. It stays because it is the form verified live from
-    here. Both words leave the valve idle.
+    The valve ignores temperature and flow in a stop, but the word must still be well
+    formed: :data:`UNUSED_VALVE_WORD` is not a stop. The app's Stop writes the pause bit
+    instead (:func:`pause_pair` with no mask); this uses ``0x00``, as the Anthem Plus
+    controller does, so it can never be mistaken for the valve's run-time cutoff
+    (``docs/protocol/gcs_valve.md`` §3.1).
     """
     return _mask_pair(model, VALVE_STOP_MASK, temperature_celsius, flow_percent)
 
@@ -722,29 +544,19 @@ def pause_pair(
 ) -> tuple[str, str]:
     """Build the pair of words that pauses the valves, holding the session open.
 
-    ``outlet_mask`` carries forward which outlets the session will resume to — a paused
-    valve keeps its assignment, so passing the running mask preserves it.
+    ``outlet_mask`` is the outlets the session resumes to; pass the running mask to keep
+    them.
     """
     return _mask_pair(
         model, outlet_mask, temperature_celsius, flow_percent, paused=True
     )
 
 
-# A `preset_word_to_command` used to live here: it built a command word by reading a
-# preset hexString's byte 0 as an outlet mask. **That reading is wrong** — byte 0 carries
-# the temperature high bit and the PRESET_OUTLET_BITS positions (see the table above
-# `PRESET_OUTLET_BITS`). Removed 2026-08-21 along with its only caller, the superseded
-# two-command preset start (`controlpresetorexperience` runs the preset by itself, so no
-# valve write follows it). `decode_preset_word` below reads byte 0 the right way.
-
-
 def decode_preset_word(word: str) -> ValveWord:
     """Decode a 3-byte preset hexString into the shape of a command word.
 
-    The inverse of :func:`encode_preset_word`: the outlets from byte 0's
-    :data:`PRESET_OUTLET_BITS`, the temperature from its high bits and byte 1, and the flow
-    from byte 2, which is on the command word's own scale. ``paused`` is always False — a
-    preset has no pause. Raises :class:`ValveHexError` if the word is not six hex characters.
+    The inverse of :func:`encode_preset_word`; ``paused`` is always False. Raises
+    :class:`ValveHexError` if the word is not six hex characters.
     """
     text = str(word or "").strip().upper()
     if not PRESET_WORD.fullmatch(text):
@@ -763,25 +575,22 @@ def decode_preset_word(word: str) -> ValveWord:
 
 
 def preset_words_to_pair(model: ValveModel, words: Sequence[str]) -> tuple[str, str]:
-    """Build both command words from a preset's stored valve words.
+    """Build both command words from a preset's stored valve words; they run water.
 
-    How the Shower switch runs the default shower: preset 1's words, sent as one
-    ``solowritesystem`` the way Simple Start in the Konnect app does, never run as a preset
-    (see `SHOWER_ON_PRESET_ID` in the integration's ``const.py``). ``words`` is in valve
-    order, as `GcsPreset.valve_words` holds them: index 0 is ``Valve1`` (zone 1), index 1
-    ``Valve2`` (zone 2). Each is checked with :func:`check_preset_word` — it came from the
-    cloud and is about to run water — and re-encoded with its own outlets, temperature and
-    flow, pause clear.
+    How the Shower switch runs the default shower: preset 1's words sent as one
+    ``solowritesystem``, never run as a preset (``docs/protocol/gcs_valve.md`` §3.4).
+    ``words`` is in valve order (index 0 ``Valve1``, 1 ``Valve2``), as
+    `GcsPreset.valve_words` holds them. Each passes :func:`check_preset_word` and is
+    re-encoded with its own outlets, temperature and flow, pause clear.
 
-    A zone the preset opens nothing on is still an **addressed** word with mask ``0x00`` —
-    never the all-zero sentinel, which makes a two-valve system discard the whole command
-    (`docs/protocol/gcs_valve.md` §3.1). A zone with no stored word at all (missing, or the
-    unused ``000000``) is sent closed at the other zone's temperature and flow, the way
-    `encode_shower` falls zone 2 back to zone 1's, rather than at the 0 °C that word decodes
-    to. Only a model with no second valve gets the sentinel for word 2.
+    ⚠️ A zone the preset opens nothing on is an addressed word with mask ``0x00``, never
+    :data:`UNUSED_VALVE_WORD`, which makes a two-valve system discard the whole command
+    (``docs/protocol/gcs_valve.md`` §3.1). A zone with no stored word (missing, or
+    ``000000``) is sent closed at the other zone's temperature and flow, not the 0 °C
+    that word decodes to.
 
-    Raises :class:`ValveHexError` when no zone has a word, or a word is malformed or hotter
-    than the app can store.
+    Raises :class:`ValveHexError` when no zone has a word, or a word is malformed or
+    above :data:`PRESET_ECHO_MAX_TENTHS`.
     """
     stored: dict[int, ValveWord] = {}
     for zone in model.zones:
@@ -814,8 +623,8 @@ def preset_words_to_pair(model: ValveModel, words: Sequence[str]) -> tuple[str, 
 def celsius_to_unit(value_c: float, temperature_unit: str) -> float:
     """Convert a decoded Celsius value into the account's display unit.
 
-    Kohler's REST API and this valve byte both report Celsius regardless of the account's
-    display preference; the mobile app converts locally. Convert at the edge only.
+    The API and the valve word are Celsius whatever the account's unit; convert only at
+    the edge.
     """
     if temperature_unit.lower().startswith("f"):
         return round(value_c * 9 / 5 + 32, 1)
@@ -825,13 +634,9 @@ def celsius_to_unit(value_c: float, temperature_unit: str) -> float:
 def unit_to_celsius(value: float, temperature_unit: str) -> float:
     """Convert an account-unit temperature into Celsius for encoding.
 
-    Fahrenheit goes through `FAHRENHEIT_TO_TENTHS_C`, Kohler's own table, so a value written
-    from Home Assistant lands exactly where the touchscreen would put it. See that table for
-    why arithmetic is wrong here — it drifts +1 tenth on 12 of the 34 values the slider offers.
-
-    The table holds whole degrees only. A fractional °F — reachable through the service, not
-    the slider — falls back to the arithmetic, as does anything outside 59-122 °F. Kohler
-    returns 0 there; that would be full cold, so it is not copied.
+    A whole °F in 59-122 goes through `FAHRENHEIT_TO_TENTHS_C`, so it lands where the
+    touchscreen would put it. Any other °F (fractional, or outside the table) uses
+    arithmetic.
     """
     if not temperature_unit.lower().startswith("f"):
         return value

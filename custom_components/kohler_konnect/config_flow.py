@@ -2,19 +2,14 @@
 
 One entry per Kohler account, covering every supported device on it. Two steps:
 
-1. ``user``  — email and password. Sign-in runs entirely server-side, so there is no
-   browser round trip and nothing to paste back.
-2. ``valve`` — the valve model, which decides how many outlets exist and which valve each
-   one sits on. The split is detected from the API where possible (the valve's
-   ``gcsadvancestate``, else the controller's configuration) and the question is skipped;
-   the dropdown only appears when detection fails. A model is required even on a HUB-only
-   account because the HUB's per-zone outlet arrays need the same split — and not at all
-   on an account with only faucets, which skips the step.
+1. ``user`` — email and password; sign-in runs server-side, with no browser round trip.
+2. ``valve`` — the valve model, which sets how many outlets each zone has. Skipped when the
+   split is detected (the valve's ``gcsadvancestate``, else a controller's configuration)
+   and on a faucet-only account. A controller-only account still needs it: the
+   controller's per-zone outlet arrays use the same split.
 
-Only the rotating refresh token is stored, never the password. When the token finally
-expires (B2C allows up to ~90 days) Home Assistant raises a reauth prompt that asks for the
-password again — for the entry's own account only, and replacing nothing but the credential
-and, should the account's email have changed, the email.
+Only the refresh token is stored, never the password. When it expires, reauth asks for the
+password again and replaces only the credential (and the email, if it changed).
 """
 
 from __future__ import annotations
@@ -115,9 +110,8 @@ def _options_schema(
 ) -> vol.Schema:
     """The options that apply to the devices on this account.
 
-    * Multi-zone grouping, for valves and controllers. The choices' labels live in
-      `strings.json` under `selector.zone_grouping`, so they are translated like the rest of
-      the dialog.
+    * Multi-zone grouping, for valves and controllers (labels in `strings.json`,
+      `selector.zone_grouping`).
     * The water safety limit, for faucets.
     """
     fields: dict[Any, Any] = {}
@@ -166,19 +160,15 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
         """Return the options flow for this handler."""
         return KohlerKonnectOptionsFlow()
 
-    # Attribute names are deliberately prefixed. Home Assistant's ConfigFlow base class
-    # defines read-only properties such as `_reauth_entry_id`, and assigning to one raises
-    # AttributeError when the flow is constructed — which surfaces only as a 500 from the
-    # config-flow endpoint, with no hint that a name clashed.
+    # `_kohler_` prefix: `ConfigFlow` defines read-only properties (e.g. `_reauth_entry_id`),
+    # and assigning to one raises AttributeError, seen only as a 500 from the flow endpoint.
     def __init__(self) -> None:
         self._kohler_data: dict[str, Any] = {}
-        # The sign-in, kept so the entry stores its credential as it is when the entry is
-        # created rather than as signing in first issued it; see `async_step_valve`.
+        # Kept so the entry stores the current refresh token; see `async_step_valve`.
         self._kohler_auth: KohlerAuth | None = None
         self._kohler_summary: str = ""
         self._kohler_topology: tuple[int, int] | None = None
-        # Whether the account has a valve or a controller, which need a valve model. An
-        # account with only faucets has nothing to ask about.
+        # False on a faucet-only account, which needs no valve model.
         self._kohler_needs_model: bool = True
 
     # ------------------------------------------------------------------ #
@@ -250,15 +240,11 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
         }
 
     async def _async_detect_topology(self, client, customer) -> tuple[int, int] | None:
-        """Work out the outlet split without asking, if either device will tell us.
+        """Detect the outlet split from the first valve, else controller, that answers.
 
-        The valve is preferred: ``gcsadvancestate`` is its own account of its hardware and
-        needs no controller. A HUB-only account has no valve id to query, so it falls back
-        to a controller's zone configuration — the first of them that answers.
+        This only sets the entry's model, a fallback: at setup each valve and controller
+        reads its own layout.
         """
-        # The first valve that answers. As with the controllers below, this only decides
-        # the entry's model; at setup each valve reads its own layout from the same
-        # endpoint, so a second valve of a different model is not held to this answer.
         for valve in customer.gcs_devices:
             try:
                 setting = await client.async_get_gcs_settings(valve.device_id)
@@ -273,10 +259,6 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
                     "Could not read valve settings for %s: %s", valve.device_id, err
                 )
 
-        # The first controller that answers. This only decides the entry's model — the
-        # valve's layout, and the fallback for a controller whose own read fails. At setup
-        # the coordinator reads every controller's configuration for itself, so a second
-        # bathroom with a different valve is not held to this answer.
         for controller in customer.hub_devices:
             try:
                 config = await client.async_get_hub_configuration(controller.device_id)
@@ -311,11 +293,8 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
             user_input = {}
         if user_input is not None:
             data = {k: v for k, v in self._kohler_data.items() if k != "has_device"}
-            # The credential as it stands now, not as signing in issued it (2026-10-16). A
-            # read since — the account, the valve layout — that met a 401 refreshed it, and
-            # B2C retired the token signing in returned the moment it did. Stored, that
-            # token was refused at the entry's first start, and the owner was asked to sign
-            # in again straight after adding the account.
+            # ⚠️ Store the current token, not the one sign-in returned: any refresh since
+            # (on a 401) rotated it, retiring the original.
             if (auth := self._kohler_auth) is not None:
                 data[CONF_REFRESH_TOKEN] = auth.refresh_token
                 if auth.tenant_id:
@@ -332,7 +311,7 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
                 title=_entry_title(data[CONF_USERNAME]), data=data
             )
 
-        # Detection succeeded and matches a catalogue model: skip the question entirely.
+        # Detected a catalogue model: skip the question.
         detected = self._kohler_topology
         if detected is not None:
             model = model_for_topology(*detected)
@@ -362,23 +341,16 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Sign in again as the entry's own account, and replace only its credential.
 
-        Self-contained since 2026-10-16. It used to hand over to `async_step_user`, which on
-        any error — a mistyped password — showed the *user* form with an empty email field.
-        Whatever account was typed there next was signed in, the unique-id check was skipped
-        for reauth, and that account's username, token and tenant were merged into this
-        entry. It also re-ran valve detection, so a detection that failed this time showed
-        the model picker and could overwrite a valve layout the expired token had nothing to
-        do with.
-
-        The email is asked for too, filled in with the entry's, because it can have changed:
-        Kohler lets an account change its email, and the old one no longer signs in. Which
-        account may sign in is `_async_finish_reauth`'s decision.
+        ⚠️ Self-contained on purpose: it must not route through `async_step_user`, which
+        would accept any account and re-run valve detection. The email field is prefilled
+        but editable, since a Kohler account's email can change;
+        `_async_finish_reauth` decides which account is accepted.
         """
         entry = self._get_reauth_entry()
         username = entry.data.get(CONF_USERNAME) or ""
         errors: dict[str, str] = {}
         if user_input is not None:
-            # Shown again as typed if this fails, rather than reset to the entry's.
+            # Re-shown as typed if this fails.
             username = user_input[CONF_USERNAME]
             auth = KohlerAuth(async_get_clientsession(self.hass))
             errors = await self._async_sign_in_errors(
@@ -403,21 +375,10 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Store a sign-in that is the entry's own account, and reload; abort on any other.
 
-        The entry's own account is the same login — the email, normalised, is the entry's
-        unique id — **or the same Kohler account**: the account id the sign-in carries is
-        the one the entry stores. Until 2026-10-16 only the first counted, and two kinds of
-        entry could never sign in again:
-
-        * one whose account has since changed its email, and
-        * one the reauth bug described at `async_step_reauth_confirm` left half another
-          account's: that account's email, token and account id, under the unique id of
-          the account it was set up for. Every reauth asked for that other account's
-          password, and then refused it as "a different Kohler account".
-
-        An account that is neither is still refused, so this cannot bind the entry to an
-        unrelated account — the hole the bug was. When it is the same account under another
-        email, the email and the unique id move to it together; unless another entry
-        already has that account, which would make two entries for one account.
+        The entry's own account is the same login (the normalised email is the unique id)
+        or the same Kohler account (same tenant id). ⚠️ Any other account is refused, so an
+        entry can never be bound to an unrelated account. For the same account under a new
+        email, the email and unique id move together, unless another entry already has it.
         """
         unique_id = username.strip().lower()
         same_login = unique_id == entry.unique_id
@@ -446,8 +407,7 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
         }
         if auth.tenant_id:
             data[CONF_TENANT_ID] = auth.tenant_id
-        # The title follows a changed email only while it is still the one setup gave it;
-        # a name the owner chose is theirs.
+        # The title follows a changed email only if the owner hasn't renamed the entry.
         title = entry.title
         previous = entry.data.get(CONF_USERNAME)
         if previous and username != previous and title == _entry_title(previous):
@@ -455,23 +415,11 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
         self.hass.config_entries.async_update_entry(
             entry, data=data, unique_id=unique_id, title=title
         )
-        # The explicit reload is required, not belt-and-braces. Usually nothing changes but
-        # the credential, and `_async_update_listener` deliberately ignores the refresh
-        # token — so leaving the reload to the listener would leave `KohlerAuth` holding the
-        # dead token that caused the reauth in the first place. When more than that changed
-        # — the email, the account id — a loaded entry's listener reloads it as well; a
-        # second reload is the price of not depending on which keys the listener ignores.
-        #
-        # Scheduled, not awaited, so the dialog does not sit through the reload: every seed
-        # read and the stream's connect. That does not make the flow finish first, though.
-        # Home Assistant starts the reload eagerly, and its first, synchronous step aborts
-        # the entry's reauth flows — this one included, in the middle of this step. Home
-        # Assistant accepts an abort from a step whose flow was aborted under it, and an
-        # abort is what this returns next; the rest of the reload, with any new reauth
-        # prompt a still-dead credential raises, follows on its own.
-        # `async_update_reload_and_abort` does exactly these three things, but from Home
-        # Assistant 2026.10 it reports any entry with an update listener, which this one
-        # has, and it stops working for them in 2026.12.
+        # ⚠️ Explicit reload required: `_async_update_listener` ignores the refresh token,
+        # so otherwise `KohlerAuth` keeps the dead one. Scheduled, not awaited, so the
+        # dialog doesn't wait on setup; the reload aborts this flow mid-step, which Home
+        # Assistant accepts. Not `async_update_reload_and_abort`: from 2026.10 it reports
+        # entries with an update listener, and stops working for them in 2026.12.
         self.hass.config_entries.async_schedule_reload(entry.entry_id)
         return self.async_abort(reason="reauth_successful")
 
@@ -488,16 +436,14 @@ class KohlerKonnectOptionsFlow(OptionsFlow):
         if user_input is not None:
             if CONF_MAX_RUN_MINUTES in user_input:
                 user_input[CONF_MAX_RUN_MINUTES] = int(user_input[CONF_MAX_RUN_MINUTES])
-            # Merge with `existing_options` rather than replacing wholesale:
-            # `entry.options` also holds per-valve Warmup Auto-Restore and
+            # Merge: `entry.options` also holds per-valve Warmup Auto-Restore and
             # report-log keys.
             return self.async_create_entry(
                 title="",
                 data={**existing_options, **user_input},
             )
 
-        # Which kinds of device the running entry has. Before it has loaded, offer both:
-        # an option for a device the account turns out not to have does nothing.
+        # Offer both kinds' options until the entry has loaded; an unused one is harmless.
         coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
         showers = coordinator is None or bool(
             coordinator.valves or coordinator.controllers

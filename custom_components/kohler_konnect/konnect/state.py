@@ -3,11 +3,10 @@
 Each device type keeps its own state object. They are fed from two directions:
 
 * ``apply_envelope()`` for live MQTT updates, and
-* ``apply_rest_state()`` once at startup, because MQTT is event-driven and says nothing
-  until the shower next changes. Without a seed read, a restart leaves every entity unknown
-  until somebody touches the shower.
+* ``apply_rest_state()`` at startup, because MQTT says nothing until the shower next
+  changes.
 
-Both are pure data — no Home Assistant imports — so they can be exercised offline against
+Pure data, with no Home Assistant imports, so they can be exercised offline against
 captured payloads.
 """
 
@@ -58,23 +57,17 @@ _LOGGER = logging.getLogger(__name__)
 def _is_warmup_in_progress(value: object) -> bool:
     """Whether a warmup status field means warmup is actually running.
 
-    Compare the whole value, never a suffix. The two states are ``warmUpInProgress`` and
-    ``warmUpNotInProgress``, and **"NotInProgress" ends with "InProgress"** — a suffix test
-    reports warmup running 100% of the time. That shipped, and because ``Warming Up``
-    outranks ``Water Running`` in the status sensor, it pinned the sensor to a single value
-    forever. 444 of the 453 captured messages carry the negative form.
+    Compare the whole value, never a suffix: ``warmUpNotInProgress`` ends with
+    ``InProgress``.
     """
     return str(value).strip().lower() == WARMUP_IN_PROGRESS.lower()
 
 
 def _flag(value: object) -> bool | None:
-    """Normalise the HUB's ``"0"``/``"1"`` flags, distinguishing absent from false.
+    """Normalise the HUB's ``"0"``/``"1"`` string flags; None when absent or unknown.
 
-    The controller sends these as **strings**, and only ``"0"`` and ``"1"`` have ever been
-    observed. Returning None for anything else — including the ``null`` every non-shower
-    message carries for ``showerwarmup`` — is what keeps an unrelated ``MUSIC_STS`` from
-    clearing a warm-up that is genuinely still running. A plain ``bool()`` would do exactly
-    that, and ``bool("0")`` is True, which would invert it.
+    Anything unrecognised is None, so the ``null`` ``showerwarmup`` on a non-shower
+    message cannot clear a running warm-up. Never use ``bool()``: ``bool("0")`` is True.
     """
     if isinstance(value, bool):
         return value
@@ -87,7 +80,7 @@ def _flag(value: object) -> bool | None:
 
 
 def _preset_id_or_none(value: object) -> int | None:
-    """Normalise ``presetOrExperienceId``. ``"0"`` means *no preset*, not preset zero."""
+    """Normalise ``presetOrExperienceId``: ``"0"`` means no preset, so None."""
     try:
         number = int(str(value))
     except (TypeError, ValueError):
@@ -95,25 +88,21 @@ def _preset_id_or_none(value: object) -> int | None:
     return number or None
 
 
-#: The preset valve slots that are zones: ``Valve1`` and ``Valve2``, as ``primaryValve1`` and
-#: ``secondaryValve1`` are the only populated words of a ``solowritesystem``. The push carries
-#: eight slots, and the later ones hold junk (``0000c0``, ``080020`` on one system).
+#: The preset valve slots that are zones, ``Valve1`` and ``Valve2``. The later slots of
+#: a push hold junk (``docs/protocol/gcs_valve.md`` §7).
 PRESET_ZONE_SLOTS = 2
 
 
 def _preset_words(by_valve: dict[int, Any]) -> tuple[str, ...]:
     """A preset's 3-byte valve words in valve order — index 0 is ``Valve1``.
 
-    ``by_valve`` maps a 1-based valve number to the word as read. Both zone slots are kept
-    whatever the model: the preset read runs alongside the one that settles the model
-    (`Valve._seed_independent_reads`), so the model may not be known yet, and the send picks
-    by model anyway (`preset_words_to_pair`). Upper-cased, so the REST read and the push
-    compare equal; a missing word is ``""``, so the other keeps its place. ``()`` when
-    neither slot holds anything.
+    ``by_valve`` maps a 1-based valve number to the word as read. Both zone slots are
+    kept whatever the model, which may not be known yet when presets are read.
+    Upper-cased; a missing word is ``""`` so the other keeps its place; ``()`` when
+    neither has one.
 
-    **Kept as read, not validated here.** A malformed word is checked where it would become
-    a command (`check_preset_word`), which refuses the whole shower; blanking it here would
-    read as "nothing on that zone" and quietly run the other one alone.
+    Not validated here: `check_preset_word` refuses a malformed word where it becomes a
+    command. Blanking it here would quietly run the other zone alone.
     """
     words = tuple(
         str(by_valve.get(number) or "").strip().upper()
@@ -123,12 +112,7 @@ def _preset_words(by_valve: dict[int, Any]) -> tuple[str, ...]:
 
 
 def _zone_status(value: object) -> str | None:
-    """A HUB zone's ``status``, upper-cased like every other HUB on/off field.
-
-    Only ``"ON"``/``"OFF"`` have been captured, but the music, steam, light and experience
-    handlers all upper-case theirs, and ``HubState.is_running`` compares against ``"ON"``
-    — so a lowercase ``"on"`` stored as sent read as a stopped shower.
-    """
+    """A HUB zone's ``status``, upper-cased, as ``HubState.is_running`` compares it."""
     return None if value is None else str(value).strip().upper()
 
 
@@ -141,13 +125,9 @@ def _text(item: dict[str, Any], key: str) -> str | None:
 def _finite(value: object, scale: float = 1) -> float | None:
     """``value`` as a number times ``scale``, or None unless that is a finite number.
 
-    ``float`` takes ``"NaN"``, ``"Infinity"`` and ``"1e400"`` (infinity again), and the
-    stdlib JSON parser hands REST and MQTT the bare ``NaN`` and ``Infinity`` tokens as
-    floats — so "a number or junk" was never the whole input. Until 2026-10-16 both got
-    through: rounding infinity raised `OverflowError`, which nothing in the REST seed
-    caught, and a NaN setpoint stored on a word made every write that inherited it raise in
-    `encode_word`. Non-finite reads as unparseable, which every caller already has a
-    fallback for. The check is after scaling, because a finite ``1e308`` times four is not.
+    NaN and infinity (which ``float`` and the JSON parser both accept) read as
+    unparseable, so they never reach `encode_word`. Checked after scaling, which can
+    overflow.
     """
     try:
         number = float(str(value)) * scale
@@ -165,25 +145,14 @@ def _rounded(value: object, scale: float = 1) -> int | None:
 def outlet_limits_from_settings(payload: Any) -> dict[int, OutletLimits]:
     """Read per-outlet limits from a ``gcsadvancestate`` response.
 
-    The same data the valve announces over MQTT as ``READ_GCS_OUTLET_CONFIG_CFG``, but
-    **readable on demand** — which MQTT is not, since it arrives unprompted roughly twice a
-    session. Verified live 2026-08-17; see ``docs/protocol/gcs_valve.md`` §2.1.
-
-    Two traps, both of which yield plausible-looking wrong numbers rather than an error:
-
-    * **The key spelling differs from MQTT.** REST says ``maximumRuntime`` /
-      ``maximumFlowrate`` / ``minimumFlowrate`` / ``defaultFlowrate``; MQTT capitalises the
-      ``T`` and ``R``. Reading with the MQTT spelling silently finds nothing at all.
-    * **REST returns DISPLAY units where MQTT returns WIRE units.** Flow arrives as ``50``
-      where MQTT says ``200``. Everything is converted to the byte scale here, so the two
-      sources are interchangeable — ``OutletLimits`` means byte scale whatever filled it.
-
-    Outlets that cannot be parsed are skipped rather than guessed at.
+    The same records ``READ_GCS_OUTLET_CONFIG_CFG`` pushes, but readable on demand. REST
+    uses its own key spelling and display units (flow 0-50, °C); both are converted to
+    the wire units `OutletLimits` holds (``docs/protocol/gcs_valve.md`` §2.1). Outlets
+    that cannot be parsed are skipped rather than guessed at.
     """
     limits: dict[int, OutletLimits] = {}
-    # Accepts either the whole `gcsadvancestate` response or the `setting` block on its own,
-    # because `KohlerClient.async_get_gcs_settings` already unwraps it while a raw capture
-    # does not. Cheaper than making every caller remember which one it is holding.
+    # Accepts the whole response or just its `setting` block, which
+    # `KohlerClient.async_get_gcs_settings` already unwraps.
     source = payload if isinstance(payload, dict) else {}
     if "valveSettings" not in source:
         source = (
@@ -249,88 +218,38 @@ def outlet_limits_from_settings(payload: Any) -> dict[int, OutletLimits]:
 
 @dataclass(frozen=True)
 class OutletLimits:
-    """Per-outlet flow bounds the valve reports, on the **byte** scale (0x10-0xC8).
+    """One outlet's configuration record, in wire units (flow byte, tenths of °C, s).
 
-    Confirmed against the Konnect decompile: the app bounds its flow slider with
-    ``outletConfigurations[].getMinimumFlowrate()`` / ``getMaximumFlowrate()`` taken from
-    this same configuration, so these are the real limits rather than a convention. They are
-    **not** guaranteed to be 16/200 on every system — this install reports identical figures
-    for all six outlets only because flow control is disabled system-wide.
+    Also the whole record ``writeoutletconfig`` replaces, so a write can echo every
+    field it does not mean to change. The flow bounds are the app's slider limits and
+    are not always 16-200. A None field has not been learned yet; never assume one.
     """
 
     outlet_id: int
     minimum_flow_byte: int
     maximum_flow_byte: int
-    # Seconds before the valve closes the water on its own — `maximumRunTime`. Reported
-    # per outlet, but **timed per zone**: the clock starts when the zone begins flowing
-    # and outlet changes within it do not reset it (`docs/protocol/gcs_valve.md`,
-    # "Run-time limit"). The outlets of one zone usually agree, but a lost write can leave
-    # them holding different values (seen 2026-09-10).
-    #
-    # None when this outlet's value has not been learned yet. Never assume one.
+    # `maximumRunTime`, seconds: set per outlet but timed per zone, and a zone's outlets
+    # can disagree (`docs/protocol/gcs_valve.md` §4.1).
     maximum_run_time: int | None = None
-    # The outlet's configured starting flow, byte scale, from `defaultFlowRate`.
-    #
-    # **Nothing reads this yet.** Captured deliberately on 2026-08-17 for a later question:
-    # flow control is disabled system-wide on this install, and if a Kohler firmware update
-    # ever fixes the controller's flow handling, the per-outlet default and maximum are what
-    # a flow entity would have to be bounded by. Cheap to record now, impossible to
-    # reconstruct retroactively.
+    # `defaultFlowRate`, the outlet's starting flow (byte).
     default_flow_byte: int | None = None
-    # The valve's own outlet **type code** — 62, 52, 1, 11, 39, 21 and so on, standing for
-    # handshower, rainshower, tub filler and the rest.
-    #
-    # **A label on this device, not a behaviour.** The controller derives an outlet's flow
-    # envelope from its type; the valve does not, and honours whatever flow byte it is
-    # given within its calibrated range. So this changes nothing about how the valve runs —
-    # it is recorded because it is the only per-outlet identity the hardware reports, and
-    # The two devices have been seen holding *different* codes for the same physical
-    # fixture on purpose (id 4 is 39 to the valve, 38 to the controller).
-    #
-    # Deliberately **not** translated to a name here — that is presentation, and lives in
-    # the Home Assistant layer as `OUTLET_TYPE_NAMES`. The full table of nineteen codes is
-    # Konnect 3.0.6's own outlet picker (`docs/protocol/gcs_valve.md` §Outlet types).
-    #
-    # None when the valve has not announced this outlet yet — the same "not learned"
-    # meaning the run time carries, never a real type.
+    # `outLetType`, the fixture code (`docs/protocol/gcs_valve.md` §1.2). A label only:
+    # the valve derives no behaviour from it. Named in the HA layer
+    # (`OUTLET_TYPE_NAMES`).
     outlet_type: int | None = None
-    # The scald limit — `maximumOutletTemperature`, in **tenths of °C** here, matching the
-    # wire scale the valve's own words use. REST reports it in display °C (`45`) and MQTT in
-    # tenths (`450`); both are normalised to tenths on the way in, so this field means one
-    # thing whichever source filled it.
-    #
-    # **A setting, not a hardware limit** — changed from the app or the panel and observed
-    # moving 450 -> 477 within minutes on 2026-09-10. Never cache it as a device property.
-    #
-    # 🚨 **This is a safety setting.** `docs/protocol/gcs_valve.md` warns that a whole-record write
-    # which omits it, or sends it on the wrong scale, silently changes it. Nothing here
-    # writes it — this integration only reads it — but that is why it is recorded exactly
-    # as read rather than rounded.
-    #
-    # None when the valve has not reported it, which is not the same as no limit.
+    # ⚠️ The scald limit, `maximumOutletTemperature`, tenths of °C. A setting that can
+    # change at any time, not a hardware limit: never cache it as a device property.
+    # None means not reported, not "no limit".
     maximum_temperature_tenths: int | None = None
-    # Three more fields of `writeoutletconfig`'s twelve, captured 2026-09-11 so a write can
-    # replace the record without inventing them.
-    #
-    # 🚨 **`writeoutletconfig` is a whole-record replace.** Omitting a key, or sending a
-    # guess, changes the setting it names — and one of these sits beside the scald limit.
-    # Reading them is the only way a write can put back what it did not mean to change; see
-    # `docs/protocol/gcs_valve.md` §2.1.
-    #
-    # Tenths of °C, normalised from REST's display °C exactly as the maximum above.
+    # Tenths of °C.
     minimum_temperature_tenths: int | None = None
-    # The temperature a shower starts at when nothing else specifies one — the Konnect app's
-    # "Default Temperature", bounded below by the minimum and above by the scald limit.
+    # The app's "Default Temperature", tenths of °C, between the minimum and the scald
+    # limit.
     default_temperature_tenths: int | None = None
-    # `outLetFlags`. Meaning undocumented and deliberately not interpreted: it is read so a
-    # write can echo it back unchanged, which is the only thing this integration needs from
-    # it. `1` on every outlet of every install seen so far. Konnect 3.0.6 treats it exactly
-    # the same way — echoes it, defaults it to `"1"` for a new outlet, never reads it.
+    # `outLetFlags`: meaning unknown, only echoed back on a write, as the app does.
     outlet_flags: int | None = None
-    # The last two of the twelve, kept as the **strings** they arrive as because they are
-    # only ever echoed. Konnect always sends them; no captured read has carried either, so
-    # these are None on every known install and a write sends the app's own values instead
-    # (`maxVolume` "0", `purge` ""). See `GcsDevice.async_write_outlet_config`.
+    # Kept as the strings they arrive as, since they are only echoed. Usually never
+    # reported; see `GcsDevice.async_write_outlet_config` for what a write sends then.
     max_volume: str | None = None
     purge: str | None = None
 
@@ -339,13 +258,9 @@ class OutletLimits:
 class GcsPreset:
     """One stored preset slot.
 
-    ``name`` is empty for a free slot — that is exactly how a deletion is reported, so an
-    empty name means "this slot holds nothing", not "unnamed preset".
-
-    ``valve_words`` holds the stored 3-byte valve words, upper-case, in valve order — index
-    0 is ``Valve1`` — for both zone slots, as read (validated only when sent), ``""`` where
-    one was missing; ``()`` when none was read. Preset 1's are what the Shower switch sends
-    (`preset_words_to_pair`). Part of ``==``, so a changed word is a changed preset.
+    ``name`` is empty for a free slot, which is how a deletion is reported.
+    ``valve_words`` is as built by `_preset_words`; preset 1's are what the Shower
+    switch sends (`preset_words_to_pair`).
     """
 
     preset_id: int
@@ -355,16 +270,15 @@ class GcsPreset:
 
     @property
     def is_empty(self) -> bool:
-        """True for a free slot: no name, or no valve data."""
+        """True for a free slot, which has no name."""
         return not self.name.strip()
 
     @property
     def is_selectable(self) -> bool:
-        """Whether this can be offered to a user as a scene to run.
+        """Whether this can be offered to a user as a preset to run.
 
-        Experiences are excluded: they carry no valve data and are offered separately (the
-        valve's Experience select), despite sharing the id space via
-        ``presetOrExperienceId`` and starting with the same command.
+        Experiences share the id space but are offered separately (the Experience
+        select).
         """
         return not self.is_empty and not self.is_experience
 
@@ -373,8 +287,8 @@ class GcsPreset:
 class GcsState:
     """Live state of one Anthem digital valve.
 
-    Outlet, temperature, and flow all come from the valve command word, which is the
-    authoritative source whenever a GCS device exists.
+    Outlet, temperature and flow come from the valve command word, the authoritative
+    source whenever a GCS device exists.
     """
 
     model: ValveModel
@@ -384,65 +298,37 @@ class GcsState:
     valve2: ValveWord | None = None
     warmup_mode: str | None = None
     warmup_in_progress: bool | None = None
-    # Reported by the device but not exposed: the value changes erratically between
-    # messages and does not behave like a monotonic counter, so any statistics built on it
-    # would be meaningless.
+    # Not exposed: it changes erratically and is not a monotonic counter.
     total_volume: str | None = None
-    # 🚫 **`totalFlow`, and it is not a water meter.** Recorded raw for diagnostics only; no
-    # entity publishes it, and `Total Water Used` was retired in 0.14.0 because it did.
-    #
-    # Across the whole reference corpus — ten captures over two days, both valves — this field
-    # took **three distinct values** (2056.0, 6283.25, 8224.0 on one valve) and cycled among
-    # them with **no water running and every outlet closed**. Worse, the values come in pairs
-    # exactly 4x apart: 2056/8224, 6488.75/25955, 3659.25/14637 — so the cloud serves one
-    # underlying number at two scales and which one arrives varies per read.
-    #
-    # ⚠️ **That 4x is what produced the 0.7.3 divide-by-four bug.** Two captures a day apart
-    # showed a clean 4.0 ratio and it was read as a unit conversion. It was two members of a
-    # repeating set, and a divisor was right half the time and wrong the other half.
-    #
-    # Water figures come from `gcs-usage` instead — Kohler's own per-month series, in litres,
-    # the same data the app charts. See `ValveMonthlyWaterSensor`, `ValveYearlyWaterSensor`.
+    # ⚠️ `totalFlow`, raw, for diagnostics only. Not a water meter: it cycles among
+    # values 4x apart with no water running (`docs/protocol/gcs_valve.md` §2), so no
+    # scaling makes it one. Water use comes from `gcs-usage`
+    # (`ValveMonthlyWaterSensor`).
     total_flow: float | None = None
-    # `currentSystemState` — `normalOperation` or `showerInProgress` in every capture, as the
-    # valve itself reports it. Kept as the device's own string rather than folded into the
-    # four-state `Status` vocabulary, because it is a second, independent opinion: it is the
-    # valve's own session flag, not a decode of the command word, and the two can disagree.
-    #
-    # Konnect 3.0.6 acts on two more: `error` is a valve fault (see `has_fault`) and
-    # `FirmwareUpdate` an install in progress (see `firmware_updating`). Neither has been
-    # captured.
+    # `currentSystemState`, the device's own string (`docs/protocol/gcs_valve.md` §7).
+    # Not folded into the `Status` vocabulary: it is the valve's session flag,
+    # independent of the command word, and the two can disagree. See `has_fault`,
+    # `firmware_updating`.
     system_state: str | None = None
-    # `READ_DISPENSED_WATER_VOLUME_STS` `attributes[0].volume`, raw. A running counter the
-    # app's bath-fill setup samples before and after a fill — arrives only when something
-    # asks (`/commands/gcs/bathfillervolume`), so on this integration it stays None unless the
-    # app is mid-setup. Recorded for diagnostics; units unstated by the app.
+    # `READ_DISPENSED_WATER_VOLUME_STS` volume, raw, for diagnostics. Arrives only when
+    # something sends `bathfillervolume`, so usually None
+    # (`docs/protocol/gcs_valve.md` §8).
     dispensed_volume: str | None = None
     last_update: float | None = None
 
-    # Stored presets, keyed by slot id. Ids are **slots, not positions**: creating fills the
-    # lowest free slot and deleting empties one in place, so a deleted preset arrives as a
-    # record with an empty name. Kept as a dict rather than a list so an empty slot can
-    # overwrite its predecessor without disturbing the others.
+    # Stored presets keyed by slot id. Ids are slots, not positions: a delete empties
+    # one in place (an empty name) and a create fills the lowest free one.
     presets: dict[int, GcsPreset] = field(default_factory=dict)
-    # Which preset is currently driving the valve, from `presetOrExperienceId`.
-    #
-    # Latches for the whole session and survives temperature and flow changes, but is
-    # cleared by **both** pause and stop — so it answers "is a preset driving this", never
-    # "is water running". Opening an outlet directly leaves it None with water flowing.
-    #
-    # **None does not mean "no preset" while warm-up is running.** A preset activated during
-    # warm-up applies its valve word but never sets the field, and does not latch
-    # retroactively when warm-up ends. All 12 `warmUpInProgress` samples in the corpus carry
-    # `0`. Treat None + warm-up as *unknown*, not as absence — see `docs/protocol/gcs_valve.md`.
+    # The preset or experience driving the valve, from `presetOrExperienceId`. Answers
+    # "is a preset driving this", never "is water running": cleared by pause and stop,
+    # and None for a direct write. ⚠️ Never set during warm-up, so None then means
+    # unknown (`docs/protocol/gcs_valve.md` §7).
     active_preset_id: int | None = None
-    # Per-outlet flow bounds, keyed by the device's own 0-based `outLetId`. Arrives over
-    # MQTT one outlet per message, unprompted, so this fills in gradually and may stay
-    # partial — every reader must tolerate a missing entry.
+    # Outlet records keyed by 0-based `outLetId`. MQTT fills them one outlet at a time,
+    # so this may be partial: every reader must tolerate a missing entry.
     outlet_limits: dict[int, OutletLimits] = field(default_factory=dict)
-    # The fields of a `gcs-state` read that the last message applied carried — a word
-    # that decoded, a session field it had, the warm-up mode — for `Valve.apply_rest_reply`,
-    # which keeps exactly those over a read the message overtook.
+    # The fields the last applied message carried, so `Valve.apply_rest_reply` can keep
+    # them over a REST read that message overtook.
     carried: frozenset[str] = field(default=frozenset(), compare=False)
 
     def _flags(self, *, flowing: bool) -> list[bool]:
@@ -460,8 +346,7 @@ class GcsState:
     def zone_outlets(self, zone: int, *, flowing: bool = True) -> list[bool]:
         """Outlet flags for one zone, indexed from 0 within that zone.
 
-        The zone-native view, matching how the hardware and every API surface address
-        outlets. ``flowing=False`` returns the assignment a paused session will resume to.
+        ``flowing=False`` returns the assignment a paused session will resume to.
         """
         word = self.valve1 if zone == 1 else self.valve2
         count = self.model.outlets_in_zone(zone)
@@ -477,22 +362,16 @@ class GcsState:
 
     @property
     def outlets(self) -> list[bool]:
-        """Per-outlet flags for outlets actually **flowing water**.
+        """Per-outlet flags for outlets actually flowing water.
 
-        A paused valve keeps its outlet assignment in byte 3 (``0x41`` is "paused, outlet 1
-        still assigned"), but no water comes out. Anything answering "is this outlet on"
-        therefore has to clear the assignment while paused, or a paused shower reads as
-        running.
+        A paused valve keeps its assignment in byte 3 but runs no water, so this clears
+        it while paused. Use :attr:`assigned_outlets` for what the session resumes to.
         """
         return self._flags(flowing=True)
 
     @property
     def assigned_outlets(self) -> list[bool]:
-        """Per-outlet flags as stored in byte 3, ignoring pause.
-
-        This is what the session will resume to. Use :attr:`outlets` for "is water coming
-        out of this outlet".
-        """
+        """Per-outlet flags in byte 3, ignoring pause: what the session resumes to."""
         return self._flags(flowing=False)
 
     @property
@@ -502,12 +381,7 @@ class GcsState:
 
     @property
     def is_paused(self) -> bool:
-        """True when the session is held.
-
-        The pause bit is independent of the outlet bits, so this only checks the flag —
-        with the guard that a system with water flowing somewhere is running, not paused.
-        A genuinely paused system does not have one valve held while another flows.
-        """
+        """True when the session is held: a pause flag set and no water flowing."""
         words = [w for w in (self.valve1, self.valve2) if w is not None]
         if not words:
             return False
@@ -517,55 +391,27 @@ class GcsState:
     def at_temperature(self) -> bool | None:
         """Whether the system has reached its temperature setpoint.
 
-        **System-level, and read from the primary valve only.** The secondary valve never
-        asserts this bit — 0 of 133 in a session where it was the *only* zone running and
-        the water demonstrably came up to temperature. The primary word carries the
-        judgement for the whole system.
-
-        That is consistent with Kohler's own expectation that zone 1 / outlet 1 is the main
-        shower: system-level status lives on ``primaryValve1`` regardless of which zone the
-        plumbing actually feeds. An install that puts the main shower on zone 2 still gets
-        its at-temperature signal here.
-
-        Verified against the hardware: the bit set at the exact moment the touchscreen
-        stopped flashing and showed a solid setpoint, and cleared when the shower stopped.
-        It may lag a second or two after a setpoint change, matching the brief re-flash the
-        screen shows.
+        System-level, read from the primary valve only: the secondary valve never sets
+        this bit, even when only zone 2 is running.
         """
         return None if self.valve1 is None else self.valve1.at_temperature
 
     @property
     def at_flow(self) -> bool | None:
-        """Whether the system has reached its flow setpoint.
+        """Whether the system has reached its flow setpoint (primary valve, as above).
 
-        Read from the primary valve, matching :attr:`at_temperature`.
-
-        Never observed set on the test system — but that system has **flow control disabled**
-        at the fixture, worked around because it is reportedly broken on HUB firmware 2.88.
-        The likely reading is therefore "flow control is off, so nothing reports flow",
-        not "the firmware never drives this bit". The measured-flow byte is also flat zero
-        there, which is consistent.
-
-        Untested either way: confirming it needs a system with flow control enabled.
+        Never yet seen set, possibly because flow control was disabled where it was
+        tested.
         """
         return None if self.valve1 is None else self.valve1.at_flow
 
     @property
     def has_fault(self) -> bool | None:
-        """Whether any valve is reporting a fault (byte 3's errorFlag).
+        """Whether the valve reports a fault; None with no word and no error state.
 
-        Surfaced by `binary_sensor.ValveProblemSensor`. The bit has never been observed
-        set — 0 of 992 captured valve words — and that caveat travels with the entity
-        rather than being a reason to withhold it: a fault nobody can see is the one case
-        where a hidden entity is worse than an untested one. See that class for the full
-        reasoning, including why this was withheld previously.
-
-        See also :attr:`error_codes` — byte 7 reads a constant ``1`` on the tested unit, so
-        a nonzero code is not a fault.
-
-        **Two signals, matching Konnect 3.0.6's own rule** (``mc0/n.java``): the error flag on
-        either word, *or* ``currentSystemState == "error"`` (case-insensitive). Until
-        2026-10-07 only the flag was read.
+        The app's rule: the error flag on either word, or a ``currentSystemState`` of
+        ``error`` in any case (``docs/protocol/gcs_valve.md`` §7). Not
+        :attr:`error_codes`: byte 7 reads ``1`` on a healthy valve.
         """
         if self.system_state is not None and (
             self.system_state.strip().lower() == SYSTEM_STATE_ERROR
@@ -580,9 +426,8 @@ class GcsState:
     def firmware_updating(self) -> bool:
         """Whether the valve reports a firmware install in progress.
 
-        ``currentSystemState == "FirmwareUpdate"`` — the state on which Konnect 3.0.6 sends
-        the user away from the controls. Never captured; read so an update entity can show
-        it and so a running install is not reported as an unknown state.
+        ``currentSystemState == "FirmwareUpdate"``, which the app treats as an install
+        running.
         """
         return (self.system_state or "").strip().lower() == (
             SYSTEM_STATE_FIRMWARE.lower()
@@ -596,24 +441,6 @@ class GcsState:
             if word is not None and word.error_code is not None:
                 codes[f"zone{number}"] = word.error_code
         return codes
-
-    # ---------------------------------------------------------------- #
-    # The measurement block: decoded, but not surfaced
-    # ---------------------------------------------------------------- #
-    # `ValveWord.measured_temperature_celsius` and `.measured_flow_percent` are decoded from
-    # the status word's bytes 4-5 (temperature) and byte 6 (flow), and published as
-    # attributes on the Hex sensor and in diagnostics. Four `GcsState` properties used to
-    # wrap them — `_measuring_word`, `reports_measurements`, `measured_temperature`,
-    # `measured_flow_percent` — for a binary sensor that was removed in 0.6.x; nothing has
-    # called them since, so they went with 0.8.1.
-    #
-    # **The knowledge in them is worth keeping.** A valve that does not populate the block
-    # reports the whole thing as zero, temperature AND flow together, and any future reader
-    # must gate on both: the encoding represents sub-25.6 C fine (4.0 C is `0028C8xx`), so an
-    # ice-shower session can legitimately report a very low temperature while water flows.
-    # Gating on temperature alone would discard that case, and gating on flow alone cannot
-    # distinguish "closed" from "not reported". Without the pair, a unit that never populates
-    # the block shows a confident 32 F on a dashboard — worse than showing nothing.
 
     @property
     def temperature(self) -> float | None:
@@ -629,24 +456,11 @@ class GcsState:
 
     @property
     def flow_is_live(self) -> bool:
-        """Whether `flow_percent` is the flow somebody actually asked for.
+        """Whether `flow_percent` is a flow somebody asked for: only while water runs.
 
-        **The idle byte is not the flow setting**, and it is not enough to check that it
-        holds still. Two installs, two different-looking failures, same conclusion:
-
-        * Capture corpus: 296 idle words carry a flow nobody selected, in recurring pairs
-          like 34.5 %/82.5 %, collapsing and returning within seconds. Obviously junk.
-        * Controller-free K-28210 pair (2026-09-10): idle bytes of 24.5 % and 26.5 %,
-          byte-identical across reports 2 h 23 m apart — and the owner's panel held
-          **100 %** on both valves throughout. Stable junk, which is the more dangerous
-          kind: it looks like a setting.
-
-        The second was briefly read as evidence that a stable idle byte *is* the stored
-        setting, and 0.6.2 relaxed this flag on that basis. The panel reading disproved it.
-        Stability is not meaning. Anything presenting "the flow setting" must gate on this,
-        or it will show a number nobody chose — and a number that does not move is more
-        convincing, not less.
-
+        An idle valve's flow byte is not the flow setting — it holds the default
+        shower's stored flow (`docs/protocol/gcs_valve.md` §3.4) — so anything
+        presenting "the flow setting" must gate on this.
         """
         word = self.valve1
         if word is None:
@@ -654,12 +468,7 @@ class GcsState:
         return bool(word.outlet_mask) and not word.paused
 
     def _accept_total_flow_raw(self, value: object) -> bool:
-        """Record `totalFlow` verbatim. True if it changed.
-
-        No filtering, because there is nothing coherent to filter — see the field's own note.
-        It is kept solely so a diagnostics report still carries what the cloud sent, which is
-        the evidence for the open question about what this field actually is.
-        """
+        """Record `totalFlow` verbatim, for diagnostics. True if it changed."""
         try:
             reading = float(str(value))
         except (TypeError, ValueError):
@@ -669,18 +478,10 @@ class GcsState:
         return changed
 
     def apply_envelope(self, envelope: Envelope) -> bool:
-        """Apply a GCS message. Returns True if Home Assistant should re-render.
+        """Apply a GCS message. Returns True for every valve message, False otherwise.
 
-        **Every message from the valve advances `last_update`** — whatever its code, whether
-        or not this class knows how to decode it, and whether or not it carried anything new.
-        That is what the sensor means: the last time the device was heard from, which is a
-        liveness signal, not a change feed.
-
-        It used to be set inside three of the four decode handlers, so it only moved for
-        `GCS_SOLO_STS`, `GCS_WARM_STS` and `GCS_PRESET_STS`. Everything else the valve emits —
-        `READ_GCS_OUTLET_CONFIG_CFG`, `READ_GCS_EXPERIENCE_STS`, `GCS_RECIEVED_STS`,
-        `DEVICE_REBOOT_STS`, `READ_GCS_UI_CFG`, the firmware report — left the timestamp
-        stale, so a valve that was plainly talking could look silent for hours.
+        Every valve message advances `last_update`, decoded or not: it means "last heard
+        from" (liveness), not "last changed".
         """
         if envelope.sku != SKU_GCS:
             return False
@@ -696,17 +497,11 @@ class GcsState:
         }.get(envelope.code)
         if handler is not None:
             handler(envelope)
-        # Always True: `last_update` moved, so the sensor has something new to show even when
-        # nothing else did. The handlers' own change flags are subsumed by this.
+        # Always True: `last_update` moved, which subsumes the handlers' change flags.
         return True
 
     def _apply_outlet_config(self, envelope: Envelope) -> bool:
-        """Record the per-outlet flow bounds the valve reports.
-
-        One outlet per message and never on request, so this is opportunistic: it sharpens
-        the flow entity's range once the device happens to announce, and the constants stand
-        in until then.
-        """
+        """Record an outlet record the valve pushed, one outlet per message."""
         changed = False
         for attribute in envelope.attributes:
             if not isinstance(attribute, dict):
@@ -725,31 +520,20 @@ class GcsState:
                 default_flow: int | None = int(str(attribute.get("defaultFlowRate")))
             except (TypeError, ValueError):
                 default_flow = None
-            # `outLetType` is spelled identically on both surfaces — it is one of the three
-            # keys the read/write spelling trap does *not* touch (docs/protocol/gcs_valve.md).
             try:
                 outlet_type: int | None = int(str(attribute.get("outLetType")))
             except (TypeError, ValueError):
                 outlet_type = None
             try:
-                # MQTT reports this in **tenths** already (`450`), unlike REST's display °C
-                # — the same wire/display split as flow. Stored as read.
+                # MQTT reports wire units (tenths of °C), unlike REST.
                 max_temperature: int | None = int(
                     str(attribute.get("maximumOutletTemperature"))
                 )
             except (TypeError, ValueError):
                 max_temperature = None
 
-            # 🚨 **The other three fields of the write record must be carried too.**
-            # This builds a whole `OutletLimits` and *replaces* the stored one, so a field
-            # omitted here is not merely absent from this message — it erases what the REST
-            # seed read. That is what happened in 0.18.0-0.18.2: a successful write makes the
-            # valve announce, the announcement landed without these three, and the *next*
-            # write refused because they were suddenly unknown. One write, then never again
-            # until a reload. Reported 2026-09-11.
-            #
-            # MQTT reports all three with the same key spellings as the write body, and
-            # temperatures already in tenths — no conversion, unlike REST's display °C.
+            # Read every field of the write record: a field left None here would make
+            # the next outlet write refuse (`validate_outlet_record`).
             def _int(key: str, item: dict = attribute) -> int | None:
                 try:
                     return int(str(item.get(key)))
@@ -770,11 +554,8 @@ class GcsState:
                 _text(attribute, "maxVolume"),
                 _text(attribute, "purge"),
             )
-            # **Merge, do not replace.** A field this message did not carry must keep the
-            # value already learned: `None` means "not learned", and a write refuses on it,
-            # so blanking one here turns a thin announcement into the same
-            # one-write-then-never-again failure the three missing fields caused. Every
-            # capture carries the ten, and the parser must not depend on that.
+            # Merge, do not replace: a field this message lacks keeps the value already
+            # learned, for the same reason.
             known = self.outlet_limits.get(outlet_id)
             if known is not None:
                 limits = replace(
@@ -811,15 +592,11 @@ class GcsState:
         return False
 
     def zone_flow_limits(self, zone: int) -> tuple[int, int]:
-        """Flow bounds for a zone as **byte** values, falling back to the constants.
+        """Flow bounds for a zone as byte values, falling back to the constants.
 
-        Taken from that zone's **first** outlet, matching what the app does — it bounds the
-        slider with `outletConfigurations[0]` of each valve rather than combining outlets.
-
-        A zone the model does not have gets the constants too, rather than the
-        `ValueError` `outlet_id` raises for it: the model can shrink at runtime when the
-        valve's own settings report fewer zones than the entry assumed, and a zone 2 Flow
-        entity built before that still asks for its bounds until the next reload.
+        Taken from the zone's first outlet, as the app bounds its slider. A zone the
+        model lacks also gets the constants: the model can shrink at runtime, and a
+        zone 2 Flow entity still asks until the next reload.
         """
         try:
             outlet_id = self.model.outlet_id(zone, 1)
@@ -831,17 +608,12 @@ class GcsState:
         return limits.minimum_flow_byte, limits.maximum_flow_byte
 
     def _apply_preset(self, envelope: Envelope) -> bool:
-        """Apply a pushed preset record.
+        """Apply a pushed preset record (``docs/protocol/gcs_valve.md`` §7).
 
-        The device pushes one of these on every create, edit, rename, and delete, and all
-        ten slots after a reboot — so nothing has to poll for preset changes. A delete
-        arrives as the same ``presetId`` with an empty name.
-
-        The valve words come from the ``Valve1`` and ``Valve2`` keys — capitalised here, where
-        ``writepreset`` sends them lowercase. A push carrying neither keeps the words already
-        held, the way ``is_experience`` is kept: an absent key says nothing about the words,
-        and dropping them would leave the Shower switch with nothing to send until the next
-        full read.
+        A delete arrives as the same ``presetId`` with an empty name. A push without
+        ``Valve1``/``Valve2`` keeps the words already held, as it keeps
+        ``is_experience``: dropping them would leave the Shower switch with nothing to
+        send.
         """
         changed = False
         slots = range(1, PRESET_ZONE_SLOTS + 1)
@@ -863,8 +635,7 @@ class GcsState:
             preset = GcsPreset(
                 preset_id=preset_id,
                 name=str(attribute.get("name") or "").strip(),
-                # The push carries no experience flag; the REST list does. Preserve what a
-                # previous seed established rather than silently demoting one to a preset.
+                # The push carries no experience flag; keep what the REST list said.
                 is_experience=held.is_experience if held is not None else False,
                 valve_words=valve_words,
             )
@@ -879,22 +650,12 @@ class GcsState:
         )
         if attribute is None:
             return False
-        # **Each word is guarded on its own, and neither guards the rest of the message.** An
-        # absent or garbled word keeps its zone as it was — blanking it would close a zone
-        # that may still be running — while a word that decodes is the valve's answer for
-        # its zone, and the session fields below are its report whatever its words say.
-        # Until 2026-10-16 a bad `primaryValve1` returned here, dropping them too:
-        # `{currentSystemState: "error"}` with no word left `has_fault` False, so a fault the
-        # valve announced never reached the Problem sensor.
-        #
-        # ⚠️ **Not a pair-or-nothing rule.** One was tried on 2026-10-16, because the write
-        # overlay then ended when *either* word object changed, so half a pair let the next
-        # write rebuild the other zone from its stale word. The overlay now narrows zone by
-        # zone (`Valve._valve_baseline`), which makes half a pair safe — and refusing the
-        # good half hid a real answer: a Stop at the panel for zone 1, reported beside a
-        # garbled zone 2 word, was dropped, and the next zone 1 write re-opened it. A
-        # one-zone model reads `primaryValve1` alone: its `secondaryValve1` is the
-        # unused-valve word, and nothing in it says anything about zone 1.
+        # Each word is guarded on its own, and neither guards the rest of the message:
+        # an absent or garbled word keeps its zone as it was (blanking it could close a
+        # running zone), and the session fields below apply whatever the words say.
+        # Don't make it pair-or-nothing: `Valve._valve_baseline` narrows zone by zone,
+        # so half a pair is safe, and dropping the good half would lose a real report
+        # such as a panel Stop. A one-zone model reads `primaryValve1` alone.
         carried: set[str] = set()
         try:
             valve1 = decode_word(str(attribute.get("primaryValve1") or ""))
@@ -942,10 +703,7 @@ class GcsState:
         attribute = envelope.attributes[0] if envelope.attributes else None
         if attribute is None:
             return False
-        # The MQTT message spells this key **all lowercase** (`warmup`), where the REST
-        # `warmUpState` object spells it `warmUp`. Confirmed against 9 captured
-        # GCS_WARM_STS messages, whose only keys are `code` and `warmup`. Matching just the
-        # REST spelling made this handler a no-op and left the mode to the next poll.
+        # MQTT spells the key `warmup`, REST `warmUp` (`docs/protocol/gcs_valve.md` §7).
         mode = (
             attribute.get("warmup")
             or attribute.get("warmUp")
@@ -960,13 +718,8 @@ class GcsState:
     def apply_rest_state(self, payload: dict[str, Any]) -> None:
         """Seed from a ``gcs-state`` read, so entities are populated before any event.
 
-        Every container is type-checked before it is walked. ``or {}`` only rescues the
-        null case: where the cloud sends a list, a string or a number for ``state`` — a
-        schema change, a truncated response, an error body shaped like a success — the
-        ``or`` passes it straight through and ``.get`` raises `AttributeError` inside the
-        REST seed, which fails setup with a traceback rather than a message. Falling back
-        to the pre-seed defaults is the honest response: MQTT is authoritative here and
-        will correct anything this seed misses.
+        Every container is type-checked (``or {}`` would pass a list or string through
+        and fail setup); a malformed one keeps the defaults, which MQTT corrects later.
         """
         state = payload.get("state") if isinstance(payload, dict) else None
         if not isinstance(state, dict):
@@ -979,9 +732,7 @@ class GcsState:
             for bit, key in enumerate(("out1", "out2", "out3")):
                 if str(valve.get(key)) == "1":
                     mask |= 1 << bit
-            # A setpoint or flow that is not a finite number — absent, junk, or the `NaN`
-            # and `Infinity` `float` accepts — takes the same fallback. A NaN setpoint was
-            # stored as read until 2026-10-16, and every write that inherited it raised.
+            # A setpoint or flow that is absent, junk or non-finite takes a fallback.
             celsius = _finite(valve.get("temperatureSetpoint"))
             if celsius is None:
                 celsius = 38.0
@@ -1001,11 +752,6 @@ class GcsState:
             elif self.model.uses_valve2:
                 self.valve2 = word
 
-        # The one container this method's docstring promises to type-check and did not:
-        # `or {}` rescues a null `warmUpState` but hands a list or a string straight
-        # through, and the next `.get` raises `AttributeError` inside the REST seed —
-        # aborting setup with a traceback, which is the exact failure the guards above exist
-        # to prevent. Caught 2026-09-11 by review.
         warm = state.get("warmUpState")
         if not isinstance(warm, dict):
             warm = {}
@@ -1045,8 +791,8 @@ class GcsState:
                 preset_id = int(str(entry.get("presetId")))
             except (TypeError, ValueError):
                 continue
-            # `valveDetails[{valveIndex: "Valve1", hexString}]`, keyed by its index so the
-            # list's order does not matter; an entry with an odd index is skipped.
+            # `valveDetails[{valveIndex: "Valve1", hexString}]`, keyed by its index so
+            # the list's order does not matter; an entry with an odd index is skipped.
             by_valve: dict[int, Any] = {}
             valve_details = entry.get("valveDetails")
             for detail in valve_details if isinstance(valve_details, list) else ():
@@ -1058,8 +804,8 @@ class GcsState:
             presets[preset_id] = GcsPreset(
                 preset_id=preset_id,
                 name=str(entry.get("title") or entry.get("logicalName") or "").strip(),
-                # Kohler sends this as the string "True"/"False", so `bool(value)` would be
-                # true for both.
+                # Kohler sends this as the string "True"/"False", so `bool(value)` would
+                # be true for both.
                 is_experience=str(entry.get("isExperience")).strip().lower() == "true",
                 valve_words=_preset_words(by_valve),
             )
@@ -1071,9 +817,8 @@ class GcsState:
     def selectable_presets(self, hidden: Container[int] = ()) -> list[GcsPreset]:
         """Presets a user may choose, lowest slot first.
 
-        Empty slots and experiences are dropped, plus anything in ``hidden`` — preset 1 is
-        the valve's mandatory default-shower configuration and the Konnect app does not list
-        it either.
+        Drops empty slots, experiences and anything in ``hidden``. Callers hide
+        preset 1, the default shower, as the app does.
         """
         return [
             preset
@@ -1082,7 +827,7 @@ class GcsState:
         ]
 
     def experiences(self) -> list[GcsPreset]:
-        """Stored experiences, lowest slot first. Started like presets; see ``GcsDevice``."""
+        """Stored experiences, lowest slot first; started like presets."""
         return [
             preset
             for _, preset in sorted(self.presets.items())
@@ -1100,14 +845,11 @@ class GcsState:
     def preset_by_name(
         self, name: str, hidden: Container[int] = ()
     ) -> GcsPreset | None:
-        """Resolve a preset by name, case-insensitively.
+        """Resolve a preset by name, case-insensitively, at call time.
 
-        Names are resolved **at call time** rather than a remembered id, because a deleted
-        slot is reused: a cached id stays valid while pointing at a different scene.
-
-        Takes the same ``hidden`` set as :meth:`selectable_presets` deliberately — a name
-        that cannot be offered must not be resolvable either, or a caller can reach a preset
-        the UI hides.
+        Never cache the id: a deleted slot is reused for a different preset. Takes the
+        same ``hidden`` set as :meth:`selectable_presets`, so a hidden preset cannot be
+        reached by name.
         """
         wanted = name.strip().lower()
         for preset in self.selectable_presets(hidden=hidden):
@@ -1119,9 +861,8 @@ class GcsState:
 def _light_key(attribute: dict[str, Any]) -> str:
     """One light group's key, the same whichever surface named it.
 
-    MQTT names a group by ``component`` (``lightgroupA``) and REST by ``name`` (``groupA``,
-    or a display name). Both reduce to the bare letter, so a REST seed and a later push for
-    the same group land on one entry instead of two that disagree.
+    MQTT names a group by ``component`` (``lightgroupA``) and REST by ``name``
+    (``groupA``, or a display name); both reduce to the bare letter.
     """
     raw = str(attribute.get("component") or attribute.get("name") or "light")
     text = raw.strip().lower().replace(" ", "").replace("_", "")
@@ -1145,10 +886,8 @@ class HubZone:
 class HubState:
     """Live state of one Anthem Plus system controller.
 
-    Note the HUB's view of a valve-driven session is unreliable: measured across 95 such
-    episodes, 51 were reported immediately, 12 late, and 32 never — with preset-driven
-    openings never reported at all (0 of 15). On an account that also has a GCS device,
-    read outlets from the valve instead; see :func:`~.models.resolve_outlet_source`.
+    Its view of valve-driven sessions is unreliable; on an account with a GCS device,
+    read outlets from the valve (:func:`~.models.resolve_outlet_source`).
     """
 
     model: ValveModel
@@ -1156,43 +895,34 @@ class HubState:
     zones: dict[int, HubZone] = field(default_factory=dict)
     music_on: bool | None = None
     steam_on: bool | None = None
-    # `STEAM_STS` `status` as sent — `ON`, `OFF`, or `POWERCLEAN` while the generator cleans
-    # itself. `steam_on` stays a strict on/off; this keeps the third state visible.
+    # `STEAM_STS` `status` as sent — `ON`, `OFF`, or `POWERCLEAN` while the generator
+    # cleans itself. `steam_on` stays a strict on/off; this keeps the third state
+    # visible.
     steam_status: str | None = None
-    # Steam detail from `STEAM_STS` / `hub-state.hubSteamState`. Strings as sent: the
-    # temperature is in °F on every surface the app reads, and the times are as the
-    # controller formats them. None until reported.
+    # Steam detail from `STEAM_STS` / `hub-state.hubSteamState`, strings as sent (°F,
+    # and times as the controller formats them). None until reported.
     steam_temperature: str | None = None
     steam_start_time: str | None = None
     steam_total_time: str | None = None
-    # Per light group, keyed by `_light_key` (`a`, `b`, `c`). `LIGHT_STS` arrives one group
-    # per message, so the single `light_on` this used to keep was whichever group reported
-    # last: "group A on" followed by "group B off" read as off. `light_on` is now derived.
+    # Per light group, keyed by `_light_key` (`a`, `b`, `c`), because `LIGHT_STS`
+    # carries one group per message. `light_on` is derived from it.
     lights: dict[str, bool] = field(default_factory=dict)
-    # The running controller experience's title, from `SHOWER_EXP_STS` / `STEAM_EXP_STS` /
-    # `ICE_SHOWER_EXP_STS`; None when none is running.
+    # The running controller experience's title, from `SHOWER_EXP_STS` / `STEAM_EXP_STS`
+    # / `ICE_SHOWER_EXP_STS`; None when none is running.
     active_experience: str | None = None
     # Fault flags. `error_components` merges `hub-state.errorComponent` (amplifier, hub,
-    # light, steam, valve1, valve2) with the per-message `errorstate` the accessory messages
-    # carry; `error` is the controller's own top-level `errorState`.
+    # light, steam, valve1, valve2) with the per-message `errorstate` the accessory
+    # messages carry; `error` is the controller's own top-level `errorState`.
     error: bool | None = None
     error_components: dict[str, bool] = field(default_factory=dict)
     active_favorite_id: str | None = None
-    # The running favorite's name, as `FAVORITE_STS` reports it. Kept beside the id because
-    # the message carries both, and the name is usable before the favorites list has been
-    # seeded — see `_apply_favorite`.
+    # The running favorite's name, from `FAVORITE_STS`; see `_apply_favorite`.
     active_favorite_name: str | None = None
     favorites: list[dict[str, Any]] = field(default_factory=list)
     last_update: float | None = None
-    # Whether the controller is running a warm-up cycle. Carried on `SHOWER_VALVE_STS` at the
-    # `data` level rather than inside `attributes`, so it is per-message, not per-zone.
-    #
-    # Observed 9 times in 260 captured `SHOWER_VALVE_STS` messages, and **every one of those
-    # nine also had both zones ON** — warm-up runs water, exactly as on the valve. That is
-    # why anything presenting this must rank it above "running": reporting a warm-up as an
-    # ordinary shower hides why the water started with nobody there.
-    #
-    # None until a message or a read says otherwise; absent from every other HUB message.
+    # Whether the controller is running a warm-up, from `SHOWER_VALVE_STS` `data` (not
+    # per zone). Warm-up runs water, so anything presenting this must rank it above
+    # "running". None until reported.
     shower_warmup: bool | None = None
 
     @property
@@ -1232,8 +962,8 @@ class HubState:
     def _note_errorstate(self, envelope: Envelope, component: str) -> None:
         """Record an accessory message's `errorstate` ("1" = fault) under ``component``.
 
-        For the shower valve the component is per zone — `valve1` / `valve2` — matching the
-        `errorComponent` keys REST uses, so the two sources share one map.
+        For the shower valve the component is per zone — `valve1` / `valve2` — matching
+        the `errorComponent` keys REST uses, so the two sources share one map.
         """
         for attribute in envelope.attributes:
             if not isinstance(attribute, dict):
@@ -1250,16 +980,12 @@ class HubState:
     def apply_envelope(self, envelope: Envelope) -> bool:
         """Apply a HUB message. True for every HUB message, False for anything else.
 
-        Same contract as :meth:`GcsState.apply_envelope`: every message from the
-        controller advances ``last_update`` whether or not this class decodes it, because
-        that timestamp means "last heard from", not "last changed" — so there is always
-        something new to render and the handlers' own change flags are subsumed.
+        Same contract as :meth:`GcsState.apply_envelope`: every message advances
+        ``last_update``.
         """
         if envelope.sku != SKU_HUB:
             return False
-        # Before dispatch, for the same reason as the valve: the controller emits plenty this
-        # class does not decode — `SYSTEM_STS`, `STATUS_SNAPSHOT`, `LUMIWAVE_STS` and the
-        # four `*_EXP_SNAPSHOT` codes — and every one of them is proof it is alive.
+        # Before dispatch: undecoded codes are proof of life too.
         self.last_update = envelope.received_at
         handler = {
             MSG_HUB_SHOWER_VALVE: self._apply_valve,
@@ -1278,8 +1004,7 @@ class HubState:
     def _apply_valve(self, envelope: Envelope) -> bool:
         changed = False
         self._note_errorstate(envelope, "valve")
-        # `showerwarmup` sits beside `attributes` under `data`, not within it. Note the
-        # casing: MQTT sends `showerwarmup`, the REST read sends `showerWarmUp`.
+        # `showerwarmup` sits under `data`, beside `attributes` (REST: `showerWarmUp`).
         data = envelope.raw.get("data")
         warmup = _flag(data.get("showerwarmup") if isinstance(data, dict) else None)
         if warmup is not None and warmup != self.shower_warmup:
@@ -1292,12 +1017,9 @@ class HubState:
             count = (
                 self.model.outlets_valve1 if number == 1 else self.model.outlets_valve2
             )
-            # Same guard as the REST path, and for the same two reasons. `outlet_flags`
-            # indexes positionally, so a string `"110"` decomposes into truthy characters
-            # and reads as **every outlet running** — wrong state with no error at all. And
-            # an int raises `TypeError` on `len()`: not hypothetical, since
-            # `docs/protocol/hub_controller.md` records Kohler serving `"outlets": 2` as a *count*
-            # elsewhere in the same API. The REST sibling had this guard; this one did not.
+            # Only a list: `outlet_flags` indexes positionally, so a string would read
+            # as every outlet running, and an int (the API serves `outlets` as a count
+            # elsewhere, `docs/protocol/hub_controller.md` §1) would raise.
             outlets = attribute.get("outlets")
             zone = HubZone(
                 status=_zone_status(attribute.get("status")),
@@ -1307,16 +1029,9 @@ class HubState:
                 temperature=attribute.get("temperature"),
                 flowrate=attribute.get("flowrate"),
             )
-            # **Merge, do not replace** — the same hazard `_apply_outlet_config` carried
-            # until 0.18.3, in the other direction. A message that omits `temperature` or
-            # `flowrate` would blank what an earlier one reported, and
-            # `ControllerZoneTemperatureSensor` goes unavailable on a None. Every captured
-            # `SHOWER_VALVE_STS` carries all four keys, but this stream is documented as
-            # coalescing snapshots and skipping windows (`docs/protocol/hub_controller.md` §5), so
-            # depending on that shape is the assumption that just cost a release.
-            #
-            # `status` and `outlets` are always rebuilt: they are what the message is *for*,
-            # and `outlet_flags` already returns a full list rather than None.
+            # Merge, do not replace: a message without `temperature` or `flowrate` keeps
+            # the earlier value (`ControllerZoneTemperatureSensor` goes unavailable on
+            # None). `status` and `outlets` are always rebuilt.
             known = self.zones.get(number)
             if known is not None:
                 if zone.temperature is None:
@@ -1340,9 +1055,7 @@ class HubState:
         return None
 
     def _apply_music(self, envelope: Envelope) -> bool:
-        # Music telemetry is on/off only — confirmed by Konnect 3.0.6, whose `MUSIC_STS`
-        # model carries nothing beyond status and the error pair. Source, volume, and track
-        # are not reported on either channel unless a favorite is driving it.
+        # `MUSIC_STS` is on/off only (`docs/protocol/hub_controller.md` §5).
         self._note_errorstate(envelope, "amplifier")
         value = self._status_flag(envelope, "amplifier")
         changed = value is not None and value != self.music_on
@@ -1351,10 +1064,9 @@ class HubState:
         return changed
 
     def _apply_steam(self, envelope: Envelope) -> bool:
-        """`STEAM_STS` — status, plus the temperature and timer the app's model carries.
+        """`STEAM_STS`: status, temperature and timer.
 
-        ``POWERCLEAN`` is neither ON nor OFF, so ``_status_flag`` drops it and `steam_on`
-        keeps its last value; `steam_status` records it so the state is not lost.
+        ``POWERCLEAN`` is recorded in `steam_status`, and turns `steam_on` off.
         """
         self._note_errorstate(envelope, "steam")
         before = (
@@ -1404,10 +1116,10 @@ class HubState:
         return before != self.lights
 
     def _apply_experience(self, envelope: Envelope) -> bool:
-        """`*_EXP_STS` — `{code, name, ready, status}`: which experience, if any, is running.
+        """`*_EXP_STS` `{code, name, ready, status}`: the experience running, if any.
 
-        An `OFF` clears only the experience it names, so a late stop for one program cannot
-        wipe out the start of the next.
+        An `OFF` clears only the experience it names, so a late stop for one program
+        cannot wipe out the start of the next.
         """
         before = self.active_experience
         for attribute in envelope.attributes:
@@ -1422,61 +1134,22 @@ class HubState:
         return before != self.active_experience
 
     def _apply_favorite(self, envelope: Envelope) -> bool:
-        """Track which favorite is running, from `FAVORITE_STS`.
+        """Track which favorite is running, from `FAVORITE_STS` ``{id, name, status}``.
 
-        ⚠️ **This message carries `id` / `name` / `status` inside its attributes, and never
-        `favoriteid`.** That key is real, but it belongs to the *accessory* messages —
-        `MUSIC_STS`, `LIGHT_STS` and `STEAM_STS` each carry top-level `favoriteid` and
-        `experienceid`. An earlier version of this method read `favoriteid` here, so it
-        resolved to `None` on every message, `active_favorite_id` was permanently unset, and
-        the controller's Favorite dropdown snapped back to `Off` the moment any other
-        message arrived. Corrected 2026-08-21 against a live activation.
+        The only message that speaks for the favorite: the accessory messages'
+        `favoriteid` attributes one component, which a favorite need not include
+        (`docs/protocol/hub_controller.md` §5). It is read here only as a fallback key.
 
-        ⚠️ **Nor are those a substitute — they answer a different question.** An accessory's
-        `favoriteid` is attribution for *that component*: "the music playing right now was
-        started by favorite 2". Whether favorite 2 is still running is not the same thing,
-        because **a favorite is a composite and its components are optional** — it bundles
-        `water`, `steam`, `music` and `light`, and carries only what the owner put in it and
-        what the hub is wired to. So:
+        Start and stop carry the same id and differ only in `status`; a missing `status`
+        counts as ON (prefer showing a favorite over hiding one). An `OFF` clears only
+        the favorite it names, or anything when it names ``"0"``, because a switch
+        between favorites sends the stop and the start in either order. One message can
+        carry both, so the scan continues past a stop to the first `ON` for a favorite
+        it did not just stop. `_apply_experience` has the same guard.
 
-        * A favorite with no music never appears in `MUSIC_STS` at all. Four of this
-          account's six favorites carry no music; watching `favoriteid` would report nothing
-          running while the shower is on.
-        * Attribution drops before the favorite does. Measured 2026-08-21, `MUSIC_STS` went
-          to `favoriteid: "0"` at 07:23:59.150Z, **0.6 s before** `FAVORITE_STS` reported the
-          favorite itself `OFF` at 07:23:59.766Z.
-
-        `FAVORITE_STS` is the one message that speaks for the favorite. See
-        `docs/protocol/hub_controller.md` §1 for the component table and the three different ways an
-        absent component is spelled.
-
-        **`status` matters as much as `id`.** Start and stop carry the *same* id and differ
-        only in `status`, so keying on the id alone would latch the dropdown on forever::
-
-            {"id": "1", "name": "Hair Wash", "status": "ON"}    <- activated
-            {"id": "1", "name": "Hair Wash", "status": "OFF"}   <- stopped, 96 s later
-
-        A missing `status` is treated as ON, the same direction of error as `_name_of` and
-        the `isExperience` filter in `select.py`: prefer showing a favorite over hiding one.
-
-        **An `OFF` clears only the favorite it names**, or whatever is showing when it names
-        ``"0"``, which is nothing running. Switching favorites starts one and stops the
-        other, and the two messages are not ordered: a late ``{"id": "1", "status": "OFF"}``
-        used to reset the dropdown while favorite 2 ran. `_apply_experience` has the same
-        guard.
-
-        **A stop does not end the scan** (2026-10-16). The switch can also arrive as one
-        message, the old favorite's `OFF` followed by the new one's `ON`, and breaking at the
-        `OFF` dropped the `ON`: the dropdown showed `Off` while favorite 2 ran. The scan goes
-        on to the first `ON` for a favorite this message did not just stop — a trailing
-        `ON` for the stopped one still cannot resurrect it.
-
-        The name travels with the message, which is why it is kept — it lets the dropdown
-        show a running favorite before the favorites list has been seeded.
-
-        ⚠️ **Nothing corrects a stop the stream missed.** `hub-state` carries no favorite, so
-        neither the REST seed nor a reconnect's reseed says which one is running: an `OFF`
-        lost in a gap leaves the last favorite showing until the next `FAVORITE_STS`.
+        The name is kept so a running favorite shows before the favorites list is
+        seeded. ⚠️ Nothing corrects a missed stop: `hub-state` carries no favorite, so
+        the last one shows until the next `FAVORITE_STS`.
         """
         favorite_id: str | None = None
         name: str | None = None
@@ -1487,19 +1160,19 @@ class HubState:
         for attribute in envelope.attributes:
             if not isinstance(attribute, dict):
                 continue
-            # `favoriteid` accepted only as a fallback, for a firmware that might use the
-            # accessory messages' spelling here. Live traffic uses `id`.
+            # `favoriteid` only as a fallback; live traffic uses `id`.
             identifier = attribute.get("id") or attribute.get("favoriteid")
             if identifier is None:
                 continue
             if str(attribute.get("status") or "").strip().upper() == "OFF":
-                # An explicit stop. The scan continues, for a start later in the message.
+                # An explicit stop. The scan continues, for a start later in the
+                # message.
                 off = str(identifier)
                 stopped.add(off)
                 if running[0] in (None, off) or off in {"0", ""}:
                     running = (None, None)
-                # Otherwise a late stop for a favorite that is no longer the one running,
-                # which leaves that one showing.
+                # Otherwise a late stop for a favorite that is no longer the one
+                # running, which leaves that one showing.
                 favorite_id, name = running
                 continue
             if str(identifier) in stopped:
@@ -1523,10 +1196,8 @@ class HubState:
         return changed
 
     def _apply_favorites_snapshot(self, envelope: Envelope) -> bool:
-        # Snapshots carry the whole list and arrive on connect, which is a second, free
-        # answer to cold start alongside the REST seed. An empty one is an answer too —
-        # the controller sends `attributes: []` once its last favorite is deleted — and was
-        # ignored until 2026-10-08, which kept the deleted favorite on offer.
+        # The whole list, replacing the last. An empty one is an answer too: the
+        # controller sends `attributes: []` once its last favorite is deleted.
         favorites = list(envelope.attributes)
         changed = favorites != self.favorites
         self.favorites = favorites
@@ -1535,10 +1206,8 @@ class HubState:
     def apply_rest_state(self, payload: dict[str, Any]) -> None:
         """Seed from a ``hub-state`` read.
 
-        Type-checked the whole way down, for the reason given on the valve's
-        :meth:`GcsState.apply_rest_state`: ``or {}`` rescues null but not a wrong type, and
-        an `AttributeError` raised inside the seed fails setup with a traceback. A
-        malformed container is skipped and its fields keep their defaults.
+        Type-checked like :meth:`GcsState.apply_rest_state`: a malformed container is
+        skipped and its fields keep their defaults.
         """
         if not isinstance(payload, dict):
             return
@@ -1547,8 +1216,7 @@ class HubState:
             return
         shower = state.get("shower")
         for entry in shower if isinstance(shower, list) else ():
-            # `zone_number` reads five different spellings off the entry, so it needs a
-            # mapping; a bare string in the list would raise there rather than here.
+            # `zone_number` needs a mapping.
             if not isinstance(entry, dict):
                 continue
             number = zone_number(entry)
@@ -1560,8 +1228,7 @@ class HubState:
             outlets = entry.get("outlets")
             self.zones[number] = HubZone(
                 status=_zone_status(entry.get("status")),
-                # `outlet_flags` indexes this positionally, so a string would decompose
-                # into truthy characters and read as every outlet running.
+                # Only a list, as in `_apply_valve`.
                 outlets=outlet_flags(
                     outlets if isinstance(outlets, list) else None, count
                 ),
@@ -1603,8 +1270,7 @@ class HubState:
                 flag = _flag(components.get(key))
                 if flag is not None:
                     self.error_components[key] = flag
-        # Top level, beside `state` rather than inside it — and camelCase here, against the
-        # all-lowercase `showerwarmup` MQTT sends for the same thing.
+        # Top level, beside `state` (MQTT: `showerwarmup`).
         warmup = _flag(payload.get("showerWarmUp"))
         if warmup is not None:
             self.shower_warmup = warmup

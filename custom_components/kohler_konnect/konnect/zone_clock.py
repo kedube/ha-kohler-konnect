@@ -2,11 +2,11 @@
 
 The valve stops a zone once it has run for its `maximumRunTime`, and it times the **zone**,
 not the outlet: the clock starts when the zone goes from nothing flowing to something
-flowing, and moving between outlets within the zone does not reset it (live; see
-`docs/protocol/gcs_valve.md`, "Run-time limit"). Nothing on the wire reports the valve's own
-clock, so this keeps one from the messages it sees.
+flowing, and moving between outlets within the zone does not reset it
+(`docs/protocol/gcs_valve.md` §4.1). Nothing on the wire reports the valve's own clock, so
+this keeps one from the messages it sees.
 
-Timing starts when *this process* sees the zone start, so a restart or a reconnect
+Timing starts when this process sees the zone start, so a restart or a reconnect
 mid-shower loses it. `forget` drops the clocks rather than guessing, and readers get None
 until the zone next starts.
 """

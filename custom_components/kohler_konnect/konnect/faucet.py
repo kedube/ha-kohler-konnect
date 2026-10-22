@@ -1,14 +1,10 @@
 """The Sensate and Setra kitchen faucets (SKUs ``SEN`` and ``SET``).
 
-Unlike an Anthem valve, a faucet has plain commands — water on, water off, and a measured
-dispense in litres — and its live state is a small text record rather than a hex word. The
-reads live on :class:`~.client.KohlerClient` beside every other product's; this module holds
-the command surface, the readers for the faucet's own payloads, and the decoding of its MQTT
-messages, which arrive on the same account-wide stream as the showers'.
-
-Everything here was live-verified by the separate ``kohler_sensate`` integration this merged
-into, except where a comment says otherwise. ``docs/protocol/sensate_faucet.md`` is the
-reference, with the Konnect 3.0.6 source for each fact.
+Unlike an Anthem valve, a faucet has plain commands (water on, water off, and a measured
+dispense in litres), and its live state is a small text record rather than a hex word. The
+reads live on :class:`~.client.KohlerClient`; this module holds the commands, the readers
+for the faucet's own payloads, and the decoding of its MQTT messages, which arrive on the
+account-wide stream. ``docs/protocol/sensate_faucet.md`` is the reference.
 """
 
 from __future__ import annotations
@@ -171,8 +167,9 @@ def parse_presets(payload: Any, device_id: str) -> list[FaucetPreset]:
     """One faucet's presets from ``customer-experience``.
 
     The reply lists the presets of every device on the account; the faucet's are in
-    ``sensateExperiences``. Konnect 3.0.6 no longer reads that field, which is why this is
-    only the fallback for `parse_faucet_experiences`.
+    ``sensateExperiences``. The app no longer reads that field
+    (`docs/protocol/sensate_faucet.md` §2.2, R5), so this is only the fallback for
+    `parse_faucet_experiences`.
     """
     items = payload.get("sensateExperiences") if isinstance(payload, dict) else None
     if not isinstance(items, list):
@@ -277,10 +274,8 @@ class FaucetDevice:
         self.device_id = device_id
         #: Sent with every command. The app always sends the device's own SKU.
         self.sku = sku
-        #: The presets the faucet's own list held when it last answered, by id; None until
-        #: it ever has. Kept across restarts by the faucet's coordinator, so a faucet whose
-        #: presets were deleted in the app does not have them back from the account-wide
-        #: stand-in after the next one; see `async_get_presets`.
+        #: Ids of the presets the faucet's own list held when it last answered; None until
+        #: it ever has. Persisted by the faucet's coordinator; see `async_get_presets`.
         self.faucet_preset_ids: frozenset[str] | None = None
         # Whether it has been read since setup, so there are presets to keep.
         self._listed = False
@@ -319,28 +314,19 @@ class FaucetDevice:
         """The faucet's Konnect presets, and which list they came from.
 
         The faucet's own list (``faucet-experience``) is what the app's faucet screen
-        reads. The account-wide ``customer-experience`` list stands in only where the
-        faucet's own cannot be used at all: Kohler refuses the request (a 4xx, such as a
-        404) or answers in a shape this cannot read — and only until the faucet's list has
-        been read since setup. An empty list is an answer — no presets — and is kept: the
-        stand-in cost an account-wide read on every refresh, and its legacy
-        ``sensateExperiences`` field can bring back presets deleted in the app.
+        reads; an empty list means no presets. The account-wide ``customer-experience``
+        list stands in only when Kohler refuses the faucet's list (a 4xx) or answers in a
+        shape this cannot read, and only until the faucet's list has been read since setup.
 
-        Anything else raises, so the caller keeps the presets it read last. Until
-        2026-10-16 any failure — a network error, a timeout, a 5xx — swapped in the stand-in
-        for one refresh, which could hold a deleted 8 L preset in place of the 1.2 L one
-        chosen; "Dispense preset" then fell back to the first preset and poured that.
+        Once the faucet's list has ever answered (before a restart too, which
+        `faucet_preset_ids` remembers), a 404 means it has none left; Kohler answers an
+        empty controller favorites list the same way. The stand-in then shows only the
+        presets the faucet's list last held, because its legacy ``sensateExperiences``
+        field still carries presets deleted in the app.
 
-        Once the faucet's list has ever been read — before a restart too, which
-        `faucet_preset_ids` remembers — a 404 means it has none left: the route exists, and
-        Kohler answers an empty collection with a 404 elsewhere — the controller's saved
-        favorites do exactly that. Any other refusal, or an unreadable reply, raises once
-        the list has been read since setup, and stands in before: after a restart there is
-        nothing read last to keep, and remembering that the list once answered must not
-        leave the presets empty for good if Kohler changes it. **The stand-in then shows only
-        the presets the faucet's list last held** (2026-10-16): its legacy field still
-        carries ones deleted in the app, and one refused read after a restart brought an
-        8 L preset back for "Dispense preset" to pour.
+        Raises KohlerError when there is no usable answer (no reply, a 5xx, throttling, or
+        a refusal or unreadable reply once the list has been read since setup), so the
+        caller keeps the presets it read last.
         """
         try:
             payload = await self._client.async_get_faucet_presets(self.device_id)

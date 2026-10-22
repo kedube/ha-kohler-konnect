@@ -47,8 +47,7 @@ class FaucetDispenseAmount(KohlerFaucetEntity, RestoreNumber):
         data = await self.async_get_last_number_data()
         if data is None or data.native_value is None:
             return
-        # The value may be in the other unit system's unit, so it is kept within this
-        # one's range: 10 mL, restored as US units, showed below their 0.5 fl oz minimum.
+        # The value may be in the other unit system's unit, so clamp it to this one's range.
         unit = HA_UNIT_KEYS.get(str(data.native_unit_of_measurement), "ml")
         ml = to_ml(float(data.native_value), unit)
         profile = self.coordinator.profile

@@ -1,12 +1,9 @@
 """Buttons for the Kohler Konnect integration.
 
-Restart a valve, clear a valve's or a controller's error log (below), and start a new raw
-MQTT capture file. That last exists because the natural way to get a fresh capture — restart
-Home Assistant — costs a full reload and drops the MQTT connection, which nobody wants in
-the middle of a sequence of shower experiments.
-
-Pressing this rolls the file instead: the current one is closed and a new one opened, so each
-experiment lands in its own file rather than being separated by timestamp afterwards.
+Restart a valve, clear a valve's or a controller's error log, and start a new raw MQTT
+capture file. The capture button closes the current file and opens a new one, so each
+experiment gets its own file without restarting Home Assistant and dropping the MQTT
+connection.
 """
 
 from __future__ import annotations
@@ -32,7 +29,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the capture button on whichever device this account has."""
+    """Set up the valve, controller, capture and faucet buttons."""
     coordinator: KohlerKonnectCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
         [ValveRestartButton(coordinator, valve) for valve in coordinator.valves]
@@ -47,11 +44,8 @@ async def async_setup_entry(
         ]
     )
 
-    # The capture covers the whole account rather than one device, so it only needs to live
-    # somewhere findable. The first valve the cloud lists is the primary device where one
-    # exists; a controller-only account gets it on the first controller — one button,
-    # because it is one capture, and a copy per device would be several rows for the
-    # same action.
+    # One capture covers the whole account, so one button: on the first valve, or on the
+    # first controller when the account has no valve.
     if coordinator.valves:
         async_add_entities([ValveNewCaptureButton(coordinator, coordinator.valves[0])])
     elif coordinator.controllers:
@@ -65,18 +59,14 @@ async def async_setup_entry(
 
 
 class ValveRestartButton(KohlerValveEntity, ButtonEntity):
-    """Reboot the valve — the Konnect app's Settings → Restart Product.
+    """Reboot the valve, as the Konnect app's Settings → Restart Product does.
 
-    ``valvereset {reset: "productRestart"}``, the body Konnect 3.0.6 sends. The app asks
-    "Are you sure you want to restart this product?" first and shows "Rebooting Product";
-    a Home Assistant button cannot ask, which is why this one is **disabled by default** —
-    enable it on purpose, from the device page.
+    Sends ``valvereset {reset: "productRestart"}``. Disabled by default because, unlike
+    the app, a button cannot ask for confirmation. It cannot reach a valve that has
+    dropped off the cloud; that one needs a power cycle. App-confirmed only
+    (`docs/protocol/gcs_valve.md` §3).
 
-    🚿 **A restart stops any running water.** It **cannot** bring back a valve that has
-    dropped off the cloud: that valve never receives the command — power-cycle it at the
-    breaker instead.
-
-    Added 2026-10-07; app-confirmed, not yet pressed against hardware by this integration.
+    ⚠️ A restart stops any running water.
     """
 
     _attr_name = "Restart"
@@ -93,13 +83,11 @@ class ValveRestartButton(KohlerValveEntity, ButtonEntity):
 
 
 class ValveClearErrorLogButton(KohlerValveEntity, ButtonEntity):
-    """Clear the valve's error log — the Konnect app's Diagnostics → clear error log.
+    """Clear the valve's error log (``DELETE gcs-diagnostics/{id}``), as the app does.
 
-    ``DELETE gcs-diagnostics/{id}``, as Konnect 3.0.6 sends it. The `Problem` sensor's
-    `active_faults` come from that log, so a fault long over stops showing there; one the
-    valve still has comes back with the log's next read, and its status word is unaffected.
-
-    App-confirmed; not yet pressed against hardware by this integration (2026-10-16).
+    `Problem`'s `active_faults` come from this log, so a fault that has ended stops
+    showing; one the valve still has returns on the next read. The status word is
+    unaffected. App-confirmed only.
     """
 
     _attr_name = "Clear Error Log"
@@ -117,9 +105,8 @@ class ValveClearErrorLogButton(KohlerValveEntity, ButtonEntity):
 class ControllerClearErrorLogButton(KohlerControllerEntity, ButtonEntity):
     """Clear an Anthem Plus controller's error log: ``DELETE hub-diagnostics/{id}``.
 
-    The valve's button, for a controller. Konnect 3.0.6 declares the call, but no screen of
-    the app was found to use it and it has not been tried against a controller, so Kohler
-    may refuse it — which the press then says (2026-10-16).
+    The app declares this call but no screen uses it, and it is untried on hardware; if
+    Kohler refuses it, the press reports that (`docs/protocol/hub_controller.md` §2).
     """
 
     _attr_name = "Clear Error Log"
@@ -137,9 +124,9 @@ class ControllerClearErrorLogButton(KohlerControllerEntity, ButtonEntity):
 
 
 class _NewCaptureMixin:
-    """Roll the raw MQTT capture file. Shared so both device variants behave identically.
+    """Roll the raw MQTT capture file; shared by the valve and controller variants.
 
-    Mixed in ahead of the device base so `_update_device_ids` below wins the MRO.
+    Mixed in ahead of the device base so `_update_device_ids` wins the MRO.
     """
 
     _attr_name = "Start new MQTT capture"
@@ -148,12 +135,7 @@ class _NewCaptureMixin:
 
     @property
     def _update_device_ids(self) -> frozenset[str] | None:
-        """Every message, whichever device sent it: the capture is the whole account's.
-
-        It lives on one device only to be findable, and its attributes describe the one
-        capture file every device's messages go into — so a message from any of them can
-        change them. Scoped to its host device it missed the others' (2026-10-16).
-        """
+        """Every message, from any device: the capture file is account-wide."""
         return None
 
     async def async_press(self) -> None:

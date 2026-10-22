@@ -1,10 +1,9 @@
 """Volume units and quick-dispense amounts, metric or US.
 
-Kohler's API always takes litres. Everything the user sees — the quick-dispense buttons, the
+Kohler's API always takes litres. Everything the user sees (the quick-dispense buttons, the
 dispense-amount number, the last-dispense sensor and the default unit of the ``dispense``
-action — follows the Konnect account's own unit setting (`waterUnits`), as the app does and
-as the water-usage sensors do. The separate faucet integration had its own metric/imperial
-option for this; one setting for the whole account replaced it.
+action) follows the Konnect account's unit setting (`waterUnits`), as the app and the
+water-usage sensors do.
 """
 
 from __future__ import annotations
@@ -17,7 +16,8 @@ from ..const import DISPENSE_MAX_ML
 from ..konnect.usage import is_metric
 
 # Units accepted by the ``dispense`` action, in millilitres per unit. The US customary
-# factors match the ones the Konnect app uses.
+# factors are the exact definitions, which agree with the Konnect app's to six significant
+# figures (`docs/protocol/sensate_faucet.md` §2.3).
 ML_PER_UNIT: dict[str, float] = {
     "ml": 1.0,
     "l": 1000.0,

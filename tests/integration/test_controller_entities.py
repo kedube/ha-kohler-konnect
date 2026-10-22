@@ -27,7 +27,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
-from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
+from homeassistant.util.unit_system import METRIC_SYSTEM, US_CUSTOMARY_SYSTEM
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -654,10 +654,10 @@ async def test_system_status_is_the_controllers_view_without_a_paused_state(
     assert state(hass, STATUS).state == "Idle"
 
 
-async def test_zone_temperature_is_in_the_accounts_unit(
+async def test_zone_temperature_is_read_in_fahrenheit_on_a_fahrenheit_account(
     hass: HomeAssistant, config_entry: MockConfigEntry, kohler: ShowerKohler
 ) -> None:
-    """The controller sends the account's unit, unlike the valve word's Celsius."""
+    """The controller reports °F there (live), unlike the valve word's Celsius."""
     await setup(hass, config_entry)
     assert state(hass, TEMPERATURE).state == STATE_UNKNOWN
 
@@ -674,6 +674,37 @@ async def test_zone_temperature_is_in_the_accounts_unit(
         {"zone": "1", "status": "OFF", "outlets": [0] * 6, "temperature": "--"},
     )
     assert state(hass, TEMPERATURE).state == STATE_UNKNOWN
+
+
+@pytest.mark.parametrize("reported", ["102", "38.9"])
+async def test_zone_temperature_on_a_celsius_account_is_right_in_either_unit(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    kohler: ShowerKohler,
+    reported: str,
+) -> None:
+    """Whether the controller reports °F or °C to a Celsius account is unconfirmed.
+
+    It used to be labelled °C either way, so a °F 102 showed as 102 °C.
+    """
+    hass.config.units = METRIC_SYSTEM
+    kohler.temperature_unit = "Celsius"
+    await setup(hass, config_entry)
+
+    await hub(
+        hass,
+        "SHOWER_VALVE_STS",
+        {
+            "zone": "1",
+            "status": "ON",
+            "outlets": [1] + [0] * 5,
+            "temperature": reported,
+        },
+    )
+
+    temperature = state(hass, TEMPERATURE)
+    assert temperature.attributes["unit_of_measurement"] == "°C"
+    assert float(temperature.state) == pytest.approx(38.9, abs=0.1)
 
 
 async def test_max_shower_duration_is_the_controllers_own_limit(

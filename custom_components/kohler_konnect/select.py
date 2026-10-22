@@ -1,21 +1,16 @@
-"""Favorite and experience selection for the Anthem valve and the Anthem Plus controller.
+"""Selects for the Anthem valve and the Anthem Plus controller.
 
-One dropdown that both **starts** a stored scene and **shows which one is running**, because
-the valve reports the active scene itself (``presetOrExperienceId``) rather than leaving Home
-Assistant to remember what it last sent. A scene started from the Konnect app or the
-touchscreen therefore shows up here too.
+Favorite and experience dropdowns both start a stored scene and show which one is
+running, from what the device reports (``presetOrExperienceId`` on the valve), so a
+scene started from the app or the touchscreen shows here too. Also the valve's warmup
+mode and Max Shower Duration.
 
-**"Favorite" is the user-facing word; "preset" is the protocol word.** The Konnect app calls
-these favorites, so that is what the entity is called. Everything below the entity layer
-keeps Kohler's own vocabulary, because that is what the wire format and the documentation
-use. Note the Anthem Plus *controller* has its own, unrelated favorites — those belong to
-the "Anthem Plus" device, not this one.
+"Favorite" is the app's word and the entity's; "preset" is the protocol's, used below
+the entity layer. The controller's favorites are a separate list on its own device.
 
-⚠️ **The unique id and the state attributes keep the `favourite` spelling**, which the
-entity name carried until 0.21.0. They are identifiers, not display text: moving the id
-would orphan every automation and all recorded history, and renaming `favourite_count` or
-`no_favourites_reason` would break whatever reads them. The name is what the owner sees,
-and it is the only thing that changed.
+⚠️ Unique ids and attributes keep the `favourite` spelling (`*_favourite`,
+`favourite_count`, `no_favourites_reason`); renaming them would orphan automations and
+history.
 """
 
 from __future__ import annotations
@@ -46,36 +41,19 @@ from .entity import KohlerControllerEntity, KohlerValveEntity, outlet_name
 from .faucet.select import add_faucet_selects
 from .konnect import WARMUP_MODES_CURRENT
 
-# Shown when no favorite is driving the valve. A `select` must always have its current
-# option present in the option list or Home Assistant logs an error on every update, and
-# "nothing is running" is a real state that needs a name.
+# Shown when nothing is running. A select's current option must be in its options, or
+# Home Assistant logs an error on every update.
 OPTION_OFF = "Off"
 
 
 class OptimisticOptionMixin:
     """Hold a just-chosen option until the device confirms it, or the grace runs out.
 
-    ⚠️ **Clearing on any coordinator update is not good enough**, and that is what all three
-    selects here did until 2026-08-21. This coordinator pushes an update for *every* message
-    the system sends, so the optimistic value was routinely dropped within milliseconds —
-    while the device still reported the old value — and the dropdown visibly snapped back to
-    the old option before jumping forward again when the real confirmation landed. The owner
-    reported it as "flip flop", and the logs show exactly why:
-
-    * **Warmup.** Selected at 00:21:53, confirmed by the REST readback at 00:21:55.586, MQTT
-      echo at 00:21:56.399. Three coordinator updates inside that window, each one a
-      snap-back.
-    * **Controller favorite.** `FAVORITE_STS` for "Play Music" landed at 07:23:51.575, with
-      `STEAM_STS` at 07:23:50.804 and `MUSIC_STS` at 07:23:51.054 arriving first — two clears
-      before the one message that actually carried the answer.
-
-    So the value is cleared on exactly two things: **the device agreeing**, or **the grace
-    expiring**. A subclass supplies `_device_option`; this supplies `current_option`.
-
-    The grace timer matters more than it looks. Without it a write the device silently
-    ignored would leave the dropdown asserting something untrue until the next coordinator
-    update happened to arrive — and this system has gone quiet for hours at a stretch. One of
-    these dropdowns can start water, so it must not hold a claim it cannot support.
+    The select counterpart of `switch.OptimisticSwitchMixin`, which states the rule:
+    clear only when the device reports the chosen option or `OPTIMISTIC_GRACE_SECONDS`
+    expires, never on an unrelated update. The grace matters here too: these dropdowns
+    can start water, and a write the device ignored must not leave them claiming it
+    worked. A subclass supplies `_device_option`; this supplies `current_option`.
     """
 
     _optimistic: str | None = None
@@ -129,27 +107,22 @@ class OptimisticOptionMixin:
     async def _async_command(self, option: str, action: Awaitable[Any]) -> None:
         """Show ``option`` at once, send ``action``, and hold it until the device agrees.
 
-        Any exit but success clears the guess, **cancellation included** — see
-        `switch.OptimisticSwitchMixin._async_switch`: a cancelled "Off" otherwise read Off
-        for as long as the favorite kept running.
+        Any exit but success, cancellation included, clears the guess; see
+        `switch.OptimisticSwitchMixin._async_switch`.
         """
         self._set_optimistic(option)
         try:
             await action
         except BaseException:
-            # The command failed or was cancelled, so stop showing a state the device may
-            # never reach: its own report is the honest answer now.
+            # Failed or cancelled: show the device's own report again.
             self._clear_optimistic()
             raise
-        # The command was accepted. The device's own confirmation is still in flight — 1.5 s
-        # for a controller favorite, measured — so hold the guess until it lands rather than
-        # dropping it on the next unrelated message.
+        # Accepted; the device's confirmation follows a second or two later.
         self._arm_optimistic_expiry()
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        # The one clear that is always right: the device now reports what was asked for, so
-        # the guess has been overtaken by fact and there is nothing left to hold.
+        # The device now reports what was asked for, so the guess is no longer needed.
         if self._optimistic is not None and self._device_option == self._optimistic:
             self._cancel_optimistic_timer()
             self._optimistic = None
@@ -173,10 +146,8 @@ async def async_setup_entry(
         entities.append(ValveExperienceSelect(coordinator, valve))
         entities.append(ValveWarmupSelect(coordinator, valve))
         entities.append(OutletRunTimeSelect(coordinator, valve))
-    # Each controller keeps its own favorites on a different command surface from the
-    # valve's. Both can exist on one account, on their own devices, which is why they are
-    # separate entities rather than one merged list — and why a second controller gets
-    # its own dropdown rather than a longer one.
+    # Each controller keeps its own favorites, on a different command surface from the
+    # valve's, so each gets its own dropdowns on its own device.
     for controller in coordinator.controllers:
         entities.append(HubFavoriteSelect(coordinator, controller))
         entities.append(HubExperienceSelect(coordinator, controller))
@@ -195,8 +166,6 @@ class FavoriteSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
     def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
         super().__init__(coordinator, valve)
         self._attr_unique_id = f"{self._device_id}_favourite"
-        # Holds the requested option until the valve reports back, matching the outlet
-        # switches. Activation takes 1-2 s on real hardware.
 
     @property
     def _presets(self):
@@ -209,9 +178,8 @@ class FavoriteSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
     def options(self) -> list[str]:
         """``Off`` plus every selectable favorite, lowest slot first.
 
-        Rebuilt from current state on every read, so a favorite added, renamed, or deleted
-        in the Konnect app appears here without a reload — the valve pushes those changes
-        over MQTT.
+        Rebuilt on every read, so a favorite added, renamed or deleted in the app
+        (pushed over MQTT) shows without a reload.
         """
         return [OPTION_OFF] + [preset.name for preset in self._presets]
 
@@ -219,11 +187,8 @@ class FavoriteSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
     def _device_option(self) -> str | None:
         """The running favorite, or ``Off``.
 
-        ``presetOrExperienceId`` is cleared by **both** pause and stop, so a paused session
-        reads as ``Off`` here while the outlet switches still show their assignment. It is
-        also never set by a direct outlet command, so opening an outlet by hand leaves this
-        at ``Off`` with water running — this reports *what started the session*, not whether
-        water is on.
+        ``presetOrExperienceId`` is cleared by pause and stop and never set by a direct
+        outlet command: this says what started the session, not whether water runs.
         """
         state = self._state
         if state is None:
@@ -232,10 +197,8 @@ class FavoriteSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
         if active is None:
             return OPTION_OFF
         preset = state.presets.get(active)
-        # An id we cannot name — a hidden favorite (preset 1, driven by the shower switch),
-        # an experience, or one that arrived before the list did. Reporting an option that
-        # is not in `options` makes Home Assistant log an error on every update, so fall
-        # back rather than inventing an entry.
+        # An id with no option (hidden preset 1, an experience, or one that arrived
+        # before the list) reads Off, since the current option must be in `options`.
         if preset is None or not preset.is_selectable:
             return OPTION_OFF
         if preset.preset_id in PRESET_HIDDEN_IDS:
@@ -244,13 +207,11 @@ class FavoriteSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
 
     @property
     def _experiences(self) -> list[str]:
-        """Names of the stored experiences, which this dropdown leaves to its sibling.
+        """Names of the stored experiences, which the Experience select offers instead.
 
-        Experiences share the id space with favorites via ``presetOrExperienceId`` and start
-        with the same command, but they are firmware programs rather than scenes the owner
-        built, and the app lists them separately — so does this integration, on the
-        **Experience** select. Named here so an automation that asks this entity for one gets
-        pointed at the right place.
+        They share the id space and start command with favorites but are firmware
+        programs, listed separately as in the app. Named here so an automation asking
+        this entity for one is pointed to the right entity.
         """
         state = self._state
         if state is None:
@@ -263,23 +224,19 @@ class FavoriteSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
         if state is None:
             return {}
         attributes: dict[str, Any] = {
-            # The raw id behind the current option, including the ids this entity hides —
-            # useful when the dropdown reads Off but something is clearly running.
+            # The raw id, including hidden ones: useful when this reads Off but
+            # something is running.
             "active_preset_id": state.active_preset_id,
             "favourite_count": len(self._presets),
         }
-        # Experiences share the slot space but cannot be started, so they are named rather
-        # than offered — see `_experiences`. This is *not* the usual reason the dropdown is
-        # empty; see `_empty_reason` below for that.
+        # Named, not offered: the Experience select starts them.
         experiences = self._experiences
         if experiences:
             attributes["experiences"] = experiences
             attributes["experiences_note"] = (
                 "Experiences are started from this valve's Experience select."
             )
-        # **Why the dropdown is empty, when it is.** An `Off`-only picker is
-        # indistinguishable from one that failed to load, and the difference matters:
-        # usually nothing is wrong and no favorite has been created yet.
+        # An Off-only picker otherwise looks like one that failed to load.
         reason = self._empty_reason
         if reason is not None:
             attributes["no_favourites_reason"] = reason
@@ -289,16 +246,10 @@ class FavoriteSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
     def _empty_reason(self) -> str | None:
         """Why `options` holds nothing but `Off`, or None when it holds a favorite.
 
-        A GCS valve has **ten preset slots**, of which slot 1 is the mandatory default
-        shower — hidden here because the Konnect app hides it too, and because it is the
-        Shower switch's business rather than a scene to pick (`PRESET_HIDDEN_IDS`). So a
-        valve on which nobody has created a favorite has every offerable slot empty, and
-        this entity correctly offers nothing. That is the ordinary case, not a fault.
-
-        Written after mistaking exactly this for a bug: diagnostics reported
-        ``selectable: 1`` and the picker still offered nothing, because `selectable`
-        counts before slot 1 is hidden and the picker offers after. Both numbers are now
-        in diagnostics, and this attribute says which case a user is looking at.
+        Slot 1 of the valve's ten is the default shower, hidden as in the app and run by
+        the Shower switch (`PRESET_HIDDEN_IDS`), so a valve with no favorites created
+        offers nothing; that is normal. Diagnostics' `selectable` counts slot 1, so it
+        can read 1 while this offers nothing.
         """
         if self._presets:
             return None
@@ -321,8 +272,8 @@ class FavoriteSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Start the named favorite, or stop the shower.
 
-        Resolved **by name at call time**, never by a remembered id: preset ids are slots
-        that get reused, so a stale id stays valid while pointing at a different scene.
+        Resolved by name at call time, never by a remembered id: slots are reused.
+        ``Off`` goes through `Valve.async_stop_shower`, superseding queued commands.
         """
         if option == OPTION_OFF:
             await self._async_command(OPTION_OFF, self._valve.async_stop_shower())
@@ -333,9 +284,7 @@ class FavoriteSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
             None if state is None else state.preset_by_name(option, PRESET_HIDDEN_IDS)
         )
         if preset is None:
-            # An experience named by an automation reaches here, because `preset_by_name`
-            # only resolves selectable slots. Saying so beats "no such favorite", which
-            # is misleading when the thing plainly exists in the app.
+            # Only selectable slots resolve; say so when the name is an experience.
             if option in self._experiences:
                 raise HomeAssistantError(
                     f"{option!r} is an Anthem experience, not a favorite. Start it from "
@@ -353,15 +302,14 @@ class FavoriteSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
 class ValveExperienceSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
     """Start one of the valve's stored experiences, and show which one is running.
 
-    Experiences are firmware programs — Wake Up, Cool Down, the ice-shower routines — stored
-    in the same slots as favorites (``isExperience: "True"`` in ``gcs-preset``) and started
-    with the **same** ``controlpresetorexperience {preset, action}`` body: that is what
-    Konnect 3.0.6's current screens send for an experience id (17 and up).
+    Experiences are firmware programs (Wake Up, Cool Down, the ice-shower routines)
+    stored beside the favorites in ``gcs-preset`` (``isExperience: "True"``, ids 17 and
+    up) and started with the same ``controlpresetorexperience {preset, action}`` body,
+    as Konnect 3.0.6 sends it.
 
-    ⚠️ **App-confirmed, not yet live-verified here.** Until 2026-10-07 this integration held
-    that the valve ignores the command for an experience, on no recorded test, and offered
-    none. If the valve does ignore it on some firmware, the dropdown falls back to ``Off``
-    once the grace runs out, because the valve never reports the experience as running.
+    Starting is live-verified; stopping is app-confirmed only
+    (`docs/protocol/gcs_valve.md` §10). If a valve ignores the command, the dropdown
+    falls back to ``Off`` once the grace runs out.
     """
 
     _attr_icon = "mdi:creation"
@@ -402,8 +350,8 @@ class ValveExperienceSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEnti
         if option == OPTION_OFF:
             running = self._running()
             if running is None and (pending := self._pending_option()) is not None:
-                # Started a moment ago and not yet confirmed: that is the one to stop, or
-                # it starts after this "Off" was quietly ignored.
+                # Started a moment ago, not yet confirmed: stop that one, or it would
+                # start after this Off was ignored.
                 state = self._state
                 running = None if state is None else state.experience_by_name(pending)
             if running is None:
@@ -426,39 +374,25 @@ class ValveExperienceSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEnti
 
 
 class ValveWarmupSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
-    """The valve's warmup mode — the dropdown, and the state, are the mode itself.
+    """The valve's warmup mode, with ``Off`` as one of the choices.
 
-    Warmup runs water up to temperature before the session proper. This entity is the
-    **mode**: which warmup the valve will do, with ``Off`` as one of the choices. It is not
-    whether a warm-up is happening at this instant — those are two independent axes in the
-    device's own state (``warmUpState.warmUp`` vs ``warmUpState.state``), and a control bound
-    to the second reads "off" almost always, because a warm-up is over in seconds. "Warming
-    Up" is reported by the valve Status sensor; both axes appear in the attributes here.
+    The mode (``warmUpState.warmUp``), not whether a warm-up runs now
+    (``warmUpState.state``, shown by `System Status`); both are attributes.
 
-    **Three options** — ``Off``, ``All Outlets``, ``Started Outlets``, all with no start
-    delay. These are the three modes the current Konnect app can write, but the labels are
-    this integration's own since 2026-08-21 and no longer echo the app's wording; see
-    ``WARMUP_LABELS`` in ``const.py``. Which outlets ``Started Outlets`` refers to is not
-    exposed by any cloud API: it is per-zone `warmupOutlets` on the controller's local API,
-    so this dropdown chooses the *mode* and the selection itself is configured on the device.
+    Three options, all with no start delay: the modes the app writes, under this
+    integration's labels (`WARMUP_LABELS`). Which outlets ``Started Outlets`` warms is
+    set on the device; no cloud API exposes it.
 
-    ⚠️ **A valve can hold a mode this list does not offer.** Two legacy delayed-start values
-    still parse in firmware. If the valve reports one, it is appended to the options for as
-    long as it is in force, so the entity reports the truth rather than an error — but it is
-    never on the menu otherwise, because nothing establishes what their delay does.
+    ⚠️ A valve can hold one of two legacy delayed-start modes. It joins the options
+    while in force, so the state is truthful, but is never offered otherwise: nothing
+    defines its delay.
 
-    ⚠️ **The Anthem Plus hub sets this back to Off on every signed-in use of its web UI.**
-    Solved 2026-08-21: a fixed routine in the hub's firmware writes ``warmUpDisabled`` on
-    every login/UI action — a PIN sign-in alone is enough — and no setting reachable from
-    outside the hub prevents it. **If this dropdown moves to Off on its own, someone used
-    the hub's web UI**; the Warmup Auto-Restore switch is the mitigation. See
-    `docs/protocol/gcs_valve.md` §5.
+    ⚠️ An Anthem Plus controller's web UI sets this to Off on every signed-in use; the
+    Warmup Auto-Restore switch mitigates it (`docs/protocol/gcs_valve.md` §5).
 
-    The value here is the REST field, `warmUpState.warmUp` — read at setup, on every MQTT
-    reconnect, and again after every write, because a 200 from the cloud is not evidence the
-    valve applied anything. The device's `GCS_WARM_STS` push corrects it too; measured
-    2026-08-20, that echo lands **3.42 s** after the write and the REST field catches up on
-    about the same schedule, which is why the confirmation is retried rather than read once.
+    Read at setup, on every reconnect and after every write, since a 200 from the cloud
+    does not mean the valve applied it; the valve's `GCS_WARM_STS` echo, a few seconds
+    after a write, corrects it too.
     """
 
     _attr_icon = "mdi:thermometer-water"
@@ -476,10 +410,9 @@ class ValveWarmupSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
 
     @property
     def options(self) -> list[str]:
-        """The three current modes, plus whatever the valve is holding if it is not one.
+        """The three current modes, plus the valve's mode if it is not one of them.
 
-        Home Assistant logs an error on every update when `current_option` is absent from
-        this list, so a mode we would never write still has to appear while it is in force.
+        A `current_option` missing from this list logs an error on every update.
         """
         labels = [WARMUP_LABELS[mode] for mode in WARMUP_MODES_CURRENT]
         held = self._mode
@@ -491,8 +424,7 @@ class ValveWarmupSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
     def _device_option(self) -> str | None:
         mode = self._mode
         if mode is None:
-            # Never announced. `Off` would be a guess, and the wrong one to show for a
-            # setting somebody may be trying to confirm is on.
+            # Never reported. `Off` would be a guess.
             return None
         return WARMUP_LABELS.get(mode, mode)
 
@@ -506,12 +438,8 @@ class ValveWarmupSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
             "warmup_mode": state.warmup_mode,
             "warmup_in_progress": state.warmup_in_progress,
         }
-        # **A valve that has never reported a mode is not the same as one set to Off**, and
-        # the difference is not otherwise visible: both read blank here. Seen on a
-        # controller-free K-28210 pair where one valve reports `warmUpDisabled` and the
-        # other reports nothing at all — no `warmUpState` in its REST seed and no
-        # `GCS_WARM_STS` since. A write to such a valve is accepted by the cloud with
-        # HTTP 200 and may simply be ignored, which looks identical to it working.
+        # A valve can report no mode at all (no `warmUpState`, no `GCS_WARM_STS`), and
+        # the cloud accepts a write to it with HTTP 200 whether or not it applies it.
         if state.warmup_mode is None:
             attributes["mode_never_reported"] = True
             attributes["note"] = (
@@ -525,9 +453,8 @@ class ValveWarmupSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Write the mode behind the chosen label.
 
-        Optimistic like the favorite selector: the valve echoes the new mode back as a
-        `GCS_WARM_STS` message, and that echo is the only real confirmation there is — a 200
-        from the cloud means the command was accepted, never that the valve applied it.
+        Optimistic: the valve's `GCS_WARM_STS` echo is the real confirmation; a 200 from
+        the cloud only means the command was accepted.
         """
         mode = next(
             (value for value, label in WARMUP_LABELS.items() if label == option), None
@@ -539,33 +466,23 @@ class ValveWarmupSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
                 f"{option!r} is a legacy mode this integration does not write. It is listed "
                 "only because the valve is currently holding it."
             )
-        # `async_set_warmup` reads the mode back and applies it, so in the normal case the
-        # device agrees by the time this returns and the next coordinator update clears the
-        # guess. The expiry only matters for the case that call warns about: the cloud
-        # accepting a command the valve then ignores.
+        # `async_set_warmup` reads the mode back, so the device normally agrees by the
+        # time this returns; the expiry covers a command the cloud accepts and the valve
+        # ignores.
         await self._async_command(option, self._valve.async_set_warmup(mode))
 
 
 class HubFavoriteSelect(OptimisticOptionMixin, KohlerControllerEntity, SelectEntity):
     """Start a stored controller favorite, and show which one is running.
 
-    The controller's equivalent of the valve's preset picker, and its **only** unit of
-    control: there is no "set temperature and outlets now" command on this device — you
-    create a favorite holding that configuration and activate it.
+    Favorites are the controller's only unit of control: it has no "set temperature and
+    outlets now" command. Unlike the valve's slots, favorite ids are reassigned when one
+    is deleted, so they are resolved by name at call time. Editing is refused while the
+    system runs (``statusCode 902``); activating is allowed at any time.
 
-    Two differences from the valve side worth knowing:
-
-    * **Favorite ids are genuinely reassigned.** Deleting one shifts the others, confirmed
-      by an `AllOff-omit` moving from id 6 to id 5 between two reads. GCS presets are fixed
-      slots; these are a list. So resolving by name at call time is not a nicety here, it is
-      the only correct approach.
-    * **Editing is blocked while the system runs** (HTTP 400, `statusCode 902`), though
-      *activating* is allowed at any time. That is why the practical pattern is one
-      favorite per state, switched by activation.
-
-    Options come from the favorites list, which is seeded over REST and then kept current
-    by ``FAVORITES_SNAPSHOT`` — the controller pushes a full list after every create, edit,
-    and delete, so the dropdown follows the app without a reload.
+    Options are seeded over REST and kept current by ``FAVORITES_SNAPSHOT``, which the
+    controller pushes after every create, edit and delete. See
+    `docs/protocol/hub_controller.md` §2-§5.
     """
 
     _attr_icon = "mdi:playlist-star"
@@ -579,13 +496,9 @@ class HubFavoriteSelect(OptimisticOptionMixin, KohlerControllerEntity, SelectEnt
 
     @staticmethod
     def _name_of(favorite: dict) -> str:
-        """The favorite's name, from whichever key this source happens to use.
+        """The favorite's name: ``title`` over REST, ``name`` in ``FAVORITES_SNAPSHOT``.
 
-        **The two sources disagree, and the list is fed by both.** REST ``hub-favorites``
-        returns ``title`` with no ``name``; MQTT ``FAVORITES_SNAPSHOT`` returns ``name`` with
-        no ``title`` — same ids, same favorites, different key. Since the REST seed is later
-        replaced wholesale by snapshots, reading only one key works until the first snapshot
-        arrives and then silently empties the dropdown.
+        Snapshots replace the REST seed wholesale, so both keys must be read.
         """
         return str(favorite.get("name") or favorite.get("title") or "").strip()
 
@@ -593,10 +506,8 @@ class HubFavoriteSelect(OptimisticOptionMixin, KohlerControllerEntity, SelectEnt
     def _favorites(self) -> list[dict]:
         """Named favorites only, excluding experiences.
 
-        ``isExperience`` appears in the REST list and marks a firmware program rather than a
-        user scene. It is absent from the MQTT snapshot, so this filters what it can see and
-        treats a missing flag as "not an experience" — the same direction of error as the
-        name fallback above, preferring to show a favorite over hiding one.
+        ``isExperience`` is in the REST list but not the MQTT snapshot, so a missing
+        flag counts as "not an experience": better to show one than hide one.
         """
         return [
             f
@@ -608,10 +519,8 @@ class HubFavoriteSelect(OptimisticOptionMixin, KohlerControllerEntity, SelectEnt
     @property
     def options(self) -> list[str]:
         names = [self._name_of(f) for f in self._favorites]
-        # `FAVORITE_STS` can name a favorite the list has not caught up with — one created
-        # moments ago, or a cold start before the first snapshot lands. Home Assistant logs
-        # an error on every update when `current_option` is missing from `options`, so carry
-        # it while it is in force, the same way `ValveWarmupSelect` carries a legacy mode.
+        # `FAVORITE_STS` can name a favorite the list lacks (just created, or before the
+        # first snapshot); carry it while running, as `ValveWarmupSelect.options` does.
         state = self._state
         running = None if state is None else state.active_favorite_name
         if running and running not in names:
@@ -622,14 +531,10 @@ class HubFavoriteSelect(OptimisticOptionMixin, KohlerControllerEntity, SelectEnt
     def _device_option(self) -> str | None:
         """The running favorite, or ``Off``.
 
-        ``FAVORITE_STS`` reports the active favorite's **name** alongside its id, and the
-        name is preferred: it is right even before the favorites list has been seeded, and
-        it cannot be thrown off by ids being reassigned when a favorite is deleted. The id
-        lookup stays as a fallback for a message that somehow carried no name.
-
-        ``active_favorite_id`` of ``None`` means nothing is driving the system — either a
-        ``status: "OFF"`` message or an id of ``"0"``. An id that resolves to no name falls
-        back to ``Off`` rather than inventing an option.
+        Prefers the name ``FAVORITE_STS`` carries, which is right before the list is
+        seeded and immune to id reassignment; falls back to the id.
+        ``active_favorite_id`` of None (``status: "OFF"`` or id ``"0"``) means nothing
+        runs; an unnamed id reads ``Off``.
         """
         state = self._state
         if state is None:
@@ -637,8 +542,7 @@ class HubFavoriteSelect(OptimisticOptionMixin, KohlerControllerEntity, SelectEnt
         active = state.active_favorite_id
         if active is None:
             return OPTION_OFF
-        # Safe to return directly: `options` carries this name whether or not the favorites
-        # list knows it yet.
+        # Safe: `options` carries this name even before the list knows it.
         if state.active_favorite_name:
             return state.active_favorite_name
         for favorite in self._favorites:
@@ -658,15 +562,13 @@ class HubFavoriteSelect(OptimisticOptionMixin, KohlerControllerEntity, SelectEnt
         }
 
     async def async_select_option(self, option: str) -> None:
-        """Activate the named favorite, or stop everything.
+        """Activate the named favorite, or stop the water.
 
-        Resolved by name at call time. Ids shift when a favorite is deleted, so a
-        remembered one would eventually start the wrong scene.
+        Resolved by name at call time, since ids shift when a favorite is deleted.
         """
         if option == OPTION_OFF:
-            # `valvecontrol OFF`, not `stopall`: this dropdown selects a *water* scene, so
-            # its Off should stop water and leave music, steam, and lighting alone. The
-            # whole-system stop lives on the System switch.
+            # `valvecontrol OFF`, not `stopall`: stop water, leave music, steam and
+            # lighting alone. The System switch stops everything.
             await self._async_command(
                 OPTION_OFF,
                 self.coordinator.async_set_hub_shower(self._controller, False),
@@ -692,15 +594,13 @@ class HubFavoriteSelect(OptimisticOptionMixin, KohlerControllerEntity, SelectEnt
 class HubExperienceSelect(OptimisticOptionMixin, KohlerControllerEntity, SelectEntity):
     """Start one of the controller's experiences, and show which one is running.
 
-    The controller's firmware programs — Breathe, Cool Down, Focus, the steam coaches, the
-    ice showers — listed by ``hub-experience/{id}/experiences`` under three categories, each
-    with its own control endpoint. The command is ``{name: <title>, status}`` on the
-    category's endpoint (``KohlerKonnectCoordinator.async_control_hub_experience`` picks it);
-    run state comes back as ``SHOWER_EXP_STS`` / ``STEAM_EXP_STS`` / ``ICE_SHOWER_EXP_STS``.
-
-    Experiences run from zone 1's first outlet — the app says so — whatever the favorite
-    setup. Added 2026-10-07 from Konnect 3.0.6; the endpoints were already known, the
-    catalogue and the run-state messages were not read until then.
+    The catalogue (Breathe, Cool Down, Focus, steam coaches, ice showers) comes from
+    ``hub-experience/{id}/experiences`` in three categories, each with its own endpoint
+    taking ``{name: <title>, status}``
+    (`KohlerKonnectCoordinator.async_control_hub_experience` picks it). Run state
+    arrives as ``SHOWER_EXP_STS`` / ``STEAM_EXP_STS`` / ``ICE_SHOWER_EXP_STS``.
+    Experiences run from zone 1's first outlet. See
+    `docs/protocol/hub_controller.md` §3.
     """
 
     _attr_icon = "mdi:creation"
@@ -727,8 +627,7 @@ class HubExperienceSelect(OptimisticOptionMixin, KohlerControllerEntity, SelectE
         titles = self._titles
         state = self._state
         running = None if state is None else state.active_experience
-        # Same carry as the favorite picker: a running title the catalogue lacks must still
-        # be a valid option, or Home Assistant logs an error on every update.
+        # Carry a running title the catalogue lacks, like `HubFavoriteSelect.options`.
         if running and running not in titles:
             titles.append(running)
         return [OPTION_OFF, *titles]
@@ -770,23 +669,15 @@ def _duration_label(seconds: int) -> str:
 
 
 class OutletRunTimeSelect(KohlerValveEntity, SelectEntity):
-    """Max Shower Duration — the Konnect app's own six options.
+    """Max Shower Duration: the Konnect app's six options, 15 to 60 minutes.
 
-    **A select rather than a slider, and that is a finding rather than a style choice.**
-    `docs/protocol/gcs_valve.md` left it open whether 3600 s is a ceiling or the top of an allowed list:
-    the app's picker is curated — 15/20/25/30/45/60 minutes — skipping 35, 40, 50 and 55,
-    which are legal multiples of 300 s that no shipped picker can produce. Whether the valve
-    would accept one is untested. Offering exactly what the app offers claims only what is
-    known; a slider would imply the gaps are reachable.
+    A select, not a slider: the app offers only 15/20/25/30/45/60 minutes, and whether
+    the valve accepts the values between (35, 40, 50, 55) is untested, so this offers
+    exactly the app's list. 3600 s is live-verified writable.
 
-    3600 s is live-verified writable (write sweep, 2026-08-21), which is what makes 45 and 60
-    real options rather than guesses.
-
-    ⚠️ **Konnect 3.0.1 misreads anything above 30 minutes.** Its picker snaps the device's
-    value into 15-30 before choosing a wheel index, so a valve set to 45 or 60 displays as 25
-    and a single tap of Save silently writes 1500 s. Fixed in 3.0.5. Choosing a higher value
-    here is safe for the valve and safe in a current app; it is only an out-of-date app that
-    would quietly undo it, which `long_duration_app_warning` says on the entity itself.
+    ⚠️ Konnect 3.0.1 shows anything above 30 minutes as 25, and saving there writes
+    1500 s (fixed in 3.0.5); `long_duration_app_warning` flags such a value. See
+    `docs/protocol/gcs_valve.md` §4.
     """
 
     _attr_entity_category = EntityCategory.CONFIG
@@ -811,12 +702,10 @@ class OutletRunTimeSelect(KohlerValveEntity, SelectEntity):
 
     @property
     def current_option(self) -> str | None:
-        """`None` where the valve holds something the app cannot offer.
+        """None when the valve holds a duration outside the six (2400 s, say).
 
-        A duration outside the six is not an error — 2400 and others are legal and this
-        integration could have written one before the list existed — but reporting it as one
-        of the options would be a lie, and inventing an option would let a save rewrite it.
-        `reported_minutes` publishes the real figure either way.
+        Inventing an option for it would let a save rewrite it; `reported_minutes` has
+        the real figure.
         """
         seconds = self._seconds
         if seconds is None or seconds not in OUTLET_RUN_TIME_CHOICES_SECONDS:
@@ -825,24 +714,19 @@ class OutletRunTimeSelect(KohlerValveEntity, SelectEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """What the valve holds, and whether its outlets agree about it.
+        """What the valve holds, and whether its outlets agree.
 
-        `outlets_agree: false` means **a write was lost**, not that the outlets are
-        configured differently — there is one duration to configure, and the app writes it
-        one outlet at a time, stopping at the first failure. Selecting a duration here
-        rewrites every outlet and repairs it.
-
-        Carried over from the diagnostic sensor this control replaced in 0.18.1: the
-        distinction was established on real hardware (one valve at 3600 s on its Showerhead
-        and 1800 s on the other two) and would have been lost with it.
+        `outlets_agree: false` means a write was lost, not a different configuration:
+        the one duration is written an outlet at a time, stopping at the first failure
+        (`docs/protocol/gcs_valve.md` §4.1). Selecting a duration rewrites every outlet.
         """
         seconds = self._seconds
         run_times = self._valve.outlet_run_times
         attributes: dict[str, Any] = {
-            # Always the truth, including when it is not one of the six above.
+            # The real value, even outside the six options.
             "reported_minutes": None if seconds is None else seconds / 60,
             "in_app_picker": seconds in OUTLET_RUN_TIME_CHOICES_SECONDS,
-            # See the class docstring: only an out-of-date Konnect build is affected.
+            # Above what Konnect 3.0.1 can show; see the class docstring.
             "long_duration_app_warning": (
                 seconds is not None and seconds > OUTLET_RUN_TIME_APP_SAFE_MAX_SECONDS
             ),
@@ -857,9 +741,7 @@ class OutletRunTimeSelect(KohlerValveEntity, SelectEntity):
                 else raw_grouping
             )
             for outlet, value in sorted(run_times.items()):
-                # `outlet_run_times` is 1-based and `outlet_location` expects that — passing
-                # `outlet + 1` here is the off-by-one that made the old sensor raise on every
-                # attribute read and show `unknown` (fixed 0.16.1).
+                # `outlet_run_times` is 1-based, as `outlet_location` expects: no `+ 1`.
                 zone, index = self._valve.model.outlet_location(outlet)
                 name = outlet_name(self._valve, zone, index + 1, grouping=grouping)
                 per_outlet[name] = value / 60

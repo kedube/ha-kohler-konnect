@@ -1,10 +1,9 @@
-"""Water usage history, as Kohler's usage endpoints report it — for every product.
+"""Water usage history, as Kohler's usage endpoints report it, for every product.
 
-Valves read `gcs-usage` and faucets `faucet-usage`. The two take the same query (see
+Valves read `gcs-usage` and faucets `faucet-usage`. Both take the same query (see
 `KohlerClient.async_get_usage`) and return the same kind of bucket list under different
 names and field names, so this reads either into one shape: `intervalKey`, `volume` in
-litres and `onDuration` in seconds. The water sensors then work the same for a shower and a
-faucet.
+litres and `onDuration` in seconds. See `docs/protocol/platform.md` §6.
 """
 
 from __future__ import annotations
@@ -12,10 +11,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
-#: Litres to US gallons. Both endpoints report litres regardless of the account's unit
-#: setting; the Konnect app multiplies by this exact constant when `waterUnits` is
-#: `Standard`. Verified from the app's own bytecode, so it matches what the chart shows to
-#: the last digit rather than being a rounder conversion of our own choosing.
+#: Litres to US gallons: the Konnect app's own constant for `Standard` accounts, so values
+#: match its charts exactly. Both endpoints report litres whatever the account's units.
 GALLONS_PER_LITRE = 0.264172
 
 _VALVE_SERIES = "gcsUsageDataDetailsList"
@@ -25,10 +22,7 @@ _FAUCET_SERIES = "faucetUsageDataDetailsList"
 def is_metric(water_units: str | None) -> bool:
     """Whether an account's `waterUnits` shows litres rather than US gallons.
 
-    The app converts to gallons when the value is `Standard` and shows litres otherwise.
-    The other value is `Metric` — seen live on a Sensate account. Until the faucets merged
-    in, the valve sensors tested for `Liters` instead, which no account sends, so a metric
-    account was shown gallons.
+    The app shows gallons for `Standard` and litres otherwise; the other value is `Metric`.
     """
     return (water_units or "Standard").strip().casefold() != "standard"
 
@@ -39,8 +33,8 @@ def usage_volume_gallons(litres: float) -> float:
 
 
 def _number(value: Any) -> float | None:
-    # Finite only: Python's JSON parser takes a bare `NaN` or `Infinity` as a float, and one
-    # such bucket would make every water total built on it a value Home Assistant refuses.
+    # Finite only: Python's JSON parser accepts a bare `NaN` or `Infinity`, and one such
+    # bucket would make every total built on it a value Home Assistant refuses.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     number = float(value)
@@ -50,9 +44,9 @@ def _number(value: Any) -> float | None:
 def _faucet_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """A `faucet-usage` bucket in the valve's field names.
 
-    Litres are in `waterUsage` — what the app charts — with `quantity` as a stand-in; the
-    bucket's own `volume` field is not something the app reads. `usageDuration` is seconds,
-    which the app divides by 60 for its chart. A negative figure is read as none used.
+    Litres come from `waterUsage`, what the app charts, else `quantity`; the bucket's own
+    `volume` is not read. `usageDuration` is seconds. A negative figure counts as none used.
+    See `docs/protocol/sensate_faucet.md` §2.2, R6.
     """
     litres = _number(entry.get("waterUsage"))
     if litres is None:
@@ -69,14 +63,9 @@ def _faucet_entry(entry: dict[str, Any]) -> dict[str, Any]:
 def usage_series(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
     """The per-period entries from a usage response, oldest first.
 
-    Empty for a malformed or failed read, so a caller can treat "no data" and "the call did
-    not work" the same way — which is right for a diagnostic sensor.
-
-    **For a valve, only `volume`, `onDuration` and `timestamp` are trustworthy.** The app
-    never reads `averageBlendTemperature` or `numberOfTimesValveSwitchedOn` — they have no
-    call sites in its bytecode at all — and the observed temperature values (~78 against real
-    setpoints of 104.9 °F) do not correspond to any plausible unit, so nothing here surfaces
-    them.
+    Empty for a malformed or failed read, so "no data" and "the call did not work" read
+    the same. A valve's `averageBlendTemperature` has no known unit
+    (`docs/protocol/platform.md` §6), so nothing surfaces it.
     """
     if not isinstance(payload, dict):
         return []

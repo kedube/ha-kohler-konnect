@@ -1,87 +1,33 @@
 """Cloud reachability for the Anthem valve — the one fact MQTT cannot carry.
 
-# =====================================================================
-# CLOUD CONNECTION WATCH
-# =====================================================================
-#
-#     grep -rn "CLOUD CONNECTION WATCH" custom_components/kohler_konnect/
-#
-# That finds this module, the constants in `const.py`, the wiring in `coordinator.py`, and
-# the entity in `binary_sensor.py`.
-#
-# =====================================================================
+Grep marker: ``CLOUD CONNECTION WATCH`` (the constants in `const.py`, the wiring in
+`coordinator.py`, the entity in `binary_sensor.py`).
 
-## The problem
+The valve can drop off Kohler's cloud, and stay off until it is power-cycled, while still
+working from the wall. MQTT cannot report this: every message is published by the valve, so a
+disconnect is silence, and the valve is usually silent anyway. (`GCS_SOLO_STS.IoTActive`
+is no help, for the same reason.)
 
-The GCS valve drops off Kohler's cloud on its own, at random, and comes back only when it is
-physically power-cycled. While it is gone the Konnect app shows it as cut off, Home Assistant
-shows nothing at all, and the valve keeps working perfectly from the wall.
+Healthy silences of many hours are normal (`docs/protocol/platform.md` §4.2), so no
+silence threshold separates an outage from a quiet valve. Silence only decides *when* to
+read ``connectionState`` from ``gcs-state`` (`docs/protocol/platform.md` §5); the answer
+comes from that field. The exception: a valve message proves reachability, so it marks a
+valve reported offline reachable without asking, and a ``Disconnected`` from a read sent
+before that message does not undo it.
 
-**MQTT cannot report this, ever.** Every message on that stream is published *by* the valve,
-so a disconnect is silence — and the valve is silent most of the time anyway, because the
-channel is event-driven. `GCS_SOLO_STS.IoTActive` looks purpose-built for the job and is
-useless for the same reason: it read `Active` in 1 020 of 1 020 captured samples, because a
-disconnected device cannot publish a message saying so.
+Two triggers decide when to ask:
 
-## Why there is no silence threshold, and why this module does not use one
+* **A — contradiction** (accounts with a controller): the controller reports a zone
+  ``ON`` and no valve message arrives within :data:`CLOUD_CHECK_PAIR_WINDOW_SECONDS`.
+  ⚠️ Zone ``ON`` only: the controller republishes all-``OFF`` cards with no valve action
+  (for example around favorite activity), so a silent valve after one means nothing.
+* **B — prolonged quiet** (any account with a valve): no valve message for
+  :data:`CLOUD_CHECK_QUIET_SECONDS`, then again on that interval while the quiet lasts.
+  It covers controller-free accounts and outages the controller does not reveal.
 
-Measured across a 19-day capture corpus (2026-08-07 → 08-26):
-
-===========================================================  ===========
-Longest GCS silence provably benign (capture never stopped,
-no reboot, valve answered a command at the end of it)          12 h 02 m
-Longest benign silence observed at all                         35 h 49 m
-The one real outage                                            12 h 22 m
-===========================================================  ===========
-
-The outage is **20 minutes longer than a known-good idle period**. Any threshold low enough
-to catch it fires constantly on healthy quiet, and any threshold high enough to be quiet
-misses it. So neither trigger below decides anything from silence. **Silence only decides
-when to ask.** The answer always comes from `connectionState`, which is ground truth — with
-one exception that runs the other way: a valve message is proof of reachability, so a valve
-reported offline that speaks again is marked reachable without asking, and a `Disconnected`
-from a read sent before it spoke does not undo that (both since 2026-10-16).
-
-## The two triggers
-
-**A — contradiction (needs a HUB).** The controller reports a zone `ON` while the valve says
-nothing. This is the only signal in the corpus that separated the outage from 18 healthy
-days: of 437 zone-`ON` `SHOWER_VALVE_STS` messages, 435 had a valve message within 60 s, and
-**the only 2 that did not are the outage itself** — zero false positives over 435 healthy
-samples. It fires within a minute rather than hours, and costs no network traffic to detect.
-
-⚠️ **Zone `ON` only.** An all-`OFF` card gets republished with no valve action at all: the
-controller emits its whole card set (`MUSIC_STS` + `SHOWER_VALVE_STS` + `STEAM_STS` +
-`FAVORITE_STS` + `LIGHT_STS`) in one second during favorite activity, and every
-`SHOWER_VALVE_STS` in the captured favorite bursts reads `z1:OFF z2:OFF`. The valve owes no
-reply to an unchanged OFF card, so a missing valve message there means nothing. The `OFF`
-variant is not merely noisier — it is evidentially empty.
-
-**B — prolonged quiet (any account with a valve).** Trigger A can only see an outage the
-controller happens to be awake for; measured against the corpus that is 36 % of all silence
-time, and a GCS-only account has no controller at all. So after
-:data:`CLOUD_CHECK_QUIET_SECONDS` with no valve message, ask once, then keep asking on that
-interval while the quiet continues.
-
-## What this is not
-
-**It is not a polling loop.** `SCAN_INTERVAL` stays `None`; nothing here runs on a clock while
-the valve is talking. Trigger A is driven by an arriving message. Trigger B's timer is reset
-by every valve message, so on a normal day it never reaches its deadline — and when it does,
-it is because the thing it watches has actually stopped.
-
-## The earlier `Connection` sensor, and why this is not a repeat of it
-
-An entity reporting `connectionState` existed once and was **deliberately removed** (see
-`binary_sensor.py`). Its stated faults were that it was a fact about the plumbing rather than
-the integration, that it *had no push source so it went stale as soon as polling was removed*,
-and that a valve dropping off the cloud is fixed in the Konnect app rather than here.
-
-The middle one was the real objection and it is the one this module answers: the field still
-has no push source, so instead of polling it, **two push-driven events decide when to read
-it**. The other two did not survive contact with 2026-08-26 — the owner needed exactly this
-fact, and the app is where the problem *appeared*, not where it got fixed. It took a power
-cycle.
+This is not polling: trigger A is driven by arriving messages, and trigger B fires only
+after a full quiet window since the last valve message. ``gcs-state`` reads made for
+other reasons also feed the answer, at no cost (`note_rest_payload`).
 """
 
 from __future__ import annotations
@@ -108,12 +54,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 _LOGGER = logging.getLogger(__name__)
 
-#: The values Kohler's cloud reports, compared case-insensitively. Only ``"Connected"`` has
-#: ever been captured; ``"Disconnected"`` is the negative Konnect 3.0.6 tests for
-#: (`mc0/n.java`, `ui/ota/f.java`), and the app treats a device as online **unless** it reads
-#: exactly that. This module matched only the positive until 2026-10-07, because the
-#: negative was unconfirmed; it now follows the app's rule, so an unfamiliar value no longer
-#: reads as an outage — it is logged once instead.
+#: ``connectionState`` values, compared case-insensitively. As in the Konnect app, a device
+#: is reachable unless it reads ``Disconnected`` (`docs/protocol/platform.md` §5); an
+#: unfamiliar value is logged once.
 CONNECTED = "connected"
 DISCONNECTED = "disconnected"
 
@@ -128,13 +71,12 @@ def _utc_iso(stamp: float | None) -> str | None:
 class CloudConnectionWatch:
     """Decides when to ask Kohler whether the valve is still reachable, and remembers.
 
-    One instance per valve, owned by its :class:`~.coordinator.Valve` — it is that valve's
-    reachability it reports. Trigger A is wired only when the account also has a
-    controller.
+    One per valve, owned by its :class:`~.coordinator.Valve`. Trigger A is wired only when
+    the account also has a controller.
 
-    **Nothing here ever changes valve state.** The only network call is a GET of
-    ``gcs-state``, and its payload is deliberately *not* fed to :class:`GcsState` — see
-    :meth:`_async_check`.
+    ⚠️ Nothing here changes valve state: the only network call is a GET of
+    ``gcs-state``, whose payload is never applied to :class:`GcsState`
+    (see :meth:`_async_check`).
     """
 
     def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
@@ -142,8 +84,8 @@ class CloudConnectionWatch:
         self._valve = valve
         self._hass = coordinator.hass
 
-        # Answer state. `_connected` is None until the first successful read: "we have not
-        # asked" and "it said no" are different answers and must not render the same.
+        # Answer state. `_connected` is None until the first successful read: "not asked"
+        # and "said no" must not render the same.
         self._connected: bool | None = None
         self._reported: str | None = None
         self._checked_at: float | None = None
@@ -152,15 +94,11 @@ class CloudConnectionWatch:
         self._last_error: str | None = None
         # The last unfamiliar `connectionState` logged, so each new one is said once.
         self._unfamiliar: str | None = None
-        # Why `_connected` reads True when Kohler's last answer said otherwise: set when a
-        # valve message overrules a `Disconnected` — one already given, or one from a read
-        # sent before the message — and cleared by the next answer that carries
-        # `connectionState`, unless that is another such out-of-date `Disconnected`. See
-        # `note_gcs_message` and `note_rest_payload`.
+        # Why `_connected` is True although Kohler's last answer said `Disconnected`: a
+        # valve message overruled it (`note_gcs_message`, `note_rest_payload`). Cleared by
+        # the next answer that is not itself out of date.
         self._overruled_because: str | None = None
-        # Present only if Kohler returns it for the valve. `hub-state` carries it; whether
-        # `gcs-state` does is an open question, so this surfaces the answer the first time a
-        # real read happens rather than waiting for someone to probe it by hand.
+        # `lastConnected`, if `gcs-state` carries it.
         self._last_connected_epoch: Any = None
 
         # Clocks. Monotonic for every interval decision, so a system clock step cannot make
@@ -180,15 +118,10 @@ class CloudConnectionWatch:
     def connected(self) -> bool | None:
         """True/False from the last successful read, None before there has been one.
 
-        A failed read does **not** move this. "We could not reach Kohler" is a different
-        fault from "Kohler cannot reach the valve", and collapsing them would report the
-        valve offline every time the WAN hiccups.
-
-        The one thing that moves it without a read is the valve itself speaking after it was
-        reported offline: that message came through Kohler's cloud, so it is reachable. See
-        `note_gcs_message`; `reachable_because` in :attr:`attributes` says when that is why.
-        For the same reason a read sent before the valve last spoke cannot turn it off — see
-        `note_rest_payload`'s ``requested_at``.
+        A failed read does not move this: "we could not reach Kohler" is not "Kohler cannot
+        reach the valve". A valve message after an offline answer sets it True
+        (`note_gcs_message`), and a read sent before that message cannot set it False
+        again (`note_rest_payload`); `reachable_because` in :attr:`attributes` says so.
         """
         return self._connected
 
@@ -208,8 +141,8 @@ class CloudConnectionWatch:
             "cloud_last_connected": self._last_connected_epoch,
             "seconds_since_valve_message": quiet_for,
             "contradiction_watch": bool(self._coordinator.controllers),
-            # None while the verdict is Kohler's own. Set when a valve message overruled a
-            # `Disconnected` above — which `connection_state` still shows verbatim.
+            # None while the verdict is Kohler's own; set when a valve message overruled a
+            # `Disconnected`, which `connection_state` still shows verbatim.
             "reachable_because": self._overruled_because,
         }
 
@@ -239,34 +172,21 @@ class CloudConnectionWatch:
     def note_gcs_message(self) -> None:
         """A valve message arrived: it is reachable, by definition.
 
-        This is the cheapest possible confirmation and it is why the module costs nothing on
-        an active day. It also settles any pending contradiction — a valve message inside the
-        pair window is exactly what trigger A was waiting to see.
+        Settles a pending trigger-A contradiction, and marks a valve reported offline
+        reachable again without a read.
         """
         self._last_gcs_at = time.monotonic()
         if self._pair_cancel is not None:
             self._pair_cancel()
             self._pair_cancel = None
-        # **Armed once, not re-armed per message.** The timestamp above is what decides
-        # whether the valve has gone quiet; the timer only needs to wake up and compare.
-        # Cancelling and rebuilding a three-hour deadline on every message allocated a
-        # `HassJob` and a loop timer handle thousands of times a day to move a deadline that
-        # is checked once — see `_quiet_elapsed`, which now re-arms for the remaining time
-        # rather than firing early.
+        # Armed once, not per message: `_quiet_elapsed` compares against `_last_gcs_at`
+        # and re-arms for the remainder, so no timer is rebuilt on every message.
         if self._quiet_cancel is None:
             self._arm_quiet_timer()
-        # A valve last reported **off** is speaking again — the power cycle that brings it
-        # back. Without this the sensor stayed off until some unrelated read happened by,
-        # which on a quiet account is hours.
-        #
-        # ⚠️ **Marked reachable here, not asked about.** Until 2026-10-16 this requested a
-        # check, and that went through the 30-minute cooldown: a valve power-cycled within
-        # half an hour of the read that found it Disconnected had every boot message's
-        # re-check skipped, then went quiet, and the next ask was trigger B three hours
-        # later. Nothing needs asking — this message was published by the valve through
-        # Kohler's cloud, which is the definition of reachable. It also cannot be our own
-        # outage misread: a message arrived, so our stream is up, and the guards against
-        # that in `_request_check` and `_async_check` are untouched.
+        # ⚠️ A valve reported offline is speaking again (typically after a power cycle).
+        # Marked reachable here rather than checked: a check is subject to the cooldown,
+        # and this message came through Kohler's cloud, which is what reachable means. It
+        # cannot be our own outage misread, since a message arrived.
         if self._connected is False and not self._stopped:
             self._connected = True
             self._overruled_because = (
@@ -287,14 +207,13 @@ class CloudConnectionWatch:
             isinstance(item, dict) and item.get("status") == "ON"
             for item in envelope.attributes
         ):
-            # An all-OFF card is republished without the valve doing anything. See the module
-            # docstring: this is not a weaker signal, it is not a signal.
+            # An all-OFF card is republished with no valve action: no evidence.
             return
         now = time.monotonic()
         if self._last_gcs_at is not None and now - self._last_gcs_at <= (
             CLOUD_CHECK_PAIR_WINDOW_SECONDS
         ):
-            # Already paired by a valve message in the window's trailing half.
+            # Already paired by a valve message within the window before it.
             return
         if self._pair_cancel is not None:
             # A check is already pending for an earlier report in the same shower.
@@ -312,27 +231,13 @@ class CloudConnectionWatch:
     # Timers
     # ------------------------------------------------------------------ #
     #
-    # ⚠️ **Both handlers below MUST carry `@callback`, and it is load-bearing, not style.**
-    #
-    # `async_call_later` wraps a bare callable in a `HassJob`, and `HassJob` infers its type
-    # from the callable: a coroutine function runs on the loop, a function marked `@callback`
-    # runs on the loop, and **anything else is classified `HassJobType.Executor` and dispatched
-    # to a worker thread** (`homeassistant/core.py`, `get_hassjob_callable_job_type`). Nothing
-    # warns about it — the handler simply runs on the wrong thread.
-    #
-    # That is fatal here rather than merely untidy, because `_request_check` ends in
-    # `hass.async_create_task`, which raises for a custom integration the moment it sees a
-    # foreign thread id. The raise escapes `_quiet_elapsed` **before** its closing
-    # `_arm_quiet_timer()`, so trigger B does not just miss one check — it fires once and then
-    # never re-arms for the life of the coordinator.
-    #
-    # Shipped that way in v0.2.6 and found in session 22: across 45 h and an 11 h 44 m valve
-    # silence, `checked_because` was "REST seed" in 120 of 120 recorded states. Neither trigger
-    # had ever fired. `select.py` had the decorator on its own `async_call_later` handler all
-    # along; this module was written without it.
+    # ⚠️ Both timer handlers must carry `@callback`. Without it `async_call_later` runs a
+    # plain function in a worker thread (`HassJob` type inference), where
+    # `hass.async_create_task` in `_request_check` raises — before `_quiet_elapsed`
+    # re-arms, so trigger B would stop for good.
     @callback
     def _pair_window_elapsed(self, _now: Any) -> None:
-        """The full ±window passed with no valve message. Ask the cloud."""
+        """The whole pair window passed with no valve message. Ask the cloud."""
         self._pair_cancel = None
         self._request_check("controller reported a zone ON, valve silent")
 
@@ -350,24 +255,15 @@ class CloudConnectionWatch:
 
     @callback
     def _quiet_elapsed(self, _now: Any) -> None:
-        """Trigger B. Ask if the valve really has been quiet; otherwise wait out the rest.
+        """Trigger B. Ask if the valve has been quiet for the full window; else wait it out.
 
-        The timer is armed once and left alone, so it can fire while the valve has been
-        talking — `note_gcs_message` moves the timestamp without touching the deadline. That
-        is the case this checks: if the last message is more recent than the quiet window,
-        nothing is wrong and the timer is simply re-armed for the time that remains.
+        Valve messages move `_last_gcs_at` without resetting the timer, so it can fire
+        early; it then re-arms for the time that remains.
         """
         self._quiet_cancel = None
-        # ⚠️ **`_last_gcs_at` is None until the valve's first MQTT message**, and on a
-        # push-only integration that can be hours — the module header records benign
-        # silences of 12 h and 35 h. Unguarded, this raised `TypeError` **after**
-        # `_quiet_cancel` was nulled and **before** either re-arm below, so trigger B died
-        # for the life of the coordinator: exactly the "fires once and never re-arms"
-        # failure the `@callback` note above describes, through a different door.
-        #
-        # No timestamp means nothing has been heard since setup, which is precisely what
-        # this trigger exists to ask about — so treat it as the full quiet window rather
-        # than skipping the check.
+        # ⚠️ `_last_gcs_at` is None until the valve's first message, which can be hours
+        # after setup. Nothing heard since setup counts as a full quiet window; an error
+        # here would skip the re-arm and stop trigger B for good.
         if self._last_gcs_at is None:
             self._request_check(
                 f"no valve message since setup ({CLOUD_CHECK_QUIET_SECONDS / 3600:.0f}h)"
@@ -379,8 +275,8 @@ class CloudConnectionWatch:
             self._request_check(
                 f"no valve message for {CLOUD_CHECK_QUIET_SECONDS / 3600:.0f}h"
             )
-            # Re-armed after asking, including when the check was skipped or failed: the
-            # point of trigger B is that it keeps asking while the valve stays quiet.
+            # Re-armed even when the check was skipped or failed: trigger B keeps asking
+            # while the valve stays quiet.
             self._arm_quiet_timer()
             return
         self._arm_quiet_timer(CLOUD_CHECK_QUIET_SECONDS - quiet_for)
@@ -395,9 +291,8 @@ class CloudConnectionWatch:
 
         stream = self._coordinator.stream
         if stream is None or not stream.connected:
-            # Our own stream is down, so the valve's silence is ours, not its. The reconnect
-            # path already reseeds from REST; asking here would report our outage as the
-            # valve's.
+            # Our own stream is down, so the silence is ours. The reconnect path reseeds
+            # from REST; asking here would report our outage as the valve's.
             _LOGGER.debug("Cloud check skipped (%s): our MQTT stream is down", trigger)
             return
 
@@ -415,11 +310,9 @@ class CloudConnectionWatch:
             return
 
         if self._task is not None and not self._task.done():
-            # A check is already in flight. Return **without stamping the cooldown**: this
-            # call did nothing, and burning the next half hour on a check that never ran
-            # would let a genuine contradiction be swallowed by an unrelated one already
-            # in progress. Trigger A fires on bursty controller traffic, so two arriving
-            # together is ordinary rather than exceptional.
+            # A check is in flight. Return without stamping the cooldown: this call did
+            # nothing, and a stamp would let it swallow a later genuine contradiction.
+            # Trigger A fires on bursty controller traffic, so overlaps are ordinary.
             return
         self._last_check_at = now
         self._task = self._hass.async_create_task(self._async_check(trigger))
@@ -427,11 +320,9 @@ class CloudConnectionWatch:
     async def _async_check(self, trigger: str) -> None:
         """One GET of ``gcs-state``, read for ``connectionState`` and nothing else.
 
-        ⚠️ **The payload is deliberately not applied to :class:`GcsState`.** It would be free
-        state, but `apply_rest_state` feeds the warmup-change machinery, and this runs
-        unattended at arbitrary hours — including 3 a.m. on trigger B. A reachability check
-        must not be able to start a warmup restore as a side effect. The reseed paths that
-        *are* meant to apply state still do.
+        ⚠️ The payload is never applied to :class:`GcsState`: `apply_rest_state` feeds the
+        warmup-change machinery, and an unattended reachability check must not be able to
+        start a warmup restore.
         """
         device = self._valve.gcs_device
         requested_at = time.monotonic()
@@ -440,7 +331,7 @@ class CloudConnectionWatch:
                 device.device_id
             )
         except (AuthError, KohlerError) as err:
-            # Explicitly not a verdict about the valve. `_connected` keeps its previous value.
+            # Not a verdict about the valve: `_connected` keeps its value.
             self._last_error = f"{type(err).__name__}: {err}"
             _LOGGER.debug("Cloud check (%s) could not reach Kohler: %s", trigger, err)
             self._coordinator.async_refresh_entities()
@@ -456,32 +347,19 @@ class CloudConnectionWatch:
         notify: bool = True,
         requested_at: float | None = None,
     ) -> None:
-        """Take the answer out of a ``gcs-state`` payload somebody else already fetched.
+        """Take the answer from a ``gcs-state`` payload, whoever fetched it.
 
-        **This is the cheap path and it is the important one.** The integration reads
-        ``gcs-state`` at setup, on every MQTT reconnect, on a manual ``update_entity``, and on
-        every warmup write — four places, all of which had this field in hand and dropped it,
-        because `GcsState.apply_rest_state` starts at ``payload["state"]`` and never looks at
-        its siblings. Routing those reads through here means the sensor has a real value from
-        the moment the integration starts, instead of sitting at ``unknown`` until one of the
-        two triggers happens to fire — which on a quiet account is up to three hours.
+        The integration also reads ``gcs-state`` at setup, on every MQTT reconnect, on a
+        manual ``update_entity`` and on every warmup write; routing those through here
+        gives the sensor a value from startup. They do not touch the cooldown, which governs
+        only reads this module starts: a free answer must not suppress a check, since the
+        valve can drop off minutes later.
 
-        These calls cost **nothing**: the request was already made and paid for. They do not
-        touch the cooldown, which governs only reads this module initiates — a free answer
-        must never be able to suppress an investigation, because the valve can be Connected at
-        one moment and gone two minutes later. That is the whole failure mode.
-
-        ``notify`` is False for the setup seed, which pushes its own snapshot immediately
-        afterwards and must not notify listeners before the platforms exist.
-
-        ``requested_at`` is the `time.monotonic()` at which the GET was sent, from callers
-        that know it. A valve message received after that is newer evidence than the reply,
-        so a ``Disconnected`` in the reply is out of date and does not turn the sensor off;
-        see the note in the body. None — the default — judges the reply as before.
-
-        A body that is not a JSON object is read as one with no ``connectionState``: the
-        seed that calls this catches only `KohlerError`, so the `AttributeError` a list or a
-        string used to raise here failed the whole seed with a traceback.
+        ``notify`` is False for the setup seed, which pushes its own snapshot afterwards
+        and must not notify listeners before the platforms exist. ``requested_at`` is the
+        `time.monotonic()` at which the GET was sent, when known: a ``Disconnected`` from a
+        read sent before the latest valve message is out of date and overruled. A body that
+        is not a JSON object is treated as having no ``connectionState``, never raised on.
         """
         body = payload if isinstance(payload, dict) else {}
         reported = body.get("connectionState")
@@ -493,8 +371,8 @@ class CloudConnectionWatch:
         self._last_error = None
 
         if reported is None:
-            # The field is documented and observed, so its absence is worth saying out loud
-            # rather than silently reading as "not connected".
+            # The field is always expected, so its absence is reported rather than read as
+            # "not connected".
             self._last_error = (
                 "gcs-state carried no connectionState field"
                 if payload is None or isinstance(payload, dict)
@@ -514,14 +392,10 @@ class CloudConnectionWatch:
             and (heard_at := self._last_gcs_at) is not None
             and heard_at > requested_at
         ):
-            # ⚠️ **The valve has spoken since this read was sent, so the answer is out of
-            # date** (2026-10-16). `gcs-state` is a cloud document that trails the device,
-            # and a `Disconnected` read in flight while the valve came back — or answered
-            # from before it did — turned the sensor off again straight after
-            # `note_gcs_message` had turned it on, and kept it off until the next check, up
-            # to three hours away. The message is the newer evidence and, having come
-            # through Kohler's cloud, proof the valve is reachable. Kohler's word is still
-            # shown verbatim, with the reason the sensor disagrees, as there.
+            # ⚠️ The valve has spoken since this read was sent, so this `Disconnected` is
+            # out of date (`gcs-state` can trail the device). The message is newer evidence
+            # and proof of reachability. `connection_state` still shows Kohler's word, and
+            # `reachable_because` why the sensor disagrees.
             heard_wall = time.time() - (time.monotonic() - heard_at)
             self._connected = True
             self._overruled_because = (
@@ -538,7 +412,7 @@ class CloudConnectionWatch:
                 self._coordinator.async_refresh_entities()
             return
 
-        # A fresh answer from Kohler, so any overruling by a valve message is history.
+        # A current answer from Kohler supersedes any overruling.
         self._overruled_because = None
         was = self._connected
         if value not in (CONNECTED, DISCONNECTED) and value != self._unfamiliar:
@@ -552,8 +426,7 @@ class CloudConnectionWatch:
         if self._connected:
             _LOGGER.debug("Cloud check (%s): valve reachable (%s)", trigger, reported)
         elif was is not False:
-            # Once per transition, at WARNING: this is the condition the module exists for and
-            # the user cannot see it anywhere else.
+            # Once per transition, at WARNING: the user cannot see this anywhere else.
             _LOGGER.warning(
                 "Kohler's cloud reports the Anthem valve as %s — checked because %s. "
                 "This clears on a power cycle of the valve, not from Home Assistant.",

@@ -1728,6 +1728,31 @@ async def test_options_for_a_shower_account_offer_grouping_and_keep_per_valve_se
     }
 
 
+async def test_a_refused_report_log_name_is_replaced_and_then_resumed(
+    hass: HomeAssistant, shower_entry: MockConfigEntry, kohler: ShowerKohler, tmp_path
+) -> None:
+    """A stored name the log refuses starts a new episode, whose name is kept.
+
+    Keeping the refused name made every restart start yet another episode.
+    """
+    reports = tmp_path / "reports"
+    hass.config_entries.async_update_entry(
+        shower_entry, options={CONF_REPORT_LOG_FILE: "../../outside"}
+    )
+    with patch(
+        "custom_components.kohler_konnect.coordinator.REPORT_LOG_DIR_NAME", str(reports)
+    ):
+        await start(hass, shower_entry)
+        replaced = shower_entry.options[CONF_REPORT_LOG_FILE]
+        assert re.fullmatch(r"report_\d{8}T\d{6}Z", replaced)
+
+        assert await hass.config_entries.async_reload(shower_entry.entry_id)
+        await hass.async_block_till_done()
+        assert shower_entry.options[CONF_REPORT_LOG_FILE] == replaced
+        assert {p.name for p in reports.glob("*.jsonl")} == {f"{replaced}.jsonl"}
+        await unload(hass, shower_entry)
+
+
 async def test_the_report_log_episode_is_kept_in_the_options_without_a_reload(
     hass: HomeAssistant, shower_entry: MockConfigEntry, kohler: ShowerKohler
 ) -> None:
