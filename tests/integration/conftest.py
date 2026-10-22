@@ -123,6 +123,8 @@ class FakeKohler:
         # Litres per period, as faucet-usage reports them.
         self.usage_months: dict[str, float] = {"2025-04": 1.593, "2026-10": 1.6144}
         self.usage_days: dict[str, float] = {"2026-10-07": 1.5274}
+        # Seconds per period, as `usageDuration`; a period not here carries none.
+        self.usage_seconds: dict[str, float] = {}
         self.push_registrations: list[dict[str, Any]] = []
         # A valve's outlet split, as its `gcsadvancestate` reports it; None answers 404,
         # which leaves the setup flow to ask for the model.
@@ -239,10 +241,12 @@ class FakeKohler:
             usage = {"MONTH": self.usage_months, "DAY": self.usage_days}.get(interval)
             if usage is None or not url.query.get("FromDate"):
                 return self._respond(method, url, (400, {"message": "Bad Request"}))
-            rows = [
-                {"intervalKey": key, "quantity": liters, "waterUsage": liters}
-                for key, liters in usage.items()
-            ]
+            rows = []
+            for key, liters in usage.items():
+                row = {"intervalKey": key, "quantity": liters, "waterUsage": liters}
+                if key in self.usage_seconds:
+                    row["usageDuration"] = self.usage_seconds[key]
+                rows.append(row)
             return self._respond(
                 method, url, (200, {"faucetUsageDataDetailsList": rows})
             )

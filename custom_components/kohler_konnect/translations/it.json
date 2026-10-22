@@ -171,6 +171,18 @@
       },
       "water_this_year": {
         "name": "Consumo d'acqua quest'anno"
+      },
+      "duration_today": {
+        "name": "Durata d'uso oggi"
+      },
+      "duration_this_week": {
+        "name": "Durata d'uso questa settimana"
+      },
+      "duration_this_month": {
+        "name": "Durata d'uso questo mese"
+      },
+      "duration_this_year": {
+        "name": "Durata d'uso quest'anno"
       }
     },
     "switch": {

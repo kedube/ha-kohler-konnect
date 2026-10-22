@@ -1,4 +1,4 @@
-"""Faucet sensors: status, handle, firmware, last dispense and water usage."""
+"""Faucet sensors: status, handle, firmware, last dispense, water used and running time."""
 
 from __future__ import annotations
 
@@ -14,7 +14,14 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import EntityCategory
 
-from ..water import DailyWaterUsage, MonthlyWaterUsage, YearlyWaterUsage
+from ..water import (
+    DailyDurationUsage,
+    DailyWaterUsage,
+    MonthlyDurationUsage,
+    MonthlyWaterUsage,
+    YearlyDurationUsage,
+    YearlyWaterUsage,
+)
 from .coordinator import FaucetCoordinator
 from .entity import KohlerFaucetEntity, as_text
 from .units import HA_UNIT_KEYS, from_ml, to_ml
@@ -73,6 +80,10 @@ def faucet_sensors(coordinator: FaucetCoordinator) -> list[SensorEntity]:
         FaucetWeeklyWaterSensor(coordinator),
         FaucetMonthlyWaterSensor(coordinator),
         FaucetYearlyWaterSensor(coordinator),
+        FaucetDailyDurationSensor(coordinator),
+        FaucetWeeklyDurationSensor(coordinator),
+        FaucetMonthlyDurationSensor(coordinator),
+        FaucetYearlyDurationSensor(coordinator),
     ]
     return entities
 
@@ -221,3 +232,37 @@ class FaucetYearlyWaterSensor(_FaucetWater, YearlyWaterUsage):
 
     def __init__(self, coordinator: FaucetCoordinator) -> None:
         super().__init__(coordinator, "water_this_year")
+
+
+class FaucetDailyDurationSensor(_FaucetWater, DailyDurationUsage):
+    """How long the water ran today."""
+
+    _attr_icon = "mdi:timer-outline"
+    _days = 1
+
+    def __init__(self, coordinator: FaucetCoordinator) -> None:
+        super().__init__(coordinator, "duration_today")
+
+
+class FaucetWeeklyDurationSensor(_FaucetWater, DailyDurationUsage):
+    """How long the water ran over the last seven days, today included."""
+
+    _attr_icon = "mdi:calendar-week"
+    _days = 7
+
+    def __init__(self, coordinator: FaucetCoordinator) -> None:
+        super().__init__(coordinator, "duration_this_week")
+
+
+class FaucetMonthlyDurationSensor(_FaucetWater, MonthlyDurationUsage):
+    """How long the water ran in the current calendar month."""
+
+    def __init__(self, coordinator: FaucetCoordinator) -> None:
+        super().__init__(coordinator, "duration_this_month")
+
+
+class FaucetYearlyDurationSensor(_FaucetWater, YearlyDurationUsage):
+    """How long the water ran in the current calendar year."""
+
+    def __init__(self, coordinator: FaucetCoordinator) -> None:
+        super().__init__(coordinator, "duration_this_year")

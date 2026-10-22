@@ -461,6 +461,10 @@ the showers'.
 | `Water used this week` | sensor | The last seven days including today |
 | `Water used this month` | sensor | This calendar month, the larger of Kohler's monthly figure and the daily total |
 | `Water used this year` | sensor | Calendar year to date |
+| `Duration used today` | sensor | How long the water ran since local midnight, in minutes, as the valve's `Duration Used Today` |
+| `Duration used this week` | sensor | The last seven days including today, in minutes |
+| `Duration used this month` | sensor | This calendar month, in minutes |
+| `Duration used this year` | sensor | Calendar year to date, in minutes |
 | `Firmware status` | update | Whether Kohler has newer firmware for the faucet, checked twice a day and after an install. **Read-only** — install from the Konnect app. Shows a firmware download in progress |
 | `Handle` | sensor | Diagnostic. The manual handle's position: `open` or `closed` |
 | `Connected` | binary sensor | Diagnostic. Whether Kohler's cloud can reach the faucet; `last_connected` attribute |

@@ -131,6 +131,16 @@ def test_no_data_at_all_still_reads_unknown(clock):
     )
 
 
+@pytest.mark.parametrize("now", ["2026-10-15T16:00:00", "2026-01-15T17:00:00"])
+def test_a_reply_without_durations_reads_unknown_not_zero(clock, now):
+    """Buckets with litres but no `onDuration` don't say that no time passed."""
+    clock(now)
+    monthly = [{"intervalKey": "2025-12", "volume": 1000.0}]
+    daily = [{"intervalKey": now[:10], "volume": 40.0}]
+    sensors = _sensors(monthly, daily)
+    assert [sensor.native_value for sensor in sensors] == [None] * 4
+
+
 def test_period_totals_say_when_their_period_started(clock):
     """`last_reset` at local midnight, so statistics see a new period, not negative time."""
     clock("2026-11-01T05:00:00")  # 1 am, November 1, New York

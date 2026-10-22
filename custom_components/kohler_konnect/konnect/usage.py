@@ -56,7 +56,7 @@ def _faucet_entry(entry: dict[str, Any]) -> dict[str, Any]:
         normalized["volume"] = max(0.0, litres)
     duration = _number(entry.get("usageDuration"))
     if duration is not None:
-        normalized["onDuration"] = duration
+        normalized["onDuration"] = max(0.0, duration)
     return normalized
 
 

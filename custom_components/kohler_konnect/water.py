@@ -134,6 +134,15 @@ def _month_totals(
     return totals
 
 
+def _reports(series: dict[str, Any] | None, figure: str) -> bool:
+    """Whether any bucket in a usage series carries ``figure``.
+
+    A series without it says nothing about that figure, so a total over it stays unknown
+    rather than reading 0.
+    """
+    return any(_finite(entry.get(figure)) is not None for entry in usage_series(series))
+
+
 def _daily_spans_the_year(usage_daily: dict[str, Any] | None, this_month: str) -> bool:
     """Whether the daily series alone holds every day of this year so far.
 
@@ -299,7 +308,7 @@ class MonthlyWaterUsage(WaterUsage):
             figure=self._figure,
         )
         current = totals.get(month)
-        if current is None and usage_series(usage_daily):
+        if current is None and _reports(usage_daily, self._figure):
             # The daily series spans every day of this month and has nothing in it, so
             # nothing has been used yet: 0, not unknown.
             current = {self._figure: 0.0}
@@ -384,7 +393,7 @@ class YearlyWaterUsage(WaterUsage):
         # A year summed from the 35-day window alone would record a large negative change,
         # then a positive one once the monthly read recovers. The recorder skips unknown,
         # so the sum carries on from the last real figure when the monthly series arrives.
-        if not usage_series(usage) and not _daily_spans_the_year(
+        if not _reports(usage, self._figure) and not _daily_spans_the_year(
             usage_daily, this_month
         ):
             self._cache_key = (usage, usage_daily, this_month)
@@ -416,7 +425,7 @@ class YearlyWaterUsage(WaterUsage):
                 "last_month": ordered[-1],
                 "per_month": {key_: self._published(months[key_]) for key_ in ordered},
             }
-        elif usage_series(usage) or usage_series(usage_daily):
+        elif _reports(usage, self._figure) or _reports(usage_daily, self._figure):
             # Kohler answered, and nothing in it falls in this year: none used yet. 0 on
             # January 1 rather than unknown, matching `Water Used Today`.
             total = 0.0

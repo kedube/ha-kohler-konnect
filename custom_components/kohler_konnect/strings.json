@@ -171,6 +171,18 @@
       },
       "water_this_year": {
         "name": "Water used this year"
+      },
+      "duration_today": {
+        "name": "Duration used today"
+      },
+      "duration_this_week": {
+        "name": "Duration used this week"
+      },
+      "duration_this_month": {
+        "name": "Duration used this month"
+      },
+      "duration_this_year": {
+        "name": "Duration used this year"
       }
     },
     "switch": {

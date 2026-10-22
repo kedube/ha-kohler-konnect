@@ -171,6 +171,18 @@
       },
       "water_this_year": {
         "name": "Wasserverbrauch dieses Jahr"
+      },
+      "duration_today": {
+        "name": "Laufzeit heute"
+      },
+      "duration_this_week": {
+        "name": "Laufzeit diese Woche"
+      },
+      "duration_this_month": {
+        "name": "Laufzeit diesen Monat"
+      },
+      "duration_this_year": {
+        "name": "Laufzeit dieses Jahr"
       }
     },
     "switch": {

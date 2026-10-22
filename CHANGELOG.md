@@ -11,6 +11,18 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Added**
+
+- **The same four duration sensors for each Konnect faucet:** `Duration used today`,
+  `this week`, `this month` and `this year`, from the faucet's own usage history.
+
+**Fixed**
+
+- **A duration total reads unknown, not 0, when Kohler's usage data has no durations in
+  it.** `Duration Used This Month` and `This Year` showed 0 minutes in that case, while
+  `Today` and `This Week` were already unknown. A negative faucet duration now counts as
+  none, as a negative amount of water already did.
+
 ## 1.11 — 2026-10-22
 
 **Added**

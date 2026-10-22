@@ -171,6 +171,18 @@
       },
       "water_this_year": {
         "name": "Vattenförbrukning i år"
+      },
+      "duration_today": {
+        "name": "Användningstid i dag"
+      },
+      "duration_this_week": {
+        "name": "Användningstid denna vecka"
+      },
+      "duration_this_month": {
+        "name": "Användningstid denna månad"
+      },
+      "duration_this_year": {
+        "name": "Användningstid i år"
       }
     },
     "switch": {

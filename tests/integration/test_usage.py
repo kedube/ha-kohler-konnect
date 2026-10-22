@@ -26,6 +26,12 @@ TODAY = "sensor.kitchen_water_used_today"
 WEEK = "sensor.kitchen_water_used_this_week"
 MONTH = "sensor.kitchen_water_used_this_month"
 YEAR = "sensor.kitchen_water_used_this_year"
+DURATIONS = (
+    "sensor.kitchen_duration_used_today",
+    "sensor.kitchen_duration_used_this_week",
+    "sensor.kitchen_duration_used_this_month",
+    "sensor.kitchen_duration_used_this_year",
+)
 USAGE_PATH = f"/faucet-usage/{DEVICE_ID}"
 GALLONS_PER_LITRE = 0.264172
 
@@ -80,6 +86,36 @@ async def test_usage_sensors(
         "2026-09-02",
         "2026-10-07",
     )
+
+
+async def test_duration_sensors(
+    hass: HomeAssistant, config_entry: MockConfigEntry, kohler: FakeKohler
+) -> None:
+    """`usageDuration` seconds from the same two reads, published in minutes."""
+    kohler.usage_seconds = {"2025-04": 600.0, "2026-10": 120.0, "2026-10-07": 90.0}
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    today, week, month, year = (hass.states.get(entity) for entity in DURATIONS)
+    assert float(today.state) == 1.5
+    assert today.attributes["device_class"] == "duration"
+    assert today.attributes["state_class"] == "total"
+    assert today.attributes["unit_of_measurement"] == "min"
+    assert today.attributes["last_reset"].startswith("2026-10-07T00:00:00")
+    assert float(week.state) == 1.5
+    # The month takes Kohler's monthly figure, larger than the daily sum.
+    assert float(month.state) == 2.0
+    # April 2025 is last year.
+    assert float(year.state) == 2.0
+    assert float(hass.states.get(TODAY).state) == pytest.approx(1.5274, abs=0.05)
+
+
+async def test_durations_are_unknown_when_kohler_reports_none(
+    hass: HomeAssistant, setup_entry: MockConfigEntry
+) -> None:
+    for entity in DURATIONS:
+        assert hass.states.get(entity).state == "unknown"
+    assert float(hass.states.get(TODAY).state) == pytest.approx(1.5274, abs=0.05)
 
 
 async def test_us_units_show_gallons(

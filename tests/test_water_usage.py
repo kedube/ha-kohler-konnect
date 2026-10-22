@@ -201,14 +201,14 @@ def test_faucet_buckets_read_like_a_valves():
                 "usageDuration": 30,
             },
             {"intervalKey": "2026-10-08", "quantity": 0.25},
-            {"intervalKey": "2026-10-09", "waterUsage": -1},
+            {"intervalKey": "2026-10-09", "waterUsage": -1, "usageDuration": -5},
             "junk",
         ]
     }
     assert usage_series(payload) == [
         {"intervalKey": "2026-10-07", "volume": 1.5, "onDuration": 30.0},
         {"intervalKey": "2026-10-08", "volume": 0.25},
-        {"intervalKey": "2026-10-09", "volume": 0.0},
+        {"intervalKey": "2026-10-09", "volume": 0.0, "onDuration": 0.0},
     ]
     assert usage_series(None) == []
     assert usage_series({"something": []}) == []

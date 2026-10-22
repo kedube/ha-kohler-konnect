@@ -171,6 +171,18 @@
       },
       "water_this_year": {
         "name": "Waterverbruik dit jaar"
+      },
+      "duration_today": {
+        "name": "Gebruiksduur vandaag"
+      },
+      "duration_this_week": {
+        "name": "Gebruiksduur deze week"
+      },
+      "duration_this_month": {
+        "name": "Gebruiksduur deze maand"
+      },
+      "duration_this_year": {
+        "name": "Gebruiksduur dit jaar"
       }
     },
     "switch": {
