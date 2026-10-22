@@ -11,21 +11,12 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
-## Unreleased
-
 **Added**
 
-- **`Duration Used Today`, `This Week`, `This Month` and `This Year`** for every Anthem valve —
-  how long the water ran, in minutes, alongside the `Water Used` totals. They are the water
-  totals' twins: the same `gcs-usage` series, the same periods (local-midnight today, a rolling
-  seven days, the calendar month and year), the same refresh after a shower, and no extra API
-  call — only the figure differs, the `onDuration` seconds each usage bucket already carries,
-  published in minutes as the Konnect app charts it. `onDuration` and its seconds unit were
-  verified against real `gcs-usage` replies from three live GCS valves (reverse-engineered
-  alongside the app's own chart, which divides by 60); the sensors themselves are covered by
-  the unit and integration suites. A `duration` device class, so the Energy dashboard's water
-  picker leaves them out; `TOTAL` with the same `last_reset` discipline as their water twins,
-  so long-term statistics record each period's restart rather than negative time.
+- **`Duration Used Today`, `This Week`, `This Month` and `This Year` for each Anthem
+  valve:** how long the water ran, in minutes, beside the `Water Used` totals. They come
+  from the same usage data, over the same periods, with no extra calls to Kohler, and stay
+  out of the Energy dashboard's water picker. Thanks to @kingbear2 (#1).
 
 ## 1.10 — 2026-10-22
 

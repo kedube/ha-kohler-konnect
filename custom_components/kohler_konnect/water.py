@@ -7,6 +7,9 @@ written once, here, as mixins. A valve or faucet sensor adds only the device it 
 (`_usage_series`), its name and its unique id. The daily series is re-read after the
 water stops (a faucet also polls it); the monthly one at startup and again with the first
 daily read of a new month.
+
+The duration totals are the same four over `onDuration`, the seconds the water ran,
+published in minutes.
 """
 
 from __future__ import annotations
@@ -54,15 +57,10 @@ def _finite(value: Any) -> float | None:
 
 
 def _bucket_figures(entry: dict[str, Any], figure: str) -> dict[str, float] | None:
-    """One bucket's figures for a `_month_totals` run keyed by ``figure``.
+    """A bucket's figures for a `_month_totals` run over ``figure``; None without it.
 
-    The water totals keep both figures a bucket carries — a month held by its litres
-    still knows how long the water ran, which `Water Used This Month` shows as its
-    `running_minutes` attribute. The duration totals hold only `onDuration`: their
-    record's litres would be a partial sum wherever the daily window starts mid-month,
-    so the litres are left out rather than carried misleadingly. A bucket without the
-    figure the run is built on is dropped from its months entirely — a month Kohler
-    never gave a duration for cannot be summed into a year of them.
+    A `volume` run also keeps `onDuration`, for `running_minutes`. An `onDuration` run
+    keeps only that: nothing reads its litres.
     """
     value = _finite(entry.get(figure))
     if value is None:
@@ -85,7 +83,8 @@ def _month_totals(
 ) -> dict[str, dict[str, float]]:
     """Each calendar month's usage (`YYYY-MM` -> `volume` litres, `onDuration` seconds).
 
-    A month takes the larger of Kohler's monthly bucket and the sum of its daily buckets.
+    ``figure`` is the one a month is compared and kept by: `volume`, or `onDuration` for
+    the duration totals. A month takes the larger of Kohler's monthly bucket and the sum of its daily buckets.
     The monthly series is read rarely, so its figure for a recent month can be a partial
     total; the 35-day daily window can start mid-month and sum too little. Using the daily
     series for every month it covers keeps `Water Used This Year` from dropping when a
@@ -157,6 +156,9 @@ class _Borrowed(ExtraStoredData):
 
     See `DailyWaterUsage._rendered`. Home Assistant's restore-state store writes it when
     the entity is removed for a reload, at shutdown, and every fifteen minutes.
+
+    `litres` is in the sensor's wire unit, so seconds for a duration total. The stored key
+    keeps its name so saved records still load.
     """
 
     day: date
@@ -197,10 +199,7 @@ class WaterUsage(SensorEntity):
     _attr_device_class = SensorDeviceClass.WATER
     _attr_state_class = SensorStateClass.TOTAL
 
-    #: Which bucket figure this total is built over: `volume` (litres on the wire) for the
-    #: water totals, `onDuration` (seconds on the wire) for the duration ones. Every period
-    #: rule below — the bucketing, the borrow, the peaks, `last_reset` — is written once,
-    #: over this, so a duration total follows its water twin's period exactly.
+    #: The bucket figure summed: `volume` (litres) or `onDuration` (seconds).
     _figure = "volume"
 
     def _usage_series(self) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -220,12 +219,8 @@ class WaterUsage(SensorEntity):
         return UnitOfVolume.LITERS if self._metric else UnitOfVolume.GALLONS
 
     def _published(self, raw: float) -> float:
-        """One figure, in the wire's unit, as this sensor publishes it.
-
-        Litres become the account's unit for the water totals; seconds become minutes for
-        the duration ones — the conversion the Konnect app's own chart makes, as
-        `konnect/usage.py` records. Rounded to one decimal, as every total here is.
-        """
+        """A wire figure as published, to one decimal: litres in the account's unit, or
+        seconds in minutes."""
         if self._figure == "volume":
             value = raw if self._metric else usage_volume_gallons(raw)
         else:
@@ -241,18 +236,9 @@ class WaterUsage(SensorEntity):
 
 
 class DurationUsage(WaterUsage):
-    """The `Duration Used` twin of the water totals, over `onDuration` instead of `volume`.
+    """The water totals over `onDuration`, published in minutes as the Konnect app charts it.
 
-    Same series, same periods, same rules — this changes only what is summed and what it
-    is published as. `onDuration` is **seconds on the wire**, the time the water was
-    actually running, and minutes is what a shower is measured in and what the Konnect
-    app charts (it divides by 60), so these publish minutes: `native_value` is rounded to
-    one decimal exactly as the water totals round theirs.
-
-    `duration` rather than `water` as the device class keeps them out of the Energy
-    dashboard's water picker, which lists water sensors only — a duration is not a
-    volume, and pointing the dashboard at one would be a mistake. `TOTAL` and each
-    period's `last_reset` follow the water twins; see those classes for why.
+    The `duration` device class keeps them out of the Energy dashboard's water picker.
     """
 
     _figure = "onDuration"
@@ -261,7 +247,7 @@ class DurationUsage(WaterUsage):
 
     @property
     def native_unit_of_measurement(self) -> str:
-        # Minutes everywhere: `waterUnits` decides the display of litres, not of time.
+        # Minutes whatever the account's `waterUnits`.
         return self._attr_native_unit_of_measurement
 
 
@@ -647,32 +633,12 @@ class DailyWaterUsage(WaterUsage, RestoreEntity):
 
 
 class MonthlyDurationUsage(MonthlyWaterUsage, DurationUsage):
-    """How long the water ran this calendar month, in minutes.
-
-    `MonthlyWaterUsage` over `onDuration`: the same month-bucketing, the same daily-series
-    rollup keeping the current month live after every shower, the same ended-month peaks —
-    every rule, with the figure swapped. Its `history` attribute carries each month's
-    minutes rather than litres. See `MonthlyWaterUsage` and `DurationUsage`.
-    """
+    """`MonthlyWaterUsage` in minutes the water ran; `history` is in minutes too."""
 
 
 class YearlyDurationUsage(YearlyWaterUsage, DurationUsage):
-    """How long the water ran this calendar year (Jan 1 – today), in minutes.
-
-    `YearlyWaterUsage` over `onDuration`: the same calendar-year sum from `_month_totals`,
-    the same unknown-rather-than-partial guard while the monthly series is missing, and
-    `per_month` in minutes. A month Kohler never reported a duration for is left out of
-    the sum entirely, exactly as a month without `volume` is for the water twin. See
-    `YearlyWaterUsage` and `DurationUsage`.
-    """
+    """`YearlyWaterUsage` in minutes the water ran; `per_month` is in minutes too."""
 
 
 class DailyDurationUsage(DailyWaterUsage, DurationUsage):
-    """How long the water ran today, or over the last seven days, in minutes.
-
-    `DailyWaterUsage` over `onDuration`: the same local-midnight day and rolling-week
-    windows, summed over each bucket's seconds and published in minutes — the same UTC
-    borrow and `counted_yesterday` discipline included, so an evening's minutes are
-    counted on the right day and only once, exactly as the water twin's litres are. See
-    `DailyWaterUsage` and `DurationUsage`.
-    """
+    """`DailyWaterUsage` in minutes the water ran, the UTC borrow included."""

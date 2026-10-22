@@ -349,11 +349,7 @@ class ValveYearlyDurationSensor(_ValveWater, YearlyDurationUsage):
 
 
 class ValveDailyDurationSensor(_ValveWater, DailyDurationUsage):
-    """How long the water ran today, from Kohler's own per-day usage series.
-
-    Refreshed when a shower ends with the water totals, never on a clock: the two read
-    the same series, so the figures move together. See `water.DailyDurationUsage`.
-    """
+    """How long the water ran today, re-read with `Water Used Today`."""
 
     _attr_name = "Duration Used Today"
     _attr_icon = "mdi:timer-outline"
@@ -365,10 +361,9 @@ class ValveDailyDurationSensor(_ValveWater, DailyDurationUsage):
 
 
 class ValveWeeklyDurationSensor(_ValveWater, DailyDurationUsage):
-    """How long the water ran over the last seven days, today included.
+    """How long the water ran over a rolling seven days, today included.
 
-    As `Water Used This Week`: a rolling window, whose change can be negative when a
-    heavy day leaves it. See `water.DailyDurationUsage`.
+    A net total that can fall as days leave the window, like `Water Used This Week`.
     """
 
     _attr_name = "Duration Used This Week"
