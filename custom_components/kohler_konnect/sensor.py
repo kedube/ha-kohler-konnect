@@ -37,7 +37,14 @@ from .entity import (
 )
 from .faucet.sensor import faucet_sensors
 from .konnect.valve_hex import encode_word
-from .water import DailyWaterUsage, MonthlyWaterUsage, YearlyWaterUsage
+from .water import (
+    DailyDurationUsage,
+    DailyWaterUsage,
+    MonthlyDurationUsage,
+    MonthlyWaterUsage,
+    YearlyDurationUsage,
+    YearlyWaterUsage,
+)
 
 # Valve states; see `ValveStatusSensor.native_value` for their precedence.
 STATE_RUNNING = "Water Running"
@@ -68,6 +75,10 @@ async def async_setup_entry(
             ValveYearlyWaterSensor(coordinator, valve),
             ValveDailyWaterSensor(coordinator, valve),
             ValveWeeklyWaterSensor(coordinator, valve),
+            ValveMonthlyDurationSensor(coordinator, valve),
+            ValveYearlyDurationSensor(coordinator, valve),
+            ValveDailyDurationSensor(coordinator, valve),
+            ValveWeeklyDurationSensor(coordinator, valve),
             ValveLastUpdateSensor(coordinator, valve),
             ValveFirmwareSensor(coordinator, valve),
             # The other two firmwares the Konnect app shows; entities so a difference
@@ -315,6 +326,58 @@ class ValveWeeklyWaterSensor(_ValveWater, DailyWaterUsage):
     def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
         super().__init__(coordinator, valve)
         self._attr_unique_id = f"{self._device_id}_water_this_week"
+
+
+class ValveMonthlyDurationSensor(_ValveWater, MonthlyDurationUsage):
+    """How long the water ran this calendar month. See `water.MonthlyDurationUsage`."""
+
+    _attr_name = "Duration Used This Month"
+
+    def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
+        super().__init__(coordinator, valve)
+        self._attr_unique_id = f"{self._device_id}_duration_this_month"
+
+
+class ValveYearlyDurationSensor(_ValveWater, YearlyDurationUsage):
+    """How long the water ran this calendar year. See `water.YearlyDurationUsage`."""
+
+    _attr_name = "Duration Used This Year"
+
+    def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
+        super().__init__(coordinator, valve)
+        self._attr_unique_id = f"{self._device_id}_duration_this_year"
+
+
+class ValveDailyDurationSensor(_ValveWater, DailyDurationUsage):
+    """How long the water ran today, from Kohler's own per-day usage series.
+
+    Refreshed when a shower ends with the water totals, never on a clock: the two read
+    the same series, so the figures move together. See `water.DailyDurationUsage`.
+    """
+
+    _attr_name = "Duration Used Today"
+    _attr_icon = "mdi:timer-outline"
+    _days = 1
+
+    def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
+        super().__init__(coordinator, valve)
+        self._attr_unique_id = f"{self._device_id}_duration_today"
+
+
+class ValveWeeklyDurationSensor(_ValveWater, DailyDurationUsage):
+    """How long the water ran over the last seven days, today included.
+
+    As `Water Used This Week`: a rolling window, whose change can be negative when a
+    heavy day leaves it. See `water.DailyDurationUsage`.
+    """
+
+    _attr_name = "Duration Used This Week"
+    _attr_icon = "mdi:calendar-week"
+    _days = 7
+
+    def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
+        super().__init__(coordinator, valve)
+        self._attr_unique_id = f"{self._device_id}_duration_this_week"
 
 
 class ValveLastUpdateSensor(ValveDiagnosticSensor):
