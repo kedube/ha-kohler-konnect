@@ -76,6 +76,7 @@ interact when combined.
 
 * **Water used** today, this week, this month and this year — Kohler's own figures, the ones
   the Konnect app charts, in the units your Konnect account uses.
+* **How long the water ran** over the same four periods, in minutes.
 * **Firmware status** — whether Kohler has an update for each device.
 
 ### Real-time state

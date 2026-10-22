@@ -136,11 +136,10 @@ def test_a_non_finite_usage_bucket_is_left_out_of_the_totals():
             {"intervalKey": "2026-10-16", "volume": 25.0, "onDuration": NON_FINITE[1]},
         ]
     }
-    totals = water._month_totals(None, series)
-    # The NaN-volume bucket is left out whole, its duration with it; the infinite
-    # duration is dropped while its bucket's volume still counts.
-    assert totals["2026-10"]["volume"] == 65.0
-    assert totals["2026-10"]["onDuration"] == 300.0
+    # A non-finite figure leaves its bucket out of that figure's totals only.
+    assert water._month_totals(None, series)["2026-10"] == {"volume": 65.0}
+    durations = water._month_totals(None, series, figure="onDuration")
+    assert durations["2026-10"] == {"onDuration": 360.0}
 
 
 def _zone_temperature(raw: str, *, fahrenheit: bool = True) -> float | None:

@@ -571,7 +571,8 @@ def test_monthly_water_matches_the_month_rather_than_taking_the_last_entry():
     sensor = _monthly_sensor(usage)
     assert sensor.extra_state_attributes["month"] == key
     assert sensor.native_value == round(100 * 0.264172, 1)
-    assert sensor.extra_state_attributes["running_minutes"] == 10.0
+    # The month's running time is `Duration Used This Month`'s, not an attribute here.
+    assert "running_minutes" not in sensor.extra_state_attributes
 
 
 def test_monthly_water_is_none_without_a_reading():
@@ -4119,7 +4120,6 @@ def test_monthly_water_updates_from_daily_series_after_shower(monkeypatch):
     coordinator.water_units = "Liters"
     sensor = module.ValveMonthlyWaterSensor(coordinator, valve)
     assert sensor.native_value == 100.0
-    assert sensor.extra_state_attributes["running_minutes"] == 10.0
 
     # After a shower, only `usage_daily` is refreshed (no extra MONTH request).
     valve.usage_daily = {
@@ -4129,7 +4129,6 @@ def test_monthly_water_updates_from_daily_series_after_shower(monkeypatch):
         ]
     }
     assert sensor.native_value == 145.0
-    assert sensor.extra_state_attributes["running_minutes"] == 15.0
     assert sensor.extra_state_attributes["history"]["2026-09"] == 145.0
 
 

@@ -73,6 +73,11 @@ def _redact_values(data: Any, pattern: re.Pattern[str]) -> Any:
     return data
 
 
+def _with_duration(series: dict[str, Any] | None) -> int:
+    """How many of a usage series' buckets carry a duration."""
+    return sum("onDuration" in bucket for bucket in usage_series(series))
+
+
 def faucet_report(faucet: FaucetCoordinator) -> dict[str, Any]:
     """What one faucet reports, with its identity taken out.
 
@@ -115,6 +120,9 @@ def faucet_report(faucet: FaucetCoordinator) -> dict[str, Any]:
         "usage_series": {
             "monthly_buckets": len(usage_series(faucet.usage)),
             "daily_buckets": len(usage_series(faucet.usage_daily)),
+            # With none, the faucet's Duration totals read unknown.
+            "monthly_buckets_with_duration": _with_duration(faucet.usage),
+            "daily_buckets_with_duration": _with_duration(faucet.usage_daily),
         },
         "dispensing": faucet.is_dispensing(),
         # Messages and missed changes since setup. Verification is kept across restarts:

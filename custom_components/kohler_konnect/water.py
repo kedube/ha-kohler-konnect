@@ -56,23 +56,6 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _bucket_figures(entry: dict[str, Any], figure: str) -> dict[str, float] | None:
-    """A bucket's figures for a `_month_totals` run over ``figure``; None without it.
-
-    A `volume` run also keeps `onDuration`, for `running_minutes`. An `onDuration` run
-    keeps only that: nothing reads its litres.
-    """
-    value = _finite(entry.get(figure))
-    if value is None:
-        return None
-    figures = {figure: value}
-    if figure == "volume":
-        duration = _finite(entry.get("onDuration"))
-        if duration is not None:
-            figures["onDuration"] = duration
-    return figures
-
-
 def _month_totals(
     usage: dict[str, Any] | None,
     usage_daily: dict[str, Any] | None,
@@ -81,10 +64,10 @@ def _month_totals(
     this_month: str | None = None,
     figure: str = "volume",
 ) -> dict[str, dict[str, float]]:
-    """Each calendar month's usage (`YYYY-MM` -> `volume` litres, `onDuration` seconds).
+    """Each calendar month's ``figure`` (`YYYY-MM` -> {``figure``: value}).
 
-    ``figure`` is the one a month is compared and kept by: `volume`, or `onDuration` for
-    the duration totals. A month takes the larger of Kohler's monthly bucket and the sum of its daily buckets.
+    ``figure`` is `volume` (litres) for the water totals or `onDuration` (seconds) for the
+    duration ones; a bucket without it is left out. A month takes the larger of Kohler's monthly bucket and the sum of its daily buckets.
     The monthly series is read rarely, so its figure for a recent month can be a partial
     total; the 35-day daily window can start mid-month and sum too little. Using the daily
     series for every month it covers keeps `Water Used This Year` from dropping when a
@@ -96,22 +79,21 @@ def _month_totals(
     totals: dict[str, dict[str, float]] = {}
     for entry in usage_series(usage):
         month = entry.get("intervalKey")
-        figures = _bucket_figures(entry, figure)
+        value = _finite(entry.get(figure))
         if not (isinstance(month, str) and _MONTH_KEY.fullmatch(month)):
             continue
-        if figures is None:
+        if value is None:
             continue
-        totals[month] = figures
+        totals[month] = {figure: value}
 
     daily: dict[str, dict[str, float]] = {}
     for entry in usage_series(usage_daily):
         bucket = _usage_bucket_date(entry.get("intervalKey"))
-        figures = _bucket_figures(entry, figure)
-        if bucket is None or figures is None:
+        value = _finite(entry.get(figure))
+        if bucket is None or value is None:
             continue
         record = daily.setdefault(bucket.strftime("%Y-%m"), {figure: 0.0})
-        for key, value in figures.items():
-            record[key] = record.get(key, 0.0) + value
+        record[figure] += value
 
     for month, record in daily.items():
         if month not in totals or record[figure] >= totals[month][figure]:
@@ -323,10 +305,6 @@ class MonthlyWaterUsage(WaterUsage):
             attributes["history"] = history
         if current is not None:
             attributes["month"] = month
-            duration = current.get("onDuration")
-            if self._figure == "volume" and isinstance(duration, (int, float)):
-                # Seconds on the wire, shown in minutes.
-                attributes["running_minutes"] = round(float(duration) / 60, 1)
 
         self._cache_key = (usage, usage_daily, month)
         self._cached = (current, attributes)

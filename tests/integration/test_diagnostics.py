@@ -74,3 +74,23 @@ async def test_preset_names_stay_out(
     )
     assert "Pasta Pot" not in json.dumps(diagnostics)
     assert diagnostics["faucets"][0]["presets"]["count"] == 1
+
+
+async def test_usage_buckets_with_a_duration_are_counted(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    config_entry: MockConfigEntry,
+    kohler: FakeKohler,
+) -> None:
+    """None carrying one is why the faucet's Duration totals read unknown."""
+    kohler.usage_seconds = {"2026-10-07": 90.0}
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    diagnostics = await get_diagnostics_for_config_entry(
+        hass, hass_client, config_entry
+    )
+    assert diagnostics["faucets"][0]["usage_series"] == {
+        "monthly_buckets": 2,
+        "daily_buckets": 1,
+        "monthly_buckets_with_duration": 0,
+        "daily_buckets_with_duration": 1,
+    }

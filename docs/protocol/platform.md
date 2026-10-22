@@ -220,6 +220,7 @@ Read it when you have a reason to doubt reachability. Silence alone is not one (
   - Buckets: `gcsUsageDataDetailsList[] {intervalKey, volume, onDuration, numberOfTimesValveSwitchedOn, averageBlendTemperature, timestamp}`. `intervalKey` is `yyyy-MM-dd` or `yyyy-MM`.
   - The HUB adds hot inlet temperatures; the faucet list is `faucetUsageDataDetailsList` (live; `SenSateUsageDataDetailsList` is only the name of its model class).
 - **`volume` is litres** whatever the account unit. The app multiplies by `0.264172` for `Standard`.
+- **`onDuration` is seconds** the water ran. A captured month of 415 L over 5575 s is 4.5 L/min, a normal shower flow (live). The faucet's `usageDuration` is seconds too: the app's chart divides it by 60 ([faucet §2.2](sensate_faucet.md#22-reads), R6).
 - **No unit is known for `averageBlendTemperature`.** The app never reads it or `numberOfTimesValveSwitchedOn` — neither has a call site (app) — and values around 78 beside 104.9 °F setpoints fit no plausible unit (live). Don't guess one.
 - **A finished session appears late.** It is added only after the valve reports it closed, so a read straight after a shower misses it. 90 s later is usually enough, but not always (live).
 - Some accounts appear to file daily buckets by UTC date, so a US evening's water lands under tomorrow's `intervalKey` (inferred).

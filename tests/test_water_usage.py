@@ -160,8 +160,8 @@ def test_each_month_takes_the_larger_of_its_two_figures():
         ]
     }
     totals = _month_totals(monthly, daily)
-    assert totals["2026-09"] == {"volume": 900.0, "onDuration": 5400.0}
-    assert totals["2026-10"] == {"volume": 1240.0, "onDuration": 18600.0}
+    assert totals["2026-09"] == {"volume": 900.0}
+    assert totals["2026-10"] == {"volume": 1240.0}
 
 
 # --------------------------------------------------------------------------- #
