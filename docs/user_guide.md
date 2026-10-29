@@ -245,6 +245,10 @@ presets, water-usage charts, and each device's settings and hardware details. It
 through the same entities and actions as everything else here, so every safeguard on this
 page applies to it too, and nothing it does is out of reach of an automation.
 
+<p align="center">
+  <img src="images/panel_phone.png" alt="The Kohler Konnect panel on a phone: the devices, a shower warming up, and a month of water use" width="800">
+</p>
+
 It is on unless you turn it off: **Show the Kohler Konnect panel in the sidebar** in
 Configure, or on the panel's own **Account** tab. That removes it for every user, and
 doesn't reconnect to Kohler. With several Kohler accounts, it stays while any of them has

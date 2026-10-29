@@ -706,7 +706,7 @@ export function bigSystem(): Scenario {
     states,
   );
   const ice = buildProduct(
-    { id: "dev_ice_bath", kind: "ice_bath", name: "Sam", area: "Gym", model: "Ice Bath" },
+    { id: "dev_ice_bath", kind: "ice_bath", name: "Ice Bath", area: "Gym", model: "Ice Bath" },
     [
       ["last_session", "sensor.last_session", "2026-10-27T14:00:00+00:00", { device_class: "timestamp" }],
       ["last_session_duration", "sensor.last_session_duration", "185", { device_class: "duration", unit_of_measurement: "s" }],

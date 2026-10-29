@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  A custom Home Assistant integration for Kohler's connected kitchen and bath: <b>Anthem</b> and <b>Anthem+</b> digital showers and <b>Sensate</b> kitchen faucets, with early support for the <b>Smart Fan</b>, <b>Numi 2.0</b>, <b>Purewash E930</b>, <b>EvoCycle</b> and <b>Ice Bath</b>.
+  A custom Home Assistant integration for Kohler's connected kitchen and bath: <b>Anthem</b> and <b>Anthem+</b> digital showers and <b>Sensate</b> kitchen faucets, with early support for the <b>Smart Fan</b>, <b>Numi 2.0</b>, <b>Purewash E930</b>, <b>EvoCycle</b> and <b>Ice Bath</b>, and a sidebar panel laid out like the Konnect app.
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 > ⚠️ This is an **unofficial** integration. It is not affiliated with or endorsed by Kohler, and the underlying API may change at any time.
 
 <p align="center">
-  <img src="docs/images/integration.png" alt="Kohler Konnect integration in Home Assistant">
+  <img src="docs/images/panel_phone.png" alt="The Kohler Konnect panel on a phone: the devices, a shower warming up, and a month of water use" width="800">
 </p>
 
 ## One account, every device
@@ -67,7 +67,7 @@ unless you turn it off in **Configure**;
 [the guide](docs/user_guide.md#the-kohler-konnect-panel) walks through it.
 
 <p align="center">
-  <img src="docs/images/panel.png" alt="The Kohler Konnect panel: the device tiles, and a shower set up to start" width="640">
+  <img src="docs/images/panel_desktop.png" alt="The Kohler Konnect panel on a computer, in the light theme: a tile for each device, grouped by room" width="800">
 </p>
 
 ### Highlights
@@ -281,6 +281,11 @@ turn the log off and open an issue with that file and the diagnostics. If you tr
 untested controls from Home Assistant, say what happened. An Ice Bath owner can help with the
 diagnostics alone.
 
+**Want to try a release before it's out?** Betas are published as GitHub pre-releases. In
+**Settings → Devices & services → HACS**, open **Kohler Konnect**, turn on its **Pre-release**
+switch (enable the entity first), and HACS offers the newest beta as an update. Turn it off to
+go back to stable releases as they come.
+
 ## Known limitations
 
 * **Cloud-only.** No local control path exists for any of these products.
@@ -295,10 +300,6 @@ diagnostics alone.
 * **The Smart Fan, Numi 2.0, Purewash E930, EvoCycle and Ice Bath have never been run** against
   this integration. Their readings may be missing or wrong until an owner's Report Log shows
   what the hardware really sends.
-* **Faucet commands are signed differently now.** The old faucet integration signed in with
-  Kohler's password policy; this one uses the same sign-in as the showers and the Konnect app.
-  Kohler's app sends faucet commands that way, but this integration has not yet been run
-  against a faucet with it.
 
 This is an unofficial, community-built integration, reverse-engineered from Kohler's cloud
 protocol. It is not a supported product, and it comes with no warranty of any kind. Anything
