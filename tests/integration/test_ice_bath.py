@@ -13,7 +13,6 @@ import voluptuous as vol
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import (
     AiohttpClientMocker,
@@ -24,7 +23,7 @@ from custom_components.kohler_konnect.diagnostics import (
     async_get_config_entry_diagnostics,
 )
 
-from .conftest import TENANT_ID, FakeKohler
+from .conftest import TENANT_ID, FakeKohler, registered_device
 from .test_shower_entities import setup
 
 JOURNAL_ID = "ibh-1761667200xyz"
@@ -229,7 +228,7 @@ async def test_a_session_is_logged_unless_its_day_has_one(
     kohler: IceBathKohler,
 ) -> None:
     await setup(hass, config_entry)
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, JOURNAL_ID)})
+    device = registered_device(hass, JOURNAL_ID)
 
     # Wednesday's only record is a missed day, which a session replaces.
     await hass.services.async_call(
@@ -294,7 +293,7 @@ async def test_a_temperature_is_logged_only_when_the_journal_can_hold_it(
     fahrenheit: int | None,
 ) -> None:
     await setup(hass, config_entry)
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, JOURNAL_ID)})
+    device = registered_device(hass, JOURNAL_ID)
     call = {
         "device_id": device.id,
         "duration": {"minutes": 2},
@@ -325,7 +324,7 @@ async def test_no_session_is_logged_before_the_journal_began(
     kohler: IceBathKohler,
 ) -> None:
     await setup(hass, config_entry)
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, JOURNAL_ID)})
+    device = registered_device(hass, JOURNAL_ID)
 
     with pytest.raises(ServiceValidationError) as refused:
         await hass.services.async_call(
@@ -403,7 +402,7 @@ async def test_the_routine_changes_as_the_app_changes_it(
     kohler: IceBathKohler,
 ) -> None:
     await setup(hass, config_entry)
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, JOURNAL_ID)})
+    device = registered_device(hass, JOURNAL_ID)
     reminders = hass.states.get("switch.sam_routine_reminders")
     assert (reminders.state, reminders.attributes["untested"]) == ("on", True)
     assert hass.states.get("switch.sam_follow_up_questions").state == "off"

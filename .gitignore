@@ -23,13 +23,15 @@ reports/
 # OS
 .DS_Store
 
-# Safety net: nothing currently matches these, checked recursively before
-# adding this file, but keep them ignored by default going forward.
+# Safety net: keep anything that looks like a secret ignored by default. Each
+# exception below was checked and holds none.
 *.env
 .env
 *token*
 *credential*
 *secret*
+# The panel's design tokens: colours and spacing.
+!frontend/src/theme/tokens.ts
 
 # Session handoffs — deliberately NOT published.
 #

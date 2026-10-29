@@ -17,7 +17,6 @@ from unittest.mock import patch
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -31,7 +30,13 @@ from custom_components.kohler_konnect.diagnostics import (
 )
 from custom_components.kohler_konnect.konnect.smart_fan import SETTINGS_FIELDS
 
-from .conftest import TENANT_ID, FakeKohler, FakeMqttClient, account
+from .conftest import (
+    TENANT_ID,
+    FakeKohler,
+    FakeMqttClient,
+    account,
+    registered_device,
+)
 from .test_shower_entities import enable, setup
 
 FAN_ID = "sfc-0000ab12"
@@ -698,7 +703,7 @@ async def test_a_schedule_is_saved_as_the_app_s_editor_saves_it(
 ) -> None:
     kohler.settings["fsFanSpeed"] = "LOW"
     await setup(hass, config_entry)
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, FAN_ID)})
+    device = registered_device(hass, FAN_ID)
 
     async def schedule(**data: Any) -> None:
         await hass.services.async_call(
