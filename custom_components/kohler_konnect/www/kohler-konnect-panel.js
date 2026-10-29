@@ -689,15 +689,15 @@ var k = "1.6 4.4", Ke = {
       <line x1="37" y1="21" x2="37" y2="44" />
     </g>`,
 	showerhead: x`
-    <line x1="4" y1="6" x2="4" y2="14" />
-    <line x1="4" y1="10" x2="17" y2="10" />
-    <path d="M14 10 H22 L28 20 H8 Z" />
+    <line x1="7" y1="4" x2="7" y2="12" />
+    <path d="M7 8 H29 V11" />
+    <path d="M25 11 H33 L39 21 H19 Z" />
     <g class="spray" stroke-dasharray=${k}>
-      <line x1="10" y1="24" x2="6" y2="44" />
-      <line x1="14" y1="24" x2="12" y2="44" />
-      <line x1="18" y1="24" x2="18" y2="44" />
-      <line x1="22" y1="24" x2="24" y2="44" />
-      <line x1="26" y1="24" x2="30" y2="44" />
+      <line x1="21" y1="25" x2="17" y2="44" />
+      <line x1="25" y1="25" x2="23" y2="44" />
+      <line x1="29" y1="25" x2="29" y2="44" />
+      <line x1="33" y1="25" x2="35" y2="44" />
+      <line x1="37" y1="25" x2="41" y2="44" />
     </g>`,
 	showerheads: x`
     <line x1="6" y1="6" x2="6" y2="10" />
@@ -5638,90 +5638,99 @@ j("kkp-scenes", class extends q {
 	}
 });
 // src/art/products.ts
-var Mt = x`
-  <g transform="rotate(30 92 58)">
-    <line x1="113" y1="30" x2="113" y2="2" />
-    <rect x="103" y="30" width="20" height="16" rx="4" />
-    <ellipse cx="92" cy="50" rx="44" ry="13" />
-    <path d="M48 50 V58 A44 13 0 0 0 136 58 V50" />
-    <ellipse cx="92" cy="58" rx="36" ry="8.5" opacity="0.45" />
+function Mt(e, t = 2.2) {
+	return x`
+  <g transform=${e} stroke-width=${t}>
+    <line x1="0" y1="-22" x2="0" y2="-78" />
+    <rect x="-8" y="-22" width="16" height="13" rx="4" />
+    <ellipse cx="0" cy="0" rx="36" ry="10.5" />
+    <path d="M-36 0 V7 A36 10.5 0 0 0 36 7 V0" />
+    <ellipse cx="0" cy="7" rx="29" ry="7" opacity="0.45" />
     <g class="spray">
-      <line x1="62" y1="76" x2="62" y2="122" />
-      <line x1="74" y1="78" x2="74" y2="132" />
-      <line x1="86" y1="79" x2="86" y2="136" />
-      <line x1="98" y1="79" x2="98" y2="136" />
-      <line x1="110" y1="78" x2="110" y2="132" />
-      <line x1="122" y1="76" x2="122" y2="122" />
+      <line x1="-25" y1="22" x2="-25" y2="60" />
+      <line x1="-15" y1="23" x2="-15" y2="68" />
+      <line x1="-5" y1="24" x2="-5" y2="72" />
+      <line x1="5" y1="24" x2="5" y2="72" />
+      <line x1="15" y1="23" x2="15" y2="68" />
+      <line x1="25" y1="22" x2="25" y2="60" />
     </g>
-  </g>`, Nt = x`
+  </g>`;
+}
+var Nt = Mt("translate(86 81) rotate(30)"), Pt = x`
   <path d="M108 140 V66 A36 36 0 0 0 36 66 V70" />
   <path d="M97 140 V66 A25 25 0 0 0 47 66 V70" />
-  <path d="M33.5 70 H49.5 L51 92 A4 4 0 0 1 47 96.5 H37 A4 4 0 0 1 32 92 Z"
-    transform="rotate(-14 41.5 83)" />
-  <line x1="36" y1="80" x2="48" y2="77" opacity="0.5" />
+  <path d="M33.5 70 H49.5 L51 92 A4 4 0 0 1 47 96.5 H37 A4 4 0 0 1 32 92 Z" />
+  <line x1="35" y1="79" x2="48" y2="79" opacity="0.5" />
   <path class="accent" d="M53 50 A14 14 0 0 1 63 42.5" />
   <path d="M84 140 H122" />
   <circle cx="113" cy="118" r="6" />
   <path d="M117 113 L127 97" />
-  <line class="stream" x1="44" y1="101" x2="46" y2="152" />`, Pt = x`
-  <rect x="46" y="16" width="68" height="128" rx="14" />
-  <rect x="55" y="27" width="50" height="78" rx="8" />
-  <circle cx="80" cy="64" r="20" opacity="0.5" />
-  <path class="accent" d="M63.7 75.9 A20 20 0 1 1 96.3 75.9" />
-  <circle cx="80" cy="125" r="9" />
-  <g class="spray">
-    <line x1="72" y1="62" x2="72" y2="68" />
-    <line x1="80" y1="58" x2="80" y2="70" />
-    <line x1="88" y1="62" x2="88" y2="68" />
-  </g>`, Ft = x`
-  <rect x="22" y="22" width="116" height="116" rx="20" />
-  <rect x="34" y="34" width="92" height="92" rx="12" opacity="0.4" />
-  <circle cx="80" cy="80" r="35" />
-  <g class="rotor">
-    <path d="M80 80 C 72 66 74 52 88 48 C 92 60 88 72 80 80 Z" />
-    <path d="M80 80 C 72 66 74 52 88 48 C 92 60 88 72 80 80 Z" transform="rotate(120 80 80)" />
-    <path d="M80 80 C 72 66 74 52 88 48 C 92 60 88 72 80 80 Z" transform="rotate(240 80 80)" />
+  <line class="stream" x1="41.5" y1="101" x2="41.5" y2="152" />`, Ft = x`
+  <line x1="12" y1="44" x2="148" y2="44" opacity="0.45" />
+  <rect x="48" y="26" width="64" height="18" rx="2" opacity="0.45" />
+  <rect x="22" y="44" width="116" height="12" rx="2" />
+  <path d="M28 56 L42 70 H118 L132 56" />
+  <g opacity="0.45">
+    <line x1="52" y1="60" x2="52" y2="66" />
+    <line x1="62" y1="60" x2="62" y2="66" />
+    <line x1="72" y1="60" x2="72" y2="66" />
+    <line x1="88" y1="60" x2="88" y2="66" />
+    <line x1="98" y1="60" x2="98" y2="66" />
+    <line x1="108" y1="60" x2="108" y2="66" />
   </g>
-  <circle cx="80" cy="80" r="5" />
-  <path class="accent" d="M56 124 H104" />`, It = x`
-  <rect x="50" y="18" width="60" height="42" rx="9" />
-  <path d="M38 70 H122 A6 6 0 0 1 128 76 C128 102 108 120 84 122 H76 C52 120 32 102 32 76 A6 6 0 0 1 38 70 Z" />
-  <path d="M62 122 L58 144 H104 L100 122" />
-  <ellipse cx="80" cy="76" rx="38" ry="5" opacity="0.45" />
-  <path class="accent" d="M58 39 H102" />`, Lt = x`
-  <rect x="30" y="14" width="100" height="132" rx="12" />
-  <path d="M30 116 H130" opacity="0.45" />
-  <line x1="62" y1="34" x2="62" y2="56" />
-  <rect x="54" y="56" width="16" height="10" rx="3" />
+  <path class="accent" d="M60 74 H100" />
   <g class="spray">
-    <line x1="56" y1="72" x2="52" y2="96" />
-    <line x1="62" y1="72" x2="62" y2="98" />
-    <line x1="68" y1="72" x2="72" y2="96" />
-  </g>
-  <path class="accent" d="M96 128 A14 14 0 1 1 118 116 M118 106 V116 H108" />`, Rt = x`
-  <path d="M24 64 H136" />
-  <path d="M30 64 V114 A18 18 0 0 0 48 132 H112 A18 18 0 0 0 130 114 V64" />
-  <path d="M38 84 C46 79 54 89 62 84 S78 79 86 84 S102 89 110 84 S118 81 122 83" opacity="0.45" />
-  <path d="M48 132 L44 144 M112 132 L116 144" />
+    <line x1="44" y1="118" x2="44" y2="86" />
+    <line x1="62" y1="130" x2="62" y2="86" />
+    <line x1="80" y1="134" x2="80" y2="86" />
+    <line x1="98" y1="130" x2="98" y2="86" />
+    <line x1="116" y1="118" x2="116" y2="86" />
+  </g>`, It = x`
+  <path d="M104 117 V37 A6 6 0 0 1 110 31 H126 A6 6 0 0 1 132 37 V117" />
+  <path d="M104 33 H31 A3 3 0 0 0 28 36 V38 A3 3 0 0 0 31 41 H104" />
+  <path d="M32 41 L50 117 H132" />
+  <line x1="34" y1="46" x2="104" y2="46" opacity="0.45" />
+  <path d="M58 117 V123 H124 V117" />
+  <path class="accent" d="M54 129 H128" />`, Lt = x`
+  <g transform="translate(79 82) rotate(-22) scale(0.84)" stroke-width="2.62">
+    <path d="M34 -24 H-22 C-58 -24 -78 -12 -78 0 C-78 12 -58 24 -22 24 H34" />
+    <path d="M-78 0 V7 C-78 19 -58 31 -22 31 H34" />
+    <path d="M-62 0 C-62 -8 -46 -14 -24 -14 H22 C28 -14 28 14 22 14 H-24 C-46 14 -62 8 -62 0 Z"
+      opacity="0.45" />
+    <path d="M34 -32 H54 A6 6 0 0 1 60 -26 V32 A6 6 0 0 1 54 38 H34 Z" />
+    <line x1="40" y1="-24" x2="40" y2="30" opacity="0.45" />
+    <path d="M38 38 V46 A4 4 0 0 0 42 50 H58 A4 4 0 0 0 62 46 V36" />
+    <g class="accent">
+      <circle cx="45" cy="44" r="1.6" />
+      <circle cx="51" cy="44" r="1.6" />
+      <circle cx="57" cy="44" r="1.6" />
+    </g>
+  </g>`, Rt = x`
+  ${Mt("translate(69 72) rotate(30) scale(0.84)", 2.62)}
   <g class="accent">
-    <path d="M80 16 V48 M75 19 L80 23 L85 19 M75 45 L80 41 L85 45" />
-    <path d="M80 16 V48 M75 19 L80 23 L85 19 M75 45 L80 41 L85 45" transform="rotate(60 80 32)" />
-    <path d="M80 16 V48 M75 19 L80 23 L85 19 M75 45 L80 41 L85 45" transform="rotate(120 80 32)" />
+    <path d="M105 120 A16 16 0 0 1 133 114 M133 114 L134 106 M133 114 L126 112" />
+    <path d="M135 130 A16 16 0 0 1 107 136 M107 136 L106 144 M107 136 L114 138" />
   </g>`, zt = x`
+  <path d="M20 60 H112 L140 40 H48 Z" />
+  <path d="M20 60 V114 A6 6 0 0 0 26 120 H106 A6 6 0 0 0 112 114 V60" />
+  <path d="M112 120 L134 104 A6 6 0 0 0 140 98 V40" />
+  <path d="M42 56 H98 L114 45 H58 Z" opacity="0.45" />
+  <path class="accent" d="M48 52 C54 49 60 55 66 52 S78 49 84 52 S96 55 102 51" />
+  <rect x="104" y="46" width="22" height="9" rx="4.5" transform="rotate(-35 115 50.5)" />`, Bt = x`
   <circle cx="80" cy="80" r="56" opacity="0.4" />
   <path d="M80 40 C80 40 54 72 54 92 A26 26 0 0 0 106 92 C106 72 80 40 80 40 Z" />
-  <path class="accent" d="M68 94 A12 12 0 0 0 80 106" />`, Bt = {
-	valve: Mt,
-	controller: Pt,
-	faucet: Nt,
+  <path class="accent" d="M68 94 A12 12 0 0 0 80 106" />`, Vt = {
+	valve: Nt,
+	controller: Nt,
+	faucet: Pt,
 	smart_fan: Ft,
 	toilet: It,
-	evocycle: Lt,
-	ice_bath: Rt
+	evocycle: Rt,
+	ice_bath: zt
 };
-function Z(e) {
+function Z(e, t) {
 	return x`<svg class="art" viewBox="0 0 160 160" fill="none" stroke="currentColor"
-    stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${Bt[e] ?? zt}</svg>`;
+    stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${e === "toilet" && t?.startsWith("Purewash") ? Lt : Vt[e] ?? Bt}</svg>`;
 }
 // src/theme/art.ts
 var Q = o`
@@ -5758,21 +5767,6 @@ var Q = o`
   .running .art .stream {
     opacity: 1;
     animation: kk-fall 0.6s linear infinite;
-  }
-
-  .art .rotor {
-    transform-box: view-box;
-    transform-origin: 80px 80px;
-  }
-
-  .running .art .rotor {
-    animation: kk-spin 1.4s linear infinite;
-  }
-
-  @keyframes kk-spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   @keyframes kk-fall {
@@ -6236,7 +6230,7 @@ j("kkp-faucet-ring", class extends E {
 	}
 });
 // src/components/slider.ts
-var Vt = 400, Ht = 5e3;
+var Ht = 400, Ut = 5e3;
 j("kkp-slider", class extends E {
 	static {
 		this.properties = {
@@ -6387,12 +6381,12 @@ j("kkp-slider", class extends E {
 		return Math.min(this.max, Math.max(this.min, Number(t.toFixed(4))));
 	}
 	setDraft(e, t) {
-		this.draft = this.snap(e), window.clearTimeout(this.commitTimer), this.commitTimer = void 0, t === "now" && this.commit(), t === "soon" && (this.commitTimer = window.setTimeout(() => this.commit(), Vt));
+		this.draft = this.snap(e), window.clearTimeout(this.commitTimer), this.commitTimer = void 0, t === "now" && this.commit(), t === "soon" && (this.commitTimer = window.setTimeout(() => this.commit(), Ht));
 	}
 	commit() {
 		window.clearTimeout(this.commitTimer), this.commitTimer = void 0, this.draft === null || this.draft === this.value ? this.draft = null : (this.dispatchEvent(new CustomEvent("change", { detail: this.draft })), window.clearTimeout(this.draftTimer), this.draftTimer = window.setTimeout(() => {
 			this.draft = null;
-		}, Ht));
+		}, Ut));
 	}
 	valueAt(e) {
 		let t = e.currentTarget.getBoundingClientRect(), n = t.width - 40, r = Math.min(1, Math.max(0, (e.clientX - t.left - 20) / n));
@@ -6476,7 +6470,7 @@ j("kkp-slider", class extends E {
 	}
 });
 // src/components/editors.ts
-function Ut(e) {
+function Wt(e) {
 	let t = e.choices.includes(e.current);
 	return b`<div class="editor">
     <div class="choices" role="radiogroup" aria-label=${e.label} @keydown=${lt}>
@@ -6492,7 +6486,7 @@ function Ut(e) {
     </div>
   </div>`;
 }
-function Wt(e) {
+function Gt(e) {
 	let t = e.draft;
 	return b`<div class="editor">
     <kkp-slider
@@ -6519,14 +6513,14 @@ function Wt(e) {
   </div>`;
 }
 // src/views/generic.ts
-var Gt = /* @__PURE__ */ new Set([
+var Kt = /* @__PURE__ */ new Set([
 	"switch",
 	"button",
 	"select",
 	"number",
 	"light",
 	"fan"
-]), Kt = /* @__PURE__ */ new Set(["report_log"]), qt = /* @__PURE__ */ new Set(["calendar"]), Jt = /* @__PURE__ */ new Set(["start_rapid_clean", "start_deep_clean"]);
+]), qt = /* @__PURE__ */ new Set(["report_log"]), Jt = /* @__PURE__ */ new Set(["calendar"]), Yt = /* @__PURE__ */ new Set(["start_rapid_clean", "start_deep_clean"]);
 j("kkp-generic", class extends q {
 	static {
 		this.properties = {
@@ -6587,7 +6581,7 @@ j("kkp-generic", class extends q {
 		});
 	}
 	async press(e) {
-		if (!Jt.has(e) || await this.ctx.confirm({
+		if (!Yt.has(e) || await this.ctx.confirm({
 			title: P("generic.ozone_title"),
 			body: P("generic.ozone_body"),
 			confirmLabel: P("generic.ozone_confirm")
@@ -6619,7 +6613,7 @@ j("kkp-generic", class extends q {
 			key: s,
 			onClick: () => this.toggleOpen(s, o)
 		})}
-          ${this.open === s ? Wt({
+          ${this.open === s ? Gt({
 			label: P("generic.brightness", { name: n }),
 			value: o,
 			draft: this.draft,
@@ -6640,7 +6634,7 @@ j("kkp-generic", class extends q {
 			key: c,
 			onClick: () => this.toggleOpen(c)
 		})}
-          ${this.open === c ? Ut({
+          ${this.open === c ? Wt({
 			label: P("generic.effect", { name: n }),
 			choices: i,
 			current: String(u ?? ""),
@@ -6663,7 +6657,7 @@ j("kkp-generic", class extends q {
 				disabled: i,
 				onClick: () => this.toggleOpen(e)
 			})}
-        ${a ? Ut({
+        ${a ? Wt({
 				label: this.name(t),
 				choices: n,
 				current: t.state,
@@ -6683,7 +6677,7 @@ j("kkp-generic", class extends q {
 				disabled: i,
 				onClick: () => this.toggleOpen(e, n)
 			})}
-        ${a ? Wt({
+        ${a ? Gt({
 				label: this.name(t),
 				value: n,
 				draft: this.draft,
@@ -6728,9 +6722,9 @@ j("kkp-generic", class extends q {
 		});
 	}
 	render() {
-		let e = Object.entries(this.device.roles).filter(([e]) => !Kt.has(e)).map(([e, t]) => [e, this.hass.states[t]]).filter((e) => !!e[1]).filter(([, e]) => !qt.has(e.entity_id.split(".")[0])).filter(([, e]) => !this.hass.entities?.[e.entity_id]?.hidden), t = e.filter(([, e]) => Gt.has(e.entity_id.split(".")[0])), n = e.filter(([, e]) => !Gt.has(e.entity_id.split(".")[0])), r = this.device.untested.length > 0;
+		let e = Object.entries(this.device.roles).filter(([e]) => !qt.has(e)).map(([e, t]) => [e, this.hass.states[t]]).filter((e) => !!e[1]).filter(([, e]) => !Jt.has(e.entity_id.split(".")[0])).filter(([, e]) => !this.hass.entities?.[e.entity_id]?.hidden), t = e.filter(([, e]) => Kt.has(e.entity_id.split(".")[0])), n = e.filter(([, e]) => !Kt.has(e.entity_id.split(".")[0])), r = this.device.untested.length > 0;
 		return b`
-      <div class="art">${Z(this.device.kind)}</div>
+      <div class="art">${Z(this.device.kind, this.device.model)}</div>
       ${r ? L("info", P("generic.untested_body")) : C}
       ${t.length ? I(P("generic.controls"), t.map(([e, t]) => this.control(e, t))) : C}
       ${n.length ? I(P("generic.readings"), n.map(([, e]) => F({
@@ -7103,7 +7097,7 @@ j("kkp-generic", class extends q {
 		let t = U(B(this.hass, e, "water_month")), n = U(B(this.hass, e, "water_today")), r = B(this.hass, e, "water_week")?.attributes.per_day, i = r ? Object.values(r).slice(-7) : [], a = Math.max(...i, 0), o = e.units.volume;
 		return b`<button class="card" @click=${() => this.ctx.navigate(`/d/${e.id}/usage`)}>
       <div class="top">
-        <span class="thumb">${Z(e.kind)}</span>
+        <span class="thumb">${Z(e.kind, e.model)}</span>
         <span class="name">${e.name}</span>
         <span class="chev">${O("chevronRight")}</span>
       </div>
@@ -7124,7 +7118,7 @@ j("kkp-generic", class extends q {
 	}
 });
 // src/views/home.ts
-var Yt = "https://github.com/kedube/ha-kohler-konnect/blob/main/docs/user_guide.md";
+var Xt = "https://github.com/kedube/ha-kohler-konnect/blob/main/docs/user_guide.md";
 j("kkp-home", class extends E {
 	static {
 		this.properties = {
@@ -7375,7 +7369,7 @@ j("kkp-home", class extends E {
     >
       ${t.tone === "alert" ? b`<span class="badge" aria-hidden="true"></span>` : C}
       ${n ? b`<span class="untested">${P("status.untested")}</span>` : C}
-      <span class="art-box">${Z(e.kind)}</span>
+      <span class="art-box">${Z(e.kind, e.model)}</span>
       <span class="name">${e.name}</span>
       <span class="status ${t.tone}" id="status-${e.id}">${t.text}</span>
     </button>`;
@@ -7434,7 +7428,7 @@ j("kkp-home", class extends E {
             <div class="summary">${this.renderSummary()}</div>
           </div>
         </div>
-        <a class="help" href=${Yt} target="_blank" rel="noreferrer" aria-label=${P("home.help")}>
+        <a class="help" href=${Xt} target="_blank" rel="noreferrer" aria-label=${P("home.help")}>
           ${O("help")}<span>${P("home.help")}</span>
         </a>
       </div>
@@ -7547,7 +7541,7 @@ j("kkp-home", class extends E {
 			key: e,
 			onClick: () => this.toggleOpen(e)
 		})}
-      ${a ? Ut({
+      ${a ? Wt({
 			label: t,
 			choices: i,
 			current: r.state,
@@ -7569,7 +7563,7 @@ j("kkp-home", class extends E {
         @change=${(e) => this.selectOption("warmup", e.detail ? r : "Off")}
       ></kkp-toggle>`
 		})}
-      ${n && t.length > 1 ? Ut({
+      ${n && t.length > 1 ? Wt({
 			label: P("settings.warmup_outlets"),
 			choices: t,
 			current: e.state,
@@ -7591,7 +7585,7 @@ j("kkp-home", class extends E {
 			key: e,
 			onClick: () => this.toggleOpen(e, a)
 		})}
-      ${o ? Wt({
+      ${o ? Gt({
 			label: t,
 			value: a,
 			draft: this.draft,
@@ -7941,23 +7935,23 @@ j("kkp-home", class extends E {
 	}
 });
 // src/util/staging.ts
-function Xt(e, t) {
+function Zt(e, t) {
 	return e === null || !t ? e : Math.min(t.max, Math.max(t.min, Math.round(e)));
 }
-function Zt(e, t) {
+function Qt(e, t) {
 	return e?.staging_bounds?.find((e) => e.zone === t);
 }
-function Qt(e, t, n) {
+function $t(e, t, n) {
 	return e.zones.map(({ zone: r }) => {
 		let i = t?.default_shower?.zones.find((e) => e.zone === r), a = B(n, e, `temperature:${r}`), o = a?.attributes?.unit_of_measurement === e.units.temperature ? U(a) : null;
 		return {
 			zone: r,
 			outlets: i ? [...i.outlets] : [],
-			temperature: Xt(i?.temperature ?? o, Zt(t, r))
+			temperature: Zt(i?.temperature ?? o, Qt(t, r))
 		};
 	});
 }
-function $t(e, t, n) {
+function en(e, t, n) {
 	return e.map((e) => {
 		if (e.zone !== t) return e;
 		let r = e.outlets.includes(n) ? e.outlets.filter((e) => e !== n) : [...e.outlets, n].sort((e, t) => e - t);
@@ -7967,20 +7961,20 @@ function $t(e, t, n) {
 		};
 	});
 }
-function en(e, t, n, r) {
+function tn(e, t, n, r) {
 	return e.map((e) => e.zone === t ? {
 		...e,
-		temperature: Xt(n, Zt(r, t))
+		temperature: Zt(n, Qt(r, t))
 	} : e);
 }
-function tn(e) {
+function nn(e) {
 	return e.some((e) => e.outlets.length > 0);
 }
-function nn(e) {
+function rn(e) {
 	let t = e.find((e) => e.zone === 1);
-	return tn(e) && t?.temperature !== null && t !== void 0;
+	return nn(e) && t?.temperature !== null && t !== void 0;
 }
-function rn(e, t, n) {
+function an(e, t, n) {
 	let r = { device_id: e };
 	for (let e of t) {
 		e.temperature !== null && (r[`zone${e.zone}_temperature`] = e.temperature);
@@ -8160,7 +8154,7 @@ j("kkp-shower", class extends q {
 		return X(this.hass, this.device);
 	}
 	willUpdate(e) {
-		super.willUpdate(e), this.phase === "idle" ? this.stage && this.touched || (this.stage = Qt(this.device, this.live, this.hass)) : (this.stage = null, this.touched = !1);
+		super.willUpdate(e), this.phase === "idle" ? this.stage && this.touched || (this.stage = $t(this.device, this.live, this.hass)) : (this.stage = null, this.touched = !1);
 	}
 	focusFallback() {
 		return this.renderRoot.querySelector("kkp-running, .simple-start");
@@ -8185,19 +8179,19 @@ j("kkp-shower", class extends q {
 			zone1: this.stagedFlow[1] ?? this.number("flow:1"),
 			zone2: this.stagedFlow[2] ?? this.number("flow:2")
 		};
-		this.lastStarted = e, this.queued("shower", "kohler_konnect", "custom_shower", rn(this.device.id, e, t));
+		this.lastStarted = e, this.queued("shower", "kohler_konnect", "custom_shower", an(this.device.id, e, t));
 	}
 	resume() {
 		let e = this.device.zones.map((e) => ({
 			zone: e.zone,
 			outlets: e.outlets.filter((t) => this.isOn(`outlet:${e.zone}:${t.position}`)).map((e) => e.position),
 			temperature: this.number(`temperature:${e.zone}`)
-		})), t = this.lastStarted ?? (tn(e) ? e : Qt(this.device, this.live, this.hass));
+		})), t = this.lastStarted ?? (nn(e) ? e : $t(this.device, this.live, this.hass));
 		this.sendShower(t);
 	}
 	toggleOutlet(e, t) {
 		if (this.phase === "idle") {
-			this.touched = !0, this.stage = $t(this.stage ?? [], e, t.position);
+			this.touched = !0, this.stage = en(this.stage ?? [], e, t.position);
 			return;
 		}
 		let n = `outlet:${e}:${t.position}`, r = this.entityId(n);
@@ -8205,7 +8199,7 @@ j("kkp-shower", class extends q {
 	}
 	setTemperature(e, t) {
 		if (this.phase === "idle") {
-			this.touched = !0, this.stage = en(this.stage ?? [], e, t, this.live);
+			this.touched = !0, this.stage = tn(this.stage ?? [], e, t, this.live);
 			return;
 		}
 		let n = this.entityId(`temperature:${e}`);
@@ -8312,8 +8306,8 @@ j("kkp-shower", class extends q {
       ${this.phase === "offline" ? L("warning", P("status.offline")) : C}
       ${this.renderHero()}
       ${this.device.zones.map((t) => this.renderZone(t, e))}
-      ${t && tn(n) ? b`<div class="start-bar">
-            <button class="pill filled" ?disabled=${!nn(n)} @click=${() => this.sendShower(n)}>
+      ${t && nn(n) ? b`<div class="start-bar">
+            <button class="pill filled" ?disabled=${!rn(n)} @click=${() => this.sendShower(n)}>
               ${O("play")}${P("shower.start")}
             </button>
           </div>` : C}
@@ -8347,7 +8341,7 @@ j("kkp-shower", class extends q {
 	}
 });
 // src/views/smart-fan.ts
-var an = /* @__PURE__ */ new Set([
+var on = /* @__PURE__ */ new Set([
 	"off",
 	"unavailable",
 	"unknown"
@@ -8473,7 +8467,7 @@ j("kkp-smart-fan", class extends q {
 		];
 	}
 	get fanRunning() {
-		return !an.has(this.entity("fan_state")?.state ?? "off");
+		return !on.has(this.entity("fan_state")?.state ?? "off");
 	}
 	get lightOn() {
 		return this.isOn("light_state");
@@ -8558,7 +8552,7 @@ j("kkp-smart-fan", class extends q {
 	}
 });
 // src/components/bar-chart.ts
-var on = [
+var sn = [
 	1,
 	1.5,
 	2,
@@ -8570,18 +8564,18 @@ var on = [
 	8,
 	10
 ];
-function sn(e, t = 4) {
+function cn(e, t = 4) {
 	if (!(e > 0)) return {
 		top: t,
 		step: 1
 	};
-	let n = e / t, r = 10 ** Math.floor(Math.log10(n)), i = (on.find((e) => n / r <= e) ?? 10) * r;
+	let n = e / t, r = 10 ** Math.floor(Math.log10(n)), i = (sn.find((e) => n / r <= e) ?? 10) * r;
 	return {
 		top: i * t,
 		step: i
 	};
 }
-var cn = 0, ln = class extends E {
+var ln = 0, un = class extends E {
 	static {
 		this.properties = {
 			bars: { attribute: !1 },
@@ -8592,7 +8586,7 @@ var cn = 0, ln = class extends E {
 		};
 	}
 	constructor() {
-		super(), this.gradient = `kk-bars-${++cn}`, this.onWindowKey = (e) => {
+		super(), this.gradient = `kk-bars-${++ln}`, this.onWindowKey = (e) => {
 			e.key === "Escape" && (this.selected = null);
 		}, this.bars = [], this.ticks = [], this.width = 0, this.selected = null;
 	}
@@ -8686,7 +8680,7 @@ var cn = 0, ln = class extends E {
 		e.preventDefault();
 	}
 	render() {
-		let e = Math.max(this.width, 240), t = e - 44, n = sn(Math.max(0, ...this.bars.map((e) => e.value ?? 0))), r = t / Math.max(this.bars.length, 1), i = Math.max(3, Math.min(16, r * .42)), a = (e) => 14 + 216 * (1 - e / n.top), o = Array.from({ length: 5 }, (e, t) => t * n.step), s = this.selected, c = s === null ? void 0 : this.bars[s], l = (e) => r * (e + .5);
+		let e = Math.max(this.width, 240), t = e - 44, n = cn(Math.max(0, ...this.bars.map((e) => e.value ?? 0))), r = t / Math.max(this.bars.length, 1), i = Math.max(3, Math.min(16, r * .42)), a = (e) => 14 + 216 * (1 - e / n.top), o = Array.from({ length: 5 }, (e, t) => t * n.step), s = this.selected, c = s === null ? void 0 : this.bars[s], l = (e) => r * (e + .5);
 		return b`
       <svg
         viewBox="0 0 ${e} ${260}"
@@ -8705,7 +8699,7 @@ var cn = 0, ln = class extends E {
         </defs>
         ${o.map((e) => x`
             <line class="grid" x1="0" x2=${t} y1=${a(e)} y2=${a(e)} />
-            <text x=${t + 10} y=${a(e) + 4}>${un(e)}</text>`)}
+            <text x=${t + 10} y=${a(e) + 4}>${dn(e)}</text>`)}
         ${this.bars.map((e, t) => {
 			let a = e.value ? Math.max(2, 216 * (e.value / n.top)) : 0;
 			return x`
@@ -8735,38 +8729,38 @@ var cn = 0, ln = class extends E {
     `;
 	}
 };
-function un(e) {
+function dn(e) {
 	return Number.isInteger(e) ? String(e) : e.toFixed(1);
 }
-j("kkp-bar-chart", ln);
+j("kkp-bar-chart", un);
 // src/util/usage.ts
 function $(e) {
 	let [t, n, r] = e.split("-").map(Number);
 	return new Date(t, (n || 1) - 1, r || 1);
 }
-function dn(e, t) {
+function fn(e, t) {
 	return t === "volume" ? e.volume : e.minutes;
 }
-function fn(e, t, n) {
+function pn(e, t, n) {
 	return t === "volume" ? mt(e, n) : ht(e);
 }
-function pn(e, t) {
+function mn(e, t) {
 	let n = e.period === "year", r = new Intl.DateTimeFormat(N(), n ? { month: "long" } : {
 		weekday: "short",
 		month: "short",
 		day: "numeric"
 	});
 	return e.buckets.map((n) => {
-		let i = r.format($(n.key)), a = dn(n, t);
+		let i = r.format($(n.key)), a = fn(n, t);
 		return {
 			key: n.key,
 			label: i,
 			value: a,
-			tooltip: `${i} · ${fn(a ?? 0, t, e.unit)}`
+			tooltip: `${i} · ${pn(a ?? 0, t, e.unit)}`
 		};
 	});
 }
-function mn(e) {
+function hn(e) {
 	let t = e.buckets;
 	if (e.period === "week") {
 		let e = new Intl.DateTimeFormat(N(), { weekday: "narrow" });
@@ -8795,7 +8789,7 @@ function mn(e) {
 		label: n.format($(t[e].key))
 	}));
 }
-function hn(e) {
+function gn(e) {
 	let t = $(e.start), n = $(e.end);
 	if (e.period === "year") return String(t.getFullYear());
 	if (e.period === "month") return new Intl.DateTimeFormat(N(), {
@@ -8809,7 +8803,7 @@ function hn(e) {
 	});
 	return r.formatRange ? r.formatRange(t, n) : `${r.format(t)} – ${r.format(n)}`;
 }
-var gn = [
+var _n = [
 	"monday",
 	"tuesday",
 	"wednesday",
@@ -8817,7 +8811,7 @@ var gn = [
 	"friday",
 	"saturday",
 	"sunday"
-], _n = /* @__PURE__ */ new Set([
+], vn = /* @__PURE__ */ new Set([
 	"US",
 	"CA",
 	"MX",
@@ -8825,17 +8819,17 @@ var gn = [
 	"JP",
 	"IL"
 ]);
-function vn(e) {
-	let t = gn.indexOf(e?.first_weekday ?? "");
+function yn(e) {
+	let t = _n.indexOf(e?.first_weekday ?? "");
 	if (t >= 0) return t;
 	try {
 		let t = new Intl.Locale(e?.language || "en"), n = t.getWeekInfo?.().firstDay ?? t.weekInfo?.firstDay;
-		return n ? n - 1 : _n.has(t.maximize().region ?? "") ? 6 : 0;
+		return n ? n - 1 : vn.has(t.maximize().region ?? "") ? 6 : 0;
 	} catch {
 		return 0;
 	}
 }
-function yn(e, t) {
+function bn(e, t) {
 	if (!e) return null;
 	let n = e / (t.toLowerCase().startsWith("gal") ? 40 : 150);
 	return n >= 1 ? Math.round(n) : null;
@@ -8992,7 +8986,7 @@ j("kkp-usage", class extends q {
 		let e = ++this.request;
 		this.loading = !0, this.failed = null;
 		try {
-			let t = await this.ctx.api.usageHistory(this.device.id, this.period, vn(this.hass.locale), this.anchor);
+			let t = await this.ctx.api.usageHistory(this.device.id, this.period, yn(this.hass.locale), this.anchor);
 			e === this.request && (this.history = t);
 		} catch (t) {
 			e === this.request && (this.failed = K(t));
@@ -9007,7 +9001,7 @@ j("kkp-usage", class extends q {
 		e && !this.loading && (this.anchor = e, this.load());
 	}
 	render() {
-		let e = this.history, t = e?.unit ?? this.device.units.volume, n = (e) => fn(e ?? null, this.metric, t), r = (e) => e ? this.metric === "volume" ? e.volume : e.minutes : null, i = this.metric === "volume" && this.period !== "week" ? yn(e?.total.volume ?? null, t) : null;
+		let e = this.history, t = e?.unit ?? this.device.units.volume, n = (e) => pn(e ?? null, this.metric, t), r = (e) => e ? this.metric === "volume" ? e.volume : e.minutes : null, i = this.metric === "volume" && this.period !== "week" ? bn(e?.total.volume ?? null, t) : null;
 		return b`
       <kkp-tabs
         .items=${[
@@ -9032,7 +9026,7 @@ j("kkp-usage", class extends q {
         <button aria-label=${P("usage.previous")} ?disabled=${!e?.previous} @click=${() => this.page(e?.previous ?? null)}>
           ${O("back")}
         </button>
-        <span aria-live="polite">${e ? hn(e) : "—"}</span>
+        <span aria-live="polite">${e ? gn(e) : "—"}</span>
         <button aria-label=${P("usage.next")} ?disabled=${!e?.next} @click=${() => this.page(e?.next ?? null)}>
           ${O("chevronRight")}
         </button>
@@ -9053,9 +9047,9 @@ j("kkp-usage", class extends q {
             <button class="pill" @click=${() => this.load()}>${P("usage.retry")}</button>
           </div>` : b`<div class="chart ${this.loading ? "loading" : ""}" aria-busy=${String(this.loading)}>
             <kkp-bar-chart
-              .bars=${e ? pn(e, this.metric) : []}
-              .ticks=${e ? mn(e) : []}
-              caption=${`${P("usage.title")} · ${e ? hn(e) : ""}`}
+              .bars=${e ? mn(e, this.metric) : []}
+              .ticks=${e ? hn(e) : []}
+              caption=${`${P("usage.title")} · ${e ? gn(e) : ""}`}
             ></kkp-bar-chart>
           </div>`}
       ${i && i >= 2 ? b`<div class="equivalent">${O("water")}${P("usage.equivalent_bath", { count: i })}</div>` : C}
@@ -9065,8 +9059,8 @@ j("kkp-usage", class extends q {
 	}
 });
 // src/kohler-konnect-panel.ts
-var bn = 980;
-function xn(e) {
+var xn = 980;
+function Sn(e) {
 	let t = e.split("/").filter(Boolean);
 	if (t[0] === "d" && t[1]) {
 		let e = t[2] ?? "controls";
@@ -9077,7 +9071,7 @@ function xn(e) {
 	}
 	return t[0] === "usage" || t[0] === "account" ? { home: t[0] } : { home: "devices" };
 }
-var Sn = class extends E {
+var Cn = class extends E {
 	static {
 		this.properties = {
 			hass: { attribute: !1 },
@@ -9248,7 +9242,7 @@ var Sn = class extends E {
 	}
 	connectedCallback() {
 		super.connectedCallback(), this.observer = new ResizeObserver((e) => {
-			let t = e[0].contentRect.width >= bn;
+			let t = e[0].contentRect.width >= xn;
 			t !== this.wide && (this.wide = t);
 		}), this.observer.observe(this), this.hass && !this.unsubscribeDevices && this.subscribe();
 	}
@@ -9274,7 +9268,7 @@ var Sn = class extends E {
 		}), this.unsubscribeDevices.catch((e) => this.toast(String(e?.message ?? e), "error"));
 	}
 	followDevice() {
-		let { deviceId: e } = xn(this.route?.path ?? "");
+		let { deviceId: e } = Sn(this.route?.path ?? "");
 		this.liveSubscription?.deviceId !== e && (this.dropLive(), e && this.hass && (this.liveSubscription = {
 			deviceId: e,
 			unsubscribe: this.api.subscribeDevice(e, (t) => {
@@ -9385,7 +9379,7 @@ var Sn = class extends E {
 	}
 	render() {
 		if (!this.hass) return C;
-		let e = xn(this.route?.path ?? ""), t = this.data ? e.deviceId ? this.renderDevice(e.deviceId, e.screen ?? "controls") : b`<div class="page">
+		let e = Sn(this.route?.path ?? ""), t = this.data ? e.deviceId ? this.renderDevice(e.deviceId, e.screen ?? "controls") : b`<div class="page">
             <kkp-home
               .hass=${this.hass}
               .data=${this.data}
@@ -9421,5 +9415,5 @@ var Sn = class extends E {
     `;
 	}
 };
-j("kohler-konnect-panel", Sn);
-export { Sn as KohlerKonnectPanel, xn as parseRoute };
+j("kohler-konnect-panel", Cn);
+export { Cn as KohlerKonnectPanel, Sn as parseRoute };

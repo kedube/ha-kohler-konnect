@@ -137,15 +137,15 @@ const FIXTURES: Record<FixtureKind, SVGTemplateResult> = {
       <line x1="37" y1="21" x2="37" y2="44" />
     </g>`,
   showerhead: svg`
-    <line x1="4" y1="6" x2="4" y2="14" />
-    <line x1="4" y1="10" x2="17" y2="10" />
-    <path d="M14 10 H22 L28 20 H8 Z" />
+    <line x1="7" y1="4" x2="7" y2="12" />
+    <path d="M7 8 H29 V11" />
+    <path d="M25 11 H33 L39 21 H19 Z" />
     <g class="spray" stroke-dasharray=${SPRAY}>
-      <line x1="10" y1="24" x2="6" y2="44" />
-      <line x1="14" y1="24" x2="12" y2="44" />
-      <line x1="18" y1="24" x2="18" y2="44" />
-      <line x1="22" y1="24" x2="24" y2="44" />
-      <line x1="26" y1="24" x2="30" y2="44" />
+      <line x1="21" y1="25" x2="17" y2="44" />
+      <line x1="25" y1="25" x2="23" y2="44" />
+      <line x1="29" y1="25" x2="29" y2="44" />
+      <line x1="33" y1="25" x2="35" y2="44" />
+      <line x1="37" y1="25" x2="41" y2="44" />
     </g>`,
   showerheads: svg`
     <line x1="6" y1="6" x2="6" y2="10" />

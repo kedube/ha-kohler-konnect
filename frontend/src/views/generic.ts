@@ -280,7 +280,7 @@ export class KkpGeneric extends DeviceView {
     const readings = entries.filter(([, e]) => !CONTROL_DOMAINS.has(e.entity_id.split(".")[0]));
     const hasUntested = this.device.untested.length > 0;
     return html`
-      <div class="art">${productArt(this.device.kind)}</div>
+      <div class="art">${productArt(this.device.kind, this.device.model)}</div>
       ${hasUntested ? banner("info", t("generic.untested_body")) : nothing}
       ${controls.length
         ? group(t("generic.controls"), controls.map(([role, entity]) => this.control(role, entity)))

@@ -273,7 +273,7 @@ export class KkpHome extends LitElement {
     >
       ${status.tone === "alert" ? html`<span class="badge" aria-hidden="true"></span>` : nothing}
       ${untested ? html`<span class="untested">${t("status.untested")}</span>` : nothing}
-      <span class="art-box">${productArt(device.kind)}</span>
+      <span class="art-box">${productArt(device.kind, device.model)}</span>
       <span class="name">${device.name}</span>
       <span class="status ${status.tone}" id="status-${device.id}">${status.text}</span>
     </button>`;

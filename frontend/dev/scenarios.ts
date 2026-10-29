@@ -672,6 +672,16 @@ export function bigSystem(): Scenario {
     ],
     states,
   );
+  const seat = buildProduct(
+    { id: "dev_purewash", kind: "toilet", name: "Purewash", area: "Guest Bath", model: "Purewash E930" },
+    [
+      ["activity", "sensor.activity", "idle", { options: ["idle", "rear_wash", "front_wash", "dryer"] }],
+      ["occupied", "binary_sensor.occupied", "off"],
+      ["connected", "binary_sensor.cloud_connection", "on"],
+      ["seat_heat", "select.seat_heat", "low", { ...untested, options: ["off", "low", "medium", "high"] }],
+    ],
+    states,
+  );
   const evo = buildProduct(
     { id: "dev_evocycle", kind: "evocycle", name: "Guest Shower", area: "Guest Bath", model: "EvoCycle" },
     [
@@ -701,16 +711,17 @@ export function bigSystem(): Scenario {
   );
   return {
     key: "big",
-    label: "K-28212 + Anthem+ controller + Smart Fan, Numi, EvoCycle and Ice Bath",
+    label: "K-28212 + Anthem+ controller + Smart Fan, Numi, Purewash, EvoCycle and Ice Bath",
     user: "Alex",
     entries: entries("Kohler Konnect (owner@example.com)"),
-    devices: [valve, controller, fan, toilet, evo, ice],
+    devices: [valve, controller, fan, toilet, seat, evo, ice],
     states,
     details: {
       [valve.descriptor.id]: valveDetails(valve, "kk28212x91", "2024-08-17"),
       [controller.descriptor.id]: controllerDetails(controller),
       [fan.descriptor.id]: smartFanDetails(fan),
       [toilet.descriptor.id]: productDetails(toilet),
+      [seat.descriptor.id]: productDetails(seat),
       [evo.descriptor.id]: productDetails(evo),
       [ice.descriptor.id]: productDetails(ice),
     },

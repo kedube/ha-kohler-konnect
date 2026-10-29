@@ -121,7 +121,7 @@ export class KkpHomeUsage extends LitElement {
     const unit = device.units.volume;
     return html`<button class="card" @click=${() => this.ctx.navigate(`/d/${device.id}/usage`)}>
       <div class="top">
-        <span class="thumb">${productArt(device.kind)}</span>
+        <span class="thumb">${productArt(device.kind, device.model)}</span>
         <span class="name">${device.name}</span>
         <span class="chev">${icon("chevronRight")}</span>
       </div>

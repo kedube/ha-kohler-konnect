@@ -1,7 +1,7 @@
 import { css } from "lit";
 
 // How product and fixture drawings look and move. A parent marks a running device with the
-// `running` class: the spray falls, the faucet's stream appears, the fan's rotor turns.
+// `running` class: the spray falls, the faucet's stream appears, the fan draws air.
 export const artStyles = css`
   .art {
     display: block;
@@ -36,21 +36,6 @@ export const artStyles = css`
   .running .art .stream {
     opacity: 1;
     animation: kk-fall 0.6s linear infinite;
-  }
-
-  .art .rotor {
-    transform-box: view-box;
-    transform-origin: 80px 80px;
-  }
-
-  .running .art .rotor {
-    animation: kk-spin 1.4s linear infinite;
-  }
-
-  @keyframes kk-spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   @keyframes kk-fall {
