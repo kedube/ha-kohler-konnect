@@ -18,18 +18,22 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     DOMAIN,
+    OUTLET_TYPE_TUB_FILLER,
     ZONE_GROUPING_NUMBERED,
 )
 from .coordinator import Controller, KohlerKonnectCoordinator, Valve
 from .entity import KohlerControllerEntity, KohlerValveEntity, zone_label
-from .faucet.binary_sensor import faucet_binary_sensors
+from .konnect.state import GcsPreset
 from .mqtt_connection import MqttConnectionMixin
+from .panel_settings import panel_entities
+from .product_platforms import product_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,6 +57,12 @@ async def async_setup_entry(
             # contradiction trigger joins in where there is one (`cloud_watch.py`).
             ValveCloudConnectionSensor(coordinator, valve),
             ValvePresetActiveSensor(coordinator, valve),
+            *(
+                [ValveBathFillSensor(coordinator, valve)]
+                if _has_tub_filler(valve)
+                else []
+            ),
+            *panel_entities(coordinator, valve, "binary_sensor"),
         ]
         # Only on a multi-zone valve. With one zone, `System Status` already answers "is
         # it running", with warm-up and pause besides; with two, only these say which
@@ -103,9 +113,10 @@ async def async_setup_entry(
             for outlet in range(1, model.outlets_in_zone(zone) + 1)
         ]
 
-    # Each faucet is its own device, with its own coordinator.
-    for faucet in coordinator.faucets:
-        entities += faucet_binary_sensors(faucet)
+    # Every other product's, each device with its own coordinator.
+    entities += product_entities(
+        hass, entry, coordinator, Platform.BINARY_SENSOR, async_add_entities
+    )
     async_add_entities(entities)
 
 
@@ -347,6 +358,47 @@ class ValveZoneActiveSensor(KohlerValveEntity, BinarySensorEntity):
             else round(min(limits) - flowing_for, 1)
         )
         return attributes
+
+
+class ValveBathFillSensor(KohlerValveEntity, BinarySensorEntity):
+    """Whether a bath-fill preset is filling the tub: water runs and the preset driving
+    the valve has a fill amount, as the app shows "Bathfill is running"
+    (`docs/protocol/gcs_valve.md` §8). Only on a valve with a tub filler."""
+
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_name = "Bath Filling"
+
+    def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
+        super().__init__(coordinator, valve)
+        self._attr_unique_id = f"{self._device_id}_bath_filling"
+
+    @property
+    def _preset(self) -> GcsPreset | None:
+        state = self._state
+        if state is None or state.active_preset_id is None:
+            return None
+        return state.presets.get(state.active_preset_id)
+
+    @property
+    def is_on(self) -> bool | None:
+        state = self._state
+        if state is None:
+            return None
+        preset = self._preset
+        return state.is_running and preset is not None and preset.is_bath_fill
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        preset = self._preset if self.is_on else None
+        return {
+            "preset_name": None if preset is None else preset.name,
+            "fill_litres": None if preset is None else preset.volume,
+        }
+
+
+def _has_tub_filler(valve: Valve) -> bool:
+    limits = valve.gcs_state.outlet_limits.values()
+    return any(limit.outlet_type == OUTLET_TYPE_TUB_FILLER for limit in limits)
 
 
 class ValvePresetActiveSensor(KohlerValveEntity, BinarySensorEntity):

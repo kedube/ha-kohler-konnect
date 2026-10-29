@@ -28,20 +28,20 @@ from homeassistant.config_entries import (
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     CONF_MOBILE_DEVICE_ID,
     CONF_REFRESH_TOKEN,
     CONF_TENANT_ID,
     DOMAIN,
-    FAUCET_STORAGE_KEY,
-    FAUCET_STORAGE_VERSION,
     ISSUE_REPLACED_INTEGRATION,
     REPLACED_DOMAINS,
     ZONE_GROUPING_SUBDEVICES,
@@ -50,13 +50,21 @@ from .const import (
 from .coordinator import KohlerKonnectCoordinator, entry_reload_signature
 from .entity import valve_device_info, zone_device_id
 from .konnect import AuthError, KohlerAuth, KohlerClient, KohlerError
+from .products import PRODUCTS
 from .services import async_register_services, async_unregister_services
+from .sidebar import async_setup_sidebar
 
 _LOGGER = logging.getLogger(__name__)
+
+# Set up from the UI only; there is nothing to configure in YAML.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
+    Platform.CALENDAR,
+    Platform.FAN,
+    Platform.LIGHT,
     Platform.NUMBER,
     Platform.SELECT,
     Platform.SENSOR,
@@ -176,6 +184,12 @@ def _async_cleanup_zone_subdevices(
         _LOGGER.info("Removed unused zone sub-device %s", device.name)
 
 
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up what serves every account at once: the sidebar panel and its API."""
+    await async_setup_sidebar(hass)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Kohler Konnect from a config entry."""
     coordinator = KohlerKonnectCoordinator(hass, entry)
@@ -193,7 +207,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, _async_stop))
 
-    # Includes the faucets' first reads, so the platforms below can build from them.
+    # Includes the product devices' first reads, so the platforms can build from them.
     await coordinator.async_setup()
     await coordinator.async_config_entry_first_refresh()
     if coordinator.closed:
@@ -241,7 +255,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     for v in coordinator.valves
                 ),
                 *(c.name for c in coordinator.controllers),
-                *(f"{f.device_name} (faucet)" for f in coordinator.faucets),
+                *(
+                    f"{device.device_name} ({product.kind.noun})"
+                    for product in PRODUCTS
+                    for device in coordinator.products.get(product.key, ())
+                ),
             ),
         )
     )
@@ -290,13 +308,17 @@ async def async_remove_config_entry_device(
     )
     if coordinator is None:
         return False
-    # Case-insensitive, matching how faucet messages are matched.
+    # Case-insensitive, matching how product devices' messages are matched.
     present = {
         kohler_id.lower()
         for kohler_id in (
             *(valve.device_id for valve in coordinator.valves),
             *(controller.device_id for controller in coordinator.controllers),
-            *(faucet.device_id for faucet in coordinator.faucets),
+            *(
+                device.device_id
+                for devices in coordinator.products.values()
+                for device in devices
+            ),
         )
     }
     return not any(
@@ -309,7 +331,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Clean up after a deleted entry, on Kohler's side and on disk.
 
     Unregisters the MQTT stream's mobile device from the account, as the Konnect app does
-    on sign-out (best effort), and removes the faucet store and this entry's Repairs cards.
+    on sign-out (best effort), and removes what its devices kept on disk and this entry's
+    Repairs cards.
     """
     identity = entry.data.get(CONF_MOBILE_DEVICE_ID)
     token = entry.data.get(CONF_REFRESH_TOKEN)
@@ -323,9 +346,12 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 await client.async_unregister_mobile_device(identity)
         except (AuthError, KohlerError, TimeoutError) as err:
             _LOGGER.debug("Could not remove the MQTT registration: %s", err)
-    await Store(
-        hass, FAUCET_STORAGE_VERSION, FAUCET_STORAGE_KEY.format(entry_id=entry.entry_id)
-    ).async_remove()
+    for product in PRODUCTS:
+        await Store(
+            hass,
+            product.storage_version,
+            product.storage_key.format(entry_id=entry.entry_id),
+        ).async_remove()
     # Repairs cards are stored apart from the entry. Devices are still registered here;
     # Home Assistant removes them after this returns.
     device_ids = {

@@ -12,6 +12,7 @@ import logging
 
 from homeassistant.components.button import ButtonDeviceClass, ButtonEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -19,7 +20,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN
 from .coordinator import Controller, KohlerKonnectCoordinator, Valve
 from .entity import KohlerControllerEntity, KohlerValveEntity
-from .faucet.button import faucet_buttons
+from .product_platforms import product_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,9 +54,11 @@ async def async_setup_entry(
             [ControllerNewCaptureButton(coordinator, coordinator.controllers[0])]
         )
 
-    # Each faucet's dispense and leak buttons; its preset button follows once it has one.
-    for faucet in coordinator.faucets:
-        async_add_entities(faucet_buttons(hass, entry, faucet, async_add_entities))
+    # Every other product's; a faucet's preset button follows once it has a preset.
+    if products := product_entities(
+        hass, entry, coordinator, Platform.BUTTON, async_add_entities
+    ):
+        async_add_entities(products)
 
 
 class ValveRestartButton(KohlerValveEntity, ButtonEntity):

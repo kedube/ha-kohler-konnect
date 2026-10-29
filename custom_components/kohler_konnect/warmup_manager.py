@@ -31,6 +31,7 @@ from .const import (
     WARMUP_AUTO_RESTORE_MAX_CONSECUTIVE,
     WARMUP_AUTO_RESTORE_NO_TARGET,
     WARMUP_AUTO_RESTORE_NOT_WRITABLE,
+    WARMUP_AUTO_RESTORE_ON,
     WARMUP_AUTO_RESTORE_SETTLED_SECONDS,
     WARMUP_CONTEXT_AFTER_SECONDS,
     WARMUP_CONTEXT_BEFORE_SECONDS,
@@ -318,6 +319,25 @@ class WarmupManager:
         enabled.
         """
         return bool(self._valve.option(CONF_WARMUP_AUTO_RESTORE, False))
+
+    def set_auto_restore(self, enabled: bool) -> None:
+        """Turn auto-restore on or off, and say in the log what it will now do.
+
+        Saved in the entry options, which reload nothing. On with no mode to restore it
+        does nothing, which is indistinguishable from broken unless it says so.
+        """
+        self._valve.set_option(CONF_WARMUP_AUTO_RESTORE, enabled)
+        if not enabled:
+            _LOGGER.info("Warmup Auto-Restore disabled")
+        elif self.last_mode is None:
+            _LOGGER.warning(WARMUP_AUTO_RESTORE_NO_TARGET)
+        else:
+            _LOGGER.warning(
+                WARMUP_AUTO_RESTORE_ON,
+                self.last_mode,
+                WARMUP_AUTO_RESTORE_DELAY_SECONDS,
+            )
+        self._valve.coordinator.async_refresh_entities()
 
     @property
     def last_mode(self) -> str | None:

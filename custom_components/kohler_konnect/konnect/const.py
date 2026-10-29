@@ -69,6 +69,11 @@ SKU_HUB = "HUB"
 SKU_SENSATE = "SEN"
 SKU_SETRA = "SET"
 FAUCET_SKUS = frozenset({SKU_SENSATE, SKU_SETRA})
+SKU_SMART_FAN = "SFC"
+SKU_NUMI = "NUM"
+SKU_PUREWASH = "BLD"
+SKU_EVOCYCLE = "EVO"
+SKU_ICE_BATH = "IBH"
 
 # ---------------------------------------------------------------------------
 # Reads — /devices/api/v1/device-management/
@@ -76,6 +81,9 @@ FAUCET_SKUS = frozenset({SKU_SENSATE, SKU_SETRA})
 DEVICE_API = "/devices/api/v1/device-management"
 FIRMWARE_API = "/platform/api/v1/firmware"
 CUSTOMER_DEVICE = f"{DEVICE_API}/customer-device/{{tenant_id}}"
+# PATCH: the account's record of one device, which names it and holds an EvoCycle's
+# water-savings goal (platform.md §3, evocycle.md §3.8).
+CUSTOMER_HOME_DEVICE = f"{CUSTOMER_DEVICE}/{{home_id}}/device"
 HUB_STATE = f"{DEVICE_API}/hub-state/{{device_id}}"
 HUB_FAVORITES = f"{DEVICE_API}/hub-experience/{{device_id}}/favorites"
 HUB_EXPERIENCES = f"{DEVICE_API}/hub-experience/{{device_id}}/experiences"
@@ -127,6 +135,47 @@ FAUCET_EXPERIENCE = f"{DEVICE_API}/faucet-experience"
 # `FAUCET_EXPERIENCE` fails or is empty.
 CUSTOMER_EXPERIENCE = f"{DEVICE_API}/customer-experience/{{tenant_id}}"
 
+# Smart Fan (`SFC`). See `docs/protocol/smart_fan.md`.
+#
+# Live state, `{connectionState, deviceId, tenantId, sku, state: {fanStatus, fanSpeed,
+# lightStatus, …}}`; the stored defaults and parts, under `configuration.sfcSettings` and
+# `configuration.about`; and the favorites, `experiences[]`.
+SFC_STATE = f"{DEVICE_API}/sfc-state/{{device_id}}"
+SFC_CONFIGURATION = f"{DEVICE_API}/sfc-configuration/{{device_id}}"
+SFC_EXPERIENCE = f"{DEVICE_API}/sfc-experience/{{device_id}}"
+
+# Numi 2.0 (`NUM`) and Purewash E930 (`BLD`): one protocol, whose paths take `numi` or
+# `blade`. See `docs/protocol/numi_purewash.md`.
+TOILET_STATE = f"{DEVICE_API}/{{segment}}-state/{{device_id}}"
+# Water used, with flush, wash and dryer counts: `numiUsageDataDetailsList[]` for both
+# (`numi_purewash.md` §6.2). The query is `GCS_USAGE`'s.
+TOILET_USAGE = f"{DEVICE_API}/{{segment}}-usage/{{device_id}}"
+# The stored defaults (`setting`), read whole and patched one part at a time (§2.4, §3.5).
+TOILET_SETTING = f"{DEVICE_API}/{{segment}}-setting/{{device_id}}"
+TOILET_SETTING_PART = f"{TOILET_SETTING}/{{part}}"
+
+# EvoCycle (`EVO`). See `docs/protocol/evocycle.md`. Its settings come back under
+# `evoAboutModel`, not `configuration`.
+EVO_STATE = f"{DEVICE_API}/evo-state/{{device_id}}"
+EVO_CONFIGURATION = f"{DEVICE_API}/evo-configuration/{{device_id}}"
+# Water used and saved: `evoUsageDataDetailsList[]` (`evocycle.md` §2.5). The query is
+# `GCS_USAGE`'s plus `TimeZone`.
+EVO_USAGE = f"{DEVICE_API}/evo-usage/{{device_id}}"
+# The Water Savings screen's two reads (`evocycle.md` §2.4, §2.5): this week's cycled and
+# fresh water (`?CurrentDate&TimeZone`), and saved water by period
+# (`?FromDate&ToDate&TimeZone&Interval`).
+EVO_DASHBOARD = f"{DEVICE_API}/evo-dashboard/{{device_id}}"
+EVO_DASHBOARD_USAGE = f"{DEVICE_API}/evo-dashboard/waterusage/{{device_id}}"
+
+# Ice Bath (`IBH`): a session journal, not a connected device. See
+# `docs/protocol/ice_bath.md`. Records take `?FromDate=&ToDate=` in epoch seconds.
+IBH_CONFIGURATION = f"{DEVICE_API}/ibh-configuration/{{device_id}}"
+# PATCH: the routine's settings (§4.3).
+IBH_CONFIGURATION_WRITE = f"{DEVICE_API}/ibh-configuration/{{device_id}}/update"
+IBH_RECORD = f"{DEVICE_API}/ibh-record/{{device_id}}"
+# PATCH: insert, update or delete one record; the body names the journal (§4.1).
+IBH_RECORD_WRITE = f"{DEVICE_API}/ibh-record"
+
 # ---------------------------------------------------------------------------
 # Firmware — /platform/api/v1/firmware/
 # ---------------------------------------------------------------------------
@@ -138,11 +187,24 @@ GCS_GATEWAY_FIRMWARE = f"{FIRMWARE_API}/gcs/gateway/{{device_id}}?releasetarget=
 HUB_FIRMWARE = f"{FIRMWARE_API}/hub/{{device_id}}?releasetarget=Public"
 # Faucets use the `sensate` type and, unlike the Anthem parts, no `releasetarget` query.
 FAUCET_FIRMWARE = f"{FIRMWARE_API}/sensate/{{device_id}}"
+# As the faucet's: no `releasetarget`.
+SFC_FIRMWARE = f"{FIRMWARE_API}/sfc/{{device_id}}"
+NUMI_FIRMWARE = f"{FIRMWARE_API}/numi/{{device_id}}"
+PUREWASH_FIRMWARE = f"{FIRMWARE_API}/blade/{{device_id}}"
+# EvoCycle's own screens ask with `releasetarget`, as the Anthem parts do.
+EVO_FIRMWARE = f"{FIRMWARE_API}/evo/{{device_id}}?releasetarget=Public"
 
 # ---------------------------------------------------------------------------
 # Commands — /platform/api/v1/commands/
 # ---------------------------------------------------------------------------
 COMMANDS = "/platform/api/v1/commands"
+
+# Smart Fan: one endpoint per action, `{COMMANDS}/sfc/fancontrol` and so on.
+SFC_COMMAND = f"{COMMANDS}/sfc/{{command}}"
+# Numi and Purewash: `{COMMANDS}/numi/flush`, `{COMMANDS}/blade/flush` and so on.
+TOILET_COMMAND = f"{COMMANDS}/{{segment}}/{{command}}"
+# EvoCycle: `{COMMANDS}/evo/shower`, `{COMMANDS}/evo/clean` and so on.
+EVO_COMMAND = f"{COMMANDS}/evo/{{command}}"
 
 # GCS: no bare on/off exists. Every start specifies the full valve state.
 GCS_SOLOWRITESYSTEM = f"{COMMANDS}/gcs/solowritesystem"
@@ -153,6 +215,8 @@ GCS_WRITE_PRESET = f"{COMMANDS}/gcs/writepreset"
 # success (`docs/protocol/gcs_valve.md` §2.1). See `GcsDevice.async_write_outlet_config`
 # for the guards it needs.
 GCS_WRITE_OUTLET_CONFIG = f"{COMMANDS}/gcs/writeoutletconfig"
+# One touch panel's settings record, whole (`gcs_valve.md` §6; `ui_config.py`).
+GCS_WRITE_UI_CONFIG = f"{COMMANDS}/gcs/writeuiconfig"
 GCS_CREATE_PRESET = f"{COMMANDS}/gcs/createpreset"
 GCS_WARMUP = f"{COMMANDS}/gcs/warmup"
 # Restart the valve: `{deviceId, sku, tenantId, reset: "productRestart"}`, the app's
@@ -207,8 +271,7 @@ STATUS_DEVICE_RUNNING_ALT = "901"
 STATUS_FIRMWARE_UPDATING = "903"
 # Faucet-only: "Water could not be dispensed. Please turn on your faucet manually."
 STATUS_NOT_DISPENSED = "906"
-# The rest of the app's table, for messages. 913/914/919 belong to products this integration
-# does not support.
+# The rest of the app's table, for messages, in its words where they are clear.
 STATUS_MESSAGES = {
     STATUS_FIRMWARE_UPDATING: "a firmware update is in progress on the device",
     "904": "the device reported a product error",
@@ -221,6 +284,14 @@ STATUS_MESSAGES = {
     "916": "a favorite or preset with that name already exists",
     "917": "Kohler's cloud reported an unspecified error",
     "918": "the device reported a product error",
+    # Toilets: the app's "Please be seated…" and "Please ensure no one is seated…".
+    "913": "someone must be seated on the toilet for this",
+    "914": "nobody may be seated on the toilet for this",
+    # EvoCycle: the app adds "Please wait while ozone dissipates".
+    "919": (
+        "the shower's ozone generator reported an error; stay out of the shower while "
+        "the ozone clears"
+    ),
 }
 
 # ---------------------------------------------------------------------------

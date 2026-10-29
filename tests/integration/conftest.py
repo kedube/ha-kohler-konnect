@@ -12,6 +12,7 @@ asks for one.
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import re
 import sys
@@ -68,6 +69,35 @@ def make_jwt(claims: dict[str, Any]) -> str:
         return base64.urlsafe_b64encode(json.dumps(data).encode()).rstrip(b"=").decode()
 
     return f"{b64({'alg': 'none'})}.{b64(claims)}.signature"
+
+
+def panel_record() -> dict[str, Any]:
+    """One touch panel's record as `gcsadvancestate` lists it, with the app's own defaults
+    (`docs/protocol/gcs_valve.md` §6)."""
+    return {
+        "ui": "UI1",
+        "temperatureUnits": "F",
+        "flowUnits": "Gallons",
+        "standbyLighting": "Disabled",
+        "timeFormat": "12",
+        "demoMode": "Disabled",
+        "bathFillPresetId": "0",
+        "delayStart": "Disabled",
+        "toggleOutlets": "Disabled",
+        "waterSavingMode": "Enabled",
+        "accessibilityMode": "Disabled",
+        "backLight": "5",
+        "hapticFeedback": "Enabled",
+        "sounderVolume": "Disabled",
+        "defaultHomeScreen": "1",
+        "proximitySensorMode": "1",
+        "proximitySensorDistance": "",
+        "notification": "5",
+        "defaultMemory": "1",
+        "language": "en",
+        "languageRegion": "US",
+        "serialNo": "UI-SECRET",
+    }
 
 
 class FakeKohler:
@@ -129,6 +159,11 @@ class FakeKohler:
         # A valve's outlet split, as its `gcsadvancestate` reports it; None answers 404,
         # which leaves the setup flow to ask for the model.
         self.valve_outlets: tuple[int, int] | None = (3, 0)
+        # The valve's touch panels, as `gcsadvancestate` lists them: one, with the app's
+        # own defaults (`docs/protocol/gcs_valve.md` §6).
+        self.ui_config: list[dict[str, Any]] = [panel_record()]
+        #: Each touch-panel write: the record sent.
+        self.ui_writes: list[dict[str, Any]] = []
         mocker.post(B2C_TOKEN_URL, side_effect=self._token)
         for method in ("get", "post", "delete", "patch"):
             mocker.request(
@@ -263,7 +298,8 @@ class FakeKohler:
                 "valveSettings": [
                     {"valve": "valve1", "noOfOutlets": first},
                     {"valve": "valve2", "noOfOutlets": second},
-                ]
+                ],
+                "uiConfig": copy.deepcopy(self.ui_config),
             }
             return self._respond(method, url, (200, {"setting": setting}))
         if "/firmware/sensate/" in path and self.firmware is not None:

@@ -11,6 +11,64 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Added**
+
+- **The Kohler Konnect panel,** a page in Home Assistant's sidebar laid out like the Konnect
+  app. It shows your devices as tiles, each saying what it is doing, and a shower you set up
+  and start in one go, with **Simple Start**, favorites and experiences. It has the faucet's
+  dispense amounts and presets, and Week, Month and Year water charts. Administrators also
+  get each device's settings, hardware details and diagnostics, and the account's settings.
+  It works through the same entities and actions as everything else, so every safeguard
+  applies to it. It is on by default: turn it off with **Show the Kohler Konnect panel in
+  the sidebar** in **Configure**, or on the panel's **Account** tab.
+- **The Smart Fan, the Numi 2.0 toilet, the Purewash E930 seat and the EvoCycle shower.**
+  Each appears as a device with everything the app shows on. Its controls are built to the
+  Konnect app's exact requests, but nobody on this project owns one, so each is marked
+  `untested` until an owner's Report Log confirms it. Off until you turn them on: the
+  EvoCycle's ozone-clean starts, which the app asks about first, and the Smart Fan's night
+  light and air readings, which it never shows. Diagnostics include each one's raw replies,
+  redacted.
+  See the guide's [Other products](docs/user_guide.md#other-products).
+  - The toilet's and EvoCycle's water and use time come as a faucet's do, today to this
+    year, in the panel's charts too, with a toilet's daily flushes, washes and dryer runs.
+  - A toilet's wash, dryer and seat settings work like the app's dials: live while that part
+    runs, saved as its default otherwise.
+  - The EvoCycle's touchscreen settings and water-savings goal; the Smart Fan's night
+    light, which the app has but never shows, with its default brightness, both off until
+    you turn them on; and a clock sync the app only does at setup.
+  - Settings changed together, as a scene changes them, are written one at a time, so
+    neither undoes the other, and the panel asks before an ozone clean, as the app does.
+  - The Smart Fan's own schedule, set with a `set_fan_schedule` action, and its settings
+    shown only when the app shows them. The EvoCycle's Water Savings figures: this week's
+    recycled and fresh water and their split, and water saved this month and year.
+  - Each is read less often once its messages are seen to arrive, as the app reads only
+    when a screen opens.
+- **The Ice Bath's journal:** your last session, its length and temperature, this week's
+  sessions against your routine, whether a session is due, missed days, the routine, and a
+  calendar of sessions. A `log_ice_bath_session` action records one, as the app's New
+  Record does, and never over a day that already has one; `set_ice_bath_routine` and two
+  switches change the routine and its reminders. Notes and answers stay private: none of
+  them reaches Home Assistant.
+- **A Report Log switch on each Smart Fan, toilet and EvoCycle page,** so an account without
+  a shower can send one. Every copy controls the account's one capture.
+- **The Anthem touchscreen's settings,** as the Konnect app's Control Panel has them: panel
+  language, units, wake screen, display brightness, haptic feedback and accessible display,
+  plus Flow Control (off by default). Each change goes to every touch panel at once, from a
+  fresh read, and only when the panels' records read as the app expects. Water-saving mode is
+  shown, not changed, as in the app. Untested on a valve so far.
+- **Bath-fill presets on an Anthem valve with a tub filler:** the Favorite select lists their
+  fill amounts, and a Bath Filling sensor shows one running.
+- **`zone2_flow` on `custom_shower`,** to give zone 2 its own flow. Left unset, it follows
+  `flow`, as before.
+- **Developer notes on each new product's cloud protocol** in `docs/protocol/`, and on the
+  PerfectFill and Aquifer Refine, which the Konnect app can't reach through Kohler's cloud.
+
+**Changed**
+
+- **`custom_shower` sets each zone's `Flow` to the flow it sent,** once the valve accepts the
+  command. The next outlet or temperature change keeps that flow rather than jumping back to
+  the number's old value, and `Flow` now follows showers started by automations too.
+
 ## 1.14 — 2026-10-22
 
 **Added**

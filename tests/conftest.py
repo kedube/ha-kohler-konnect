@@ -81,6 +81,23 @@ class FakeState:
         self.last_update = 1789005586.0
         self.presets: dict = {}
         self.active_preset_id = None
+        # The touch panels' records (`ui_config.py`): one, with the app's defaults.
+        self.ui_config: list = [
+            {
+                "ui": "UI1",
+                "temperatureUnits": "F",
+                "flowUnits": "Gallons",
+                "waterSavingMode": "Enabled",
+                "accessibilityMode": "Disabled",
+                "backLight": "5",
+                "hapticFeedback": "Enabled",
+                "defaultHomeScreen": "1",
+                "notification": "5",
+                "defaultMemory": "1",
+                "language": "en",
+                "languageRegion": "US",
+            }
+        ]
         outlet_ids = [
             model.outlet_id(zone, outlet)
             for zone in model.zones
@@ -256,6 +273,8 @@ def make_coordinator(valves, controllers=(), *, zone_grouping=None, faucets=()):
         valves=valves_list,
         controllers=list(controllers),
         faucets=list(faucets),
+        # Every product beyond the shower, by key, as `KohlerKonnectCoordinator.products`.
+        products={"faucet": list(faucets)} if faucets else {},
         temperature_unit="Fahrenheit",
         water_units="Standard",
         zone_grouping=resolved_grouping,

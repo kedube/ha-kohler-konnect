@@ -2,8 +2,8 @@
 
 One per Kohler account. It owns what every device shares — the sign-in, the REST client and
 the one MQTT connection — and the per-device objects: a `Valve` for each Anthem valve, a
-`Controller` for each Anthem Plus, and a `FaucetCoordinator` for each Sensate or Setra
-faucet, which polls on its own clock (see `faucet/coordinator.py`).
+`Controller` for each Anthem Plus, and for every other product (`products.py`) a
+coordinator per device on its own clock, such as a faucet's (`faucet/coordinator.py`).
 
 Shower state is push-only: MQTT carries every change, and REST is read on events, never on
 a clock. The one exception is firmware availability, which nothing announces; it is
@@ -27,7 +27,7 @@ import os
 import time
 import uuid
 from collections import Counter, deque
-from collections.abc import Coroutine, Iterable, Iterator
+from collections.abc import Coroutine, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -65,14 +65,10 @@ from .const import (
     DEFAULT_FLOW_PERCENT,
     DEFAULT_ZONE_GROUPING,
     DEVICE_NAME_CONTROLLER,
-    DEVICE_NAME_FAUCET,
     DEVICE_NAME_VALVE,
     DOMAIN,
     ENABLE_RAW_MQTT_LOG,
     ENABLE_WARMUP_DEBUG_LOG,
-    FAUCET_SCAN_INTERVAL_IDLE,
-    FAUCET_STORAGE_KEY,
-    FAUCET_STORAGE_VERSION,
     FIRMWARE_CHECK_INTERVAL,
     OUTLET_WRITE_VERIFY_DELAY_SECONDS,
     RAW_MQTT_LOG_DIR,
@@ -135,10 +131,15 @@ from .konnect.const import (
     MSG_HUB_STEAM,
 )
 from .konnect.entry_reload import reload_signature
-from .konnect.faucet import parse_event
 from .konnect.gcs import validate_outlet_record
 from .konnect.models import DEFAULT_VALVE_MODEL
 from .konnect.state import outlet_limits_from_settings
+from .konnect.ui_config import (
+    UnwritableRecords,
+    control_panel_writes,
+    read_back,
+    ui_records,
+)
 from .konnect.usage import usage_series
 from .konnect.valve_hex import (
     FLOW_BYTE_MAX,
@@ -162,6 +163,7 @@ from .konnect.warmup_resume import (
     Decision,
     WarmupResume,
 )
+from .products import FAUCETS, PRODUCTS, Product, ProductDevice
 from .registry import device_by_identifier
 from .warmup_manager import WarmupManager
 
@@ -582,12 +584,12 @@ def valve_names(devices: list[Device]) -> dict[str, str]:
     return _device_names(devices, DEVICE_NAME_VALVE)
 
 
-def faucet_names(devices: list[Device]) -> dict[str, str]:
-    """Home Assistant device name per faucet, keyed by device id.
+def product_names(devices: list[Device], fallback: str) -> dict[str, str]:
+    """Home Assistant device name per device of one product, keyed by device id.
 
     Unlike the showers', the Konnect name alone (usually the room), as the separate faucet
-    integration named it, so its entity ids carry over. A faucet with no name, or one
-    sharing it, is numbered instead.
+    integration named faucets, so their entity ids carry over. A device with no name, or
+    one sharing it, is numbered instead, from ``fallback`` when it has none.
     """
     labels, ordinals = _konnect_labels(devices)
     seen = Counter(labels.values())
@@ -596,9 +598,9 @@ def faucet_names(devices: list[Device]) -> dict[str, str]:
         if label and seen[label] == 1:
             names[device_id] = label
         elif len(devices) == 1:
-            names[device_id] = label or DEVICE_NAME_FAUCET
+            names[device_id] = label or fallback
         else:
-            names[device_id] = f"{label or DEVICE_NAME_FAUCET} {ordinals[device_id]}"
+            names[device_id] = f"{label or fallback} {ordinals[device_id]}"
     return names
 
 
@@ -750,6 +752,8 @@ class Valve:
         # another landed since. See `async_write_outlet_setting`.
         self._outlet_write_lock = asyncio.Lock()
         self._outlet_write_serial = 0
+        # Touch-panel settings writes run one at a time, each from its own fresh read.
+        self._ui_config_lock = asyncio.Lock()
         # Outlet settings written from here (`OutletLimits` field -> value) until a read
         # shows them on every outlet; see `_adopt_outlet_read`.
         self._outlet_unconfirmed: dict[str, int] = {}
@@ -831,7 +835,7 @@ class Valve:
 
         The closest thing to an install date the API offers, but it is the cloud record's
         creation: a re-registered valve reads as newer. Returned raw;
-        `sensor.ValveInstalledSensor` parses it.
+        `sensor.kohler_timestamp` parses it.
         """
         value = (self.configuration or {}).get("createdTime")
         return None if value in (None, "") else str(value)
@@ -1947,6 +1951,8 @@ class Valve:
                 self.gcs_device.device_id
             )
             self._settings_read = True
+            if records := ui_records(settings):
+                self.gcs_state.ui_config = records
             # The outlet split, checked until a read states it (`_apply_topology`).
             if not self._topology_checked:
                 before = (self.model.outlets_valve1, self.model.outlets_valve2)
@@ -2655,12 +2661,19 @@ class Valve:
         return {"zone1_hex": word1, "zone2_hex": word2, "decoded": decoded}, serial
 
     async def async_custom_shower(
-        self, zone1_hex: str, zone2_hex: str, *, keep_on_after_warmup: bool
+        self,
+        zone1_hex: str,
+        zone2_hex: str,
+        *,
+        keep_on_after_warmup: bool,
+        flows: dict[int, float] | None = None,
     ) -> dict[str, Any]:
         """Send one complete shower command, optionally resuming it after the warm-up pause.
 
         The form-driven sibling of `async_send_valve_hex`: `services.py` builds both words
-        with `encode_shower`, so nothing is read from the valve's last report. It writes
+        with `encode_shower`, so nothing is read from the valve's last report. ``flows``
+        are the percentages the words carry, per zone; once the write lands they become the
+        zones' `zone_flow`, which later outlet and temperature changes re-send. It writes
         once, since a second write during a warm-up moves the warm-up onto the written
         outlets; the only re-send is the one the caller opts into:
 
@@ -2680,6 +2693,9 @@ class Valve:
         result, serial = await self._async_send_valve_hex(
             zone1_hex, zone2_hex, requested=requested
         )
+        for zone, percent in (flows or {}).items():
+            if zone in self.model.zones:
+                self.zone_flow[zone] = float(percent)
         self._cancel_custom_shower("a new custom shower was sent")
         if keep_on_after_warmup:
             # Tracked, so an unload during the write leaves no watcher behind.
@@ -2914,6 +2930,53 @@ class Valve:
             )
         return word1, word2
 
+    async def async_write_ui_config(
+        self, changes: Mapping[str, str], *, flow_control_on: bool | None = None
+    ) -> None:
+        """Change the touch panels' settings as the app's Control Panel saves them
+        (`docs/protocol/gcs_valve.md` §6): every panel's record, whole, one after another,
+        from a fresh read, with ``changes`` (written form) applied to the shared settings.
+
+        Refused while water runs, as the app refuses it, and when the records don't read as
+        the app expects (`ui_config.control_panel_writes`): written then, they would guess.
+        A failure part-way leaves the panels written so far as written.
+        """
+        if self.gcs_state.is_running:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="panel_settings_while_running",
+                translation_placeholders={"name": self.name},
+            )
+        offline = "The Anthem valve is offline, so its touch panels can't be changed."
+        async with self._ui_config_lock:
+            with self.coordinator.command_errors(offline):
+                settings = await self.client.async_get_gcs_settings(
+                    self.gcs_device.device_id
+                )
+            records = ui_records(settings)
+            try:
+                writes = control_panel_writes(
+                    records,
+                    changes,
+                    second_valve=self.model.outlets_valve2 > 0,
+                    flow_control_on=flow_control_on,
+                )
+            except UnwritableRecords as err:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="panel_settings_unreadable",
+                    translation_placeholders={"name": self.name, "reason": str(err)},
+                ) from err
+            held = list(records)
+            try:
+                for index, record in enumerate(writes):
+                    with self.coordinator.command_errors(offline):
+                        await self.gcs.async_write_ui_config(record)
+                    held[index] = read_back(records[index], record)
+            finally:
+                self.gcs_state.ui_config = held
+                self.coordinator.async_update_listeners()
+
     async def async_restart(self) -> None:
         """Reboot the valve — the app's Restart Product. **Stops any running water.**
 
@@ -2985,6 +3048,10 @@ class Valve:
     def warmup_auto_restore(self) -> bool:
         """Whether to put the warmup mode back after something else disables it."""
         return self.warmup.auto_restore
+
+    def set_warmup_auto_restore(self, enabled: bool) -> None:
+        """Turn Warmup Auto-Restore on or off; the switch and the sidebar panel both do."""
+        self.warmup.set_auto_restore(enabled)
 
     @property
     def last_warmup_mode(self) -> str | None:
@@ -3076,26 +3143,21 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # valve-only account. See `Controller` for what each one carries.
         self.controllers: list[Controller] = []
         self._controllers_by_id: dict[str, Controller] = {}
-        # Every faucet on the account, each with its own polling coordinator, plus the same
-        # keyed by lowercase device id: faucet messages are routed case-insensitively.
-        self.faucets: list[FaucetCoordinator] = []
-        self._faucets_by_id: dict[str, FaucetCoordinator] = {}
-        # What the faucets keep across restarts — cleared leaks, the leak alert, the safety
-        # limit (its deadline, when it was set, whether the water was seen running) and
-        # whether instant updates have proved themselves — in one file per entry, keyed by
-        # device id.
-        self._faucet_store: Store[dict[str, Any]] = Store(
-            hass,
-            FAUCET_STORAGE_VERSION,
-            FAUCET_STORAGE_KEY.format(entry_id=entry.entry_id),
-        )
-        self._faucet_data: dict[str, Any] = {}
-        # The faucets' first reads, started early in `async_setup` so they overlap the
-        # showers' seed, and collected at its end. Held so a failed setup can cancel them.
-        self._faucet_first_refresh: asyncio.Task | None = None
+        # Every other product's devices (`products.py`), each with its own coordinator, by
+        # product key in `PRODUCTS` order; and the same keyed by lowercase device id, since
+        # their messages are routed case-insensitively.
+        self.products: dict[str, list[ProductDevice]] = {}
+        self._product_devices: dict[str, ProductDevice] = {}
+        # What they keep across restarts (see each one's `stored`): one file per entry and
+        # product, keyed by device id.
+        self._product_stores: dict[str, Store[dict[str, Any]]] = {}
+        self._product_data: dict[str, dict[str, Any]] = {}
+        # Their first reads, started early in `async_setup` so they overlap the showers'
+        # seed, and collected at its end. Held so a failed setup can cancel them.
+        self._products_first_refresh: asyncio.Task | None = None
         # When those reads finished (monotonic) — what decides whether the first connect
-        # reads the faucets again; see `_faucets_just_read`.
-        self._faucets_read_at: float | None = None
+        # reads them again; see `_products_just_read`.
+        self._products_read_at: float | None = None
         self.stream: KonnectMqttStream | None = None
         # The stream's registration and first connection attempt, started first thing in
         # `async_setup` and collected at its end. Held so a failed setup can cancel it.
@@ -3264,8 +3326,12 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.water_units = customer.water_units or self.water_units
         valves = customer.gcs_devices
         controllers = customer.hub_devices
-        faucets = customer.faucet_devices
-        if not valves and not controllers and not faucets:
+        owned = {
+            product: devices
+            for product in PRODUCTS
+            if (devices := customer.product_devices(product.kind))
+        }
+        if not valves and not controllers and not owned:
             raise ConfigEntryNotReady("No supported Kohler devices on this account")
 
         # Each valve starts from its own layout if one was read earlier this run, else the
@@ -3307,33 +3373,37 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 len(self.controllers),
                 ", ".join(controller.name for controller in self.controllers),
             )
-        # Every faucet, each with its own coordinator. They poll on their own clock, so
-        # they are not seeded with the showers: each takes its own first read.
-        names = faucet_names(faucets)
-        self.faucets = [
-            FaucetCoordinator(
-                self.hass, self.entry, self, device, names[device.device_id]
-            )
-            for device in faucets
-        ]
-        self._faucets_by_id = {f.device_id.lower(): f for f in self.faucets}
-        if self.faucets:
-            self._faucet_data = dict(await self._faucet_store.async_load() or {})
-            for faucet in self.faucets:
-                faucet.load(self._faucet_data.get(faucet.device_id) or {})
+        # Every other product's devices, each with its own coordinator. They keep their own
+        # clocks, so they are not seeded with the showers: each takes its own first read.
+        for product, devices in owned.items():
+            names = product_names(devices, product.default_name)
+            built = [
+                product.create(self, device, names[device.device_id])
+                for device in devices
+            ]
+            self.products[product.key] = built
+            data = dict(await self._product_store(product).async_load() or {})
+            self._product_data[product.key] = data
+            for device in built:
+                device.load(data.get(device.device_id) or {})
+        self._product_devices = {
+            device.device_id.lower(): device
+            for devices in self.products.values()
+            for device in devices
+        }
         self._raise_if_closed()
         # The devices are known: hand on what the stream delivered before, after each
-        # faucet's stored state is back (which would otherwise overwrite it).
+        # product device's stored state is back (which would otherwise overwrite it).
         early, self._early_envelopes = self._early_envelopes, None
         for envelope in early or ():
             self._handle_envelope(envelope)
-        if self.faucets:
-            # Started now and collected at the end of this method, so each faucet's first
+        if self._product_devices:
+            # Started now and collected at the end of this method, so each device's first
             # read (several round trips) overlaps the showers' seed. It cannot fail the
-            # entry: a faucet Kohler cannot answer for shows unavailable and retries on its
+            # entry: a device Kohler cannot answer for shows unavailable and retries on its
             # own clock.
-            self._faucet_first_refresh = self.hass.async_create_task(
-                self._async_first_refresh_faucets()
+            self._products_first_refresh = self.hass.async_create_task(
+                self._async_first_refresh_products()
             )
 
         # Outlet-setting warnings from a previous run are stale: nothing set from here is
@@ -3390,11 +3460,11 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.hass, self._async_midnight_tick, hour=0, minute=0, second=1
         )
 
-        # The faucets' first reads, started before the seed. Collected here because the
-        # platforms build the faucets' entities from them as soon as this returns.
-        if (refresh := self._faucet_first_refresh) is not None:
+        # The product devices' first reads, started before the seed. Collected here because
+        # the platforms build their entities from them as soon as this returns.
+        if (refresh := self._products_first_refresh) is not None:
             await asyncio.wait({refresh})
-            self._faucet_first_refresh = None
+            self._products_first_refresh = None
             self._raise_if_closed()
             refresh.result()
 
@@ -3424,10 +3494,12 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self.closed:
             raise ConfigEntryNotReady("Home Assistant is stopping")
 
-    async def _async_first_refresh_faucets(self) -> None:
-        """Each faucet's first read, all at once. See where `async_setup` starts this."""
-        await asyncio.gather(*(faucet.async_refresh() for faucet in self.faucets))
-        self._faucets_read_at = time.monotonic()
+    async def _async_first_refresh_products(self) -> None:
+        """Each product device's first read, all at once; see where `async_setup` starts it."""
+        await asyncio.gather(
+            *(device.async_refresh() for device in self._product_devices.values())
+        )
+        self._products_read_at = time.monotonic()
 
     @callback
     def _first_connect_late(self) -> bool:
@@ -3445,19 +3517,18 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             or connected - seeded > _FIRST_CONNECT_GRACE_SECONDS
         )
 
-    def _faucets_just_read(self) -> bool:
-        """Whether the faucets' first reads are still running, or finished only just now.
+    def _products_just_read(self, product: Product) -> bool:
+        """Whether the first reads are still running, or finished only just now.
 
-        If so, the stream's first connect does not read them again (`_handle_connected`).
-        "Just now" is within one idle poll, the pace a faucet keeps until the stream has
-        proven it reports the faucet.
+        If so, the stream's first connect does not read ``product``'s devices again
+        (`_handle_connected`). "Just now" is the product's `fresh_for`.
         """
-        if self._faucet_first_refresh is not None:
+        if self._products_first_refresh is not None:
             return True
-        read_at = self._faucets_read_at
+        read_at = self._products_read_at
         return (
             read_at is not None
-            and time.monotonic() - read_at < FAUCET_SCAN_INTERVAL_IDLE.total_seconds()
+            and time.monotonic() - read_at < product.fresh_for.total_seconds()
         )
 
     @callback
@@ -3585,14 +3656,17 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             valve.forget_timings()
             if gap:
                 valve.note_stream_gap()
-        # Nothing is replayed on connect for faucets either: each re-reads its state —
-        # except on the first connect, when its first read is under way or only just done.
-        if first and self._faucets_just_read():
-            for faucet in self.faucets:
-                faucet.async_note_stream_up()
-        else:
-            for faucet in self.faucets:
-                faucet.async_push_activity(False)
+        # Nothing is replayed on connect for the other products either: each re-reads its
+        # state — except on the first connect, when its first read is under way or only
+        # just done.
+        for product in PRODUCTS:
+            just_read = first and self._products_just_read(product)
+            for device in self.products.get(product.key, ()):
+                # One device's fault must not cost the showers their catch-up below.
+                try:
+                    device.async_stream_connected(just_read=just_read)
+                except Exception:
+                    _LOGGER.exception("%s failed to catch up", device.device_name)
         # The MQTT Connection sensors: nothing else tells them before a reseed ends, and the
         # first connect may not reseed at all.
         self.async_refresh_entities()
@@ -3612,21 +3686,44 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @callback
     def _handle_disconnected(self) -> None:
-        """A dropped stream: say so, and let the faucets catch up and poll at their pace.
+        """A dropped stream: say so, and let the product devices catch up at their pace.
 
         Re-renders every entity so the MQTT Connection sensors show the drop, without the
         stream claiming a successful update.
         """
         if self.closed:
             return
-        for faucet in self.faucets:
-            faucet.async_push_activity(False)
+        for device in self._product_devices.values():
+            try:
+                device.async_stream_disconnected()
+            except Exception:
+                _LOGGER.exception("%s failed to note the drop", device.device_name)
         self.async_update_listeners()
 
-    async def async_save_faucet(self, faucet: FaucetCoordinator) -> None:
-        """Persist one faucet's state into the entry's faucet store."""
-        self._faucet_data[faucet.device_id] = faucet.stored()
-        await self._faucet_store.async_save(self._faucet_data)
+    @property
+    def faucets(self) -> list[FaucetCoordinator]:
+        """Every Sensate and Setra faucet on the account."""
+        return self.products.get(FAUCETS.key, [])  # type: ignore[return-value]
+
+    def _product_store(self, product: Product) -> Store[dict[str, Any]]:
+        """The file this entry keeps ``product``'s devices' state in."""
+        store = self._product_stores.get(product.key)
+        if store is None:
+            store = self._product_stores[product.key] = Store(
+                self.hass,
+                product.storage_version,
+                product.storage_key.format(entry_id=self.entry.entry_id),
+            )
+        return store
+
+    async def async_save_device_state(self, device: ProductDevice) -> None:
+        """Persist what one product device keeps across restarts (its `stored`)."""
+        for product in PRODUCTS:
+            if device in self.products.get(product.key, ()):
+                data = self._product_data.setdefault(product.key, {})
+                data[device.device_id] = device.stored()
+                await self._product_store(product).async_save(data)
+                return
 
     async def _async_reseed_after_connect(self) -> None:
         """Read what the stream's connect cannot vouch for; see `_handle_connected`.
@@ -3681,9 +3778,9 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._firmware_task is not None:
             self._firmware_task.cancel()
             self._firmware_task = None
-        if self._faucet_first_refresh is not None:
-            self._faucet_first_refresh.cancel()
-            self._faucet_first_refresh = None
+        if self._products_first_refresh is not None:
+            self._products_first_refresh.cancel()
+            self._products_first_refresh = None
         # A registration still under way from setup; the stream's own stop covers the rest.
         if self._stream_start is not None:
             self._stream_start.cancel()
@@ -3752,11 +3849,11 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # spurious trigger costs one rate-limited read.
             for valve in self.valves:
                 valve.cloud_watch.note_hub_envelope(envelope)
-        # A faucet message goes to that faucet's own coordinator, which re-reads its state.
-        faucet = self._faucets_by_id.get(envelope.device_id.lower())
-        if faucet is not None:
+        # Any other product's message goes to that device's own coordinator.
+        device = self._product_devices.get(envelope.device_id.lower())
+        if device is not None:
             # Not remembered: that window is the valves' warm-up evidence.
-            faucet.async_push_activity(True, parse_event(envelope))
+            device.async_handle_envelope(envelope)
         if changed:
             self._async_notify_devices(changed)
 

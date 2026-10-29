@@ -26,6 +26,9 @@ from .const import (
     APIM_SUBSCRIPTION_KEY,
     CUSTOMER_DEVICE,
     CUSTOMER_EXPERIENCE,
+    CUSTOMER_HOME_DEVICE,
+    EVO_FIRMWARE,
+    EVO_USAGE,
     FAUCET_CONFIGURATION,
     FAUCET_EXPERIENCE,
     FAUCET_FIRMWARE,
@@ -49,31 +52,42 @@ from .const import (
     HUB_FIRMWARE,
     HUB_STATE,
     MOBILE_SETTINGS,
+    NUMI_FIRMWARE,
+    PUREWASH_FIRMWARE,
+    SFC_FIRMWARE,
     SKU_GCS,
     SKU_HUB,
     STATUS_DEVICE_OFFLINE,
     STATUS_DEVICE_RUNNING,
     STATUS_DEVICE_RUNNING_ALT,
     STATUS_MESSAGES,
+    TOILET_USAGE,
 )
+from .products import FAUCET, PRODUCT_KINDS, ProductKind
 
 _LOGGER = logging.getLogger(__name__)
 
 #: The id segment of a device-management path, up to the next `/` or `?`. Keyed off the
 #: endpoint prefix, since ids (`gcs-…`, `hub-…`, bare GUIDs) have no single shape.
 _ID_IN_PATH = re.compile(
-    r"/((?:gcs|hub|faucet|customer)-[a-z-]*/(?:[a-z]+/)?)[^/?]+",
+    r"/((?:gcs|hub|faucet|customer|sfc|numi|blade|evo|ibh)-[a-z-]*/(?:[a-z]+/)?)[^/?]+",
     re.IGNORECASE,
 )
 #: The firmware family puts the id after a bare product name instead —
 #: `/platform/api/v1/firmware/gcs/gateway/<id>?releasetarget=Public`.
 _ID_IN_FIRMWARE_PATH = re.compile(
-    r"(/firmware/(?:gcs|hub|sensate)/(?:gateway/)?)[^/?]+", re.IGNORECASE
+    r"(/firmware/(?:gcs|hub|sensate|sfc|numi|blade|evo)/(?:gateway/)?)[^/?]+",
+    re.IGNORECASE,
 )
 #: The faucet preset list takes its id as a query parameter, and unregistering the stream's
 #: identity puts the tenant and the identity after `mobile/settings`.
 _ID_IN_QUERY = re.compile(r"(DeviceIds=)[^&]+", re.IGNORECASE)
 _ID_IN_MOBILE_PATH = re.compile(r"(/mobile/settings/)[^?]+", re.IGNORECASE)
+#: The account record's update names the home after the tenant:
+#: `customer-device/<tenant>/<home>/device`.
+_HOME_IN_PATH = re.compile(
+    r"(/customer-device/[^/?]+/)[^/?]+(?=/device)", re.IGNORECASE
+)
 
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
@@ -203,6 +217,16 @@ class Customer:
             if isinstance(device, dict)
         ]
 
+    def record(self, device_id: str) -> tuple[str, dict[str, Any]] | None:
+        """The home id and the account's record of one device, or None if it isn't listed."""
+        for home in _as_list(self.raw.get("customerHome")):
+            if not isinstance(home, dict) or not isinstance(home.get("homeId"), str):
+                continue
+            for device in _as_list(home.get("devices")):
+                if isinstance(device, dict) and device.get("deviceId") == device_id:
+                    return home["homeId"], device
+        return None
+
     def device(self, sku: str) -> Device | None:
         """The first device with the given SKU, or None."""
         return next((d for d in self.devices if d.sku == sku), None)
@@ -221,10 +245,14 @@ class Customer:
         """Anthem Plus system controllers on the account."""
         return self.devices_of(SKU_HUB)
 
+    def product_devices(self, kind: ProductKind) -> list[Device]:
+        """Every device of one product beyond the Anthem shower (`products.py`)."""
+        return [d for d in self.devices if kind.owns(d.sku)]
+
     @property
     def faucet_devices(self) -> list[Device]:
         """Sensate and Setra faucets on the account."""
-        return [d for d in self.devices if d.is_faucet]
+        return self.product_devices(FAUCET)
 
     @property
     def has_gcs(self) -> bool:
@@ -243,20 +271,25 @@ class Customer:
 
     @property
     def other_devices(self) -> list[Device]:
-        """Devices this integration does not support (DTV, Numi, Blade, toilets, …).
+        """Devices this integration does not support (DTV+, Moxie, Verdera, PerfectFill, Aquifer, …).
 
         They share the account and must be ignored, not treated as malformed devices.
         """
         return [
             d
             for d in self.devices
-            if d.sku not in (SKU_GCS, SKU_HUB) and not d.is_faucet
+            if d.sku not in (SKU_GCS, SKU_HUB)
+            and not any(kind.owns(d.sku) for kind in PRODUCT_KINDS)
         ]
 
     @property
     def supported_devices(self) -> list[Device]:
         """Every device this integration can drive."""
-        return self.gcs_devices + self.hub_devices + self.faucet_devices
+        return [
+            *self.gcs_devices,
+            *self.hub_devices,
+            *(d for kind in PRODUCT_KINDS for d in self.product_devices(kind)),
+        ]
 
     def describe(self) -> str:
         """A short human summary of what was found, for logs and the config flow.
@@ -269,17 +302,24 @@ class Customer:
             parts.append(f"{len(self.gcs_devices)} Anthem valve(s)")
         if self.has_hub:
             parts.append(f"{len(self.hub_devices)} Anthem Plus controller(s)")
-        if self.has_faucet:
-            parts.append(f"{len(self.faucet_devices)} faucet(s)")
+        for kind in PRODUCT_KINDS:
+            if devices := self.product_devices(kind):
+                parts.append(f"{len(devices)} {kind.noun}(s)")
         if not parts:
             return "no supported Kohler devices found on this account"
         summary = (
             ", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1]
         )
         if self.other_devices:
-            skus = ", ".join(sorted({d.sku for d in self.other_devices}))
+            skus = ", ".join(sorted({d.sku or "no SKU" for d in self.other_devices}))
             summary += f" (ignoring other Kohler devices: {skus})"
         return summary
+
+
+def _app_date(iso: str) -> str:
+    """A `yyyy-MM-dd` date as the Konnect app sends it to the usage reads: `MM-dd-yyyy`."""
+    year, month, day = iso.split("-")
+    return f"{month}-{day}-{year}"
 
 
 class KohlerClient:
@@ -413,6 +453,7 @@ class KohlerClient:
         endpoints carry the id in the body, so their paths pass through unchanged.
         """
         path = _ID_IN_FIRMWARE_PATH.sub(r"\1<id>", _ID_IN_PATH.sub(r"/\1<id>", path))
+        path = _HOME_IN_PATH.sub(r"\1<id>", path)
         return _ID_IN_MOBILE_PATH.sub(r"\1<id>", _ID_IN_QUERY.sub(r"\1<id>", path))
 
     @staticmethod
@@ -439,8 +480,8 @@ class KohlerClient:
             )
         if inner in (STATUS_DEVICE_RUNNING, STATUS_DEVICE_RUNNING_ALT):
             raise DeviceRunning(
-                "The system is running, so this change was rejected. Stop it first "
-                "(stopall), then retry.",
+                "The device is running, so this change was rejected. Stop it first, "
+                "then try again.",
                 payload,
             )
         if status >= 400:
@@ -477,6 +518,17 @@ class KohlerClient:
         if not isinstance(payload, dict):
             raise KohlerError("Unexpected customer-device response", payload)
         return Customer(payload)
+
+    async def async_update_account_device(
+        self, home_id: str, body: dict[str, Any]
+    ) -> Any:
+        """Update the account's record of one device, in the home it sits in."""
+        tenant_id = await self.async_tenant_id()
+        return await self.async_request(
+            "PATCH",
+            CUSTOMER_HOME_DEVICE.format(tenant_id=tenant_id, home_id=home_id),
+            json_body=body,
+        )
 
     async def async_register_mobile_device(
         self, mobile_device_id: str | None = None
@@ -559,7 +611,7 @@ class KohlerClient:
         from_date: str,
         to_date: str,
         interval: str = "MONTH",
-        faucet: bool = False,
+        product: str = "gcs",
     ) -> dict[str, Any]:
         """Per-period water usage: the series behind the Konnect app's chart.
 
@@ -568,16 +620,33 @@ class KohlerClient:
         in litres whatever the account unit; convert with `usage.usage_volume_gallons`. See
         `docs/protocol/platform.md` §6.
 
-        ``faucet`` reads ``faucet-usage`` instead; `usage.usage_series` reads either reply.
+        ``product`` names the read: ``gcs`` (valves), ``faucet``, ``numi``, ``blade`` or
+        ``evo``; `usage.usage_series` reads any of their replies. Valves and faucets take
+        these dates and intervals as they are (live). The others are sent what the app's
+        screen that shows each one's water sends, with ``Day``/``Month`` intervals: for a
+        toilet, dates year first (`numi_purewash.md` §6.1); for an EvoCycle, ``MM-dd-yyyy``
+        dates and a ``TimeZone`` of ``UTC``, which every US phone sends (`evocycle.md`
+        §2.1).
 
         Returns ``{}`` rather than raising when the read fails: this feeds a diagnostic
         sensor and must not fail a working setup.
         """
-        template = FAUCET_USAGE if faucet else GCS_USAGE
-        path = (
-            f"{template.format(device_id=device_id)}"
-            f"?FromDate={from_date}&ToDate={to_date}&Interval={interval}"
-        )
+        if product in ("gcs", "faucet"):
+            template = FAUCET_USAGE if product == "faucet" else GCS_USAGE
+            query = f"FromDate={from_date}&ToDate={to_date}&Interval={interval}"
+        elif product == "evo":
+            template = EVO_USAGE
+            query = (
+                f"FromDate={_app_date(from_date)}&ToDate={_app_date(to_date)}"
+                f"&Interval={interval.capitalize()}&TimeZone=UTC"
+            )
+        else:
+            template = TOILET_USAGE
+            query = (
+                f"FromDate={from_date}&ToDate={to_date}"
+                f"&Interval={interval.capitalize()}"
+            )
+        path = f"{template.format(device_id=device_id, segment=product)}?{query}"
         try:
             payload = await self.async_request("GET", path)
         except KohlerError as err:
@@ -738,7 +807,7 @@ class KohlerClient:
         await self.async_request("DELETE", HUB_DIAGNOSTICS.format(device_id=device_id))
 
     async def async_get_firmware(self, device_id: str, part: str) -> dict[str, Any]:
-        """Installed vs latest firmware for one part: ``gcs``, ``gateway`` or ``hub``.
+        """Installed vs latest firmware for one part or product type (``gcs``, ``sfc`` …).
 
         Read-only. ``firmwareUpdateAvailable`` is the app's whole test for "update
         available". Returns ``{}`` rather than raising: an update entity going unknown is
@@ -748,6 +817,10 @@ class KohlerClient:
             "gcs": GCS_FIRMWARE,
             "gateway": GCS_GATEWAY_FIRMWARE,
             "hub": HUB_FIRMWARE,
+            "sfc": SFC_FIRMWARE,
+            "numi": NUMI_FIRMWARE,
+            "blade": PUREWASH_FIRMWARE,
+            "evo": EVO_FIRMWARE,
         }[part]
         try:
             payload = await self.async_request(
@@ -772,6 +845,13 @@ _SECRET_KEY_PARTS = (
 )
 
 
+# An Ice Bath record's health notes: what the person typed, their answers, and how they
+# felt and slept afterwards (`docs/protocol/ice_bath.md` §5.3). Matched whole, any case.
+_PERSONAL_KEYS = frozenset(
+    {"note", "question1", "question2", "followup", "sleepquality", "thoughts"}
+)
+
+
 # A credential inside a value under a neutral key, such as an Azure connection string
 # under `connectionString`, which `_SECRET_KEY_PARTS` alone would let through.
 _SECRET_IN_VALUE = re.compile(
@@ -788,7 +868,7 @@ def _object(payload: Any) -> dict[str, Any]:
 
 
 def _redact_payload(value: Any, _depth: int = 0) -> Any:
-    """Copy a payload with credential values replaced, for the REST debug log.
+    """Copy a payload with credentials and health notes replaced, for the REST debug log.
 
     Every key is kept, so the log still shows which fields exist. Depth-limited, since the
     payload is whatever Kohler returns.
@@ -798,7 +878,10 @@ def _redact_payload(value: Any, _depth: int = 0) -> Any:
     if isinstance(value, dict):
         redacted: dict[str, Any] = {}
         for key, item in value.items():
-            if any(part in str(key).lower() for part in _SECRET_KEY_PARTS):
+            name = str(key).lower()
+            if name in _PERSONAL_KEYS or any(
+                part in name for part in _SECRET_KEY_PARTS
+            ):
                 redacted[key] = "**REDACTED**"
             else:
                 redacted[key] = _redact_payload(item, _depth + 1)

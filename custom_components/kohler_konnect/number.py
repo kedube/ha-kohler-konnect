@@ -17,7 +17,7 @@ from typing import Any
 
 from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfTemperature
+from homeassistant.const import PERCENTAGE, Platform, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
@@ -33,7 +33,6 @@ from .const import (
 )
 from .coordinator import KohlerKonnectCoordinator, Valve
 from .entity import KohlerValveEntity, ZoneWordEntity, zone_label
-from .faucet.number import faucet_numbers
 from .konnect.valve_hex import (
     FLOW_BYTE_MAX,
     FLOW_BYTE_MIN,
@@ -41,6 +40,8 @@ from .konnect.valve_hex import (
     flow_byte_to_percent,
     unit_to_celsius,
 )
+from .panel_settings import panel_entities
+from .product_platforms import product_entities
 
 
 def _whole_degrees(tenths: int, fahrenheit: bool) -> int:
@@ -65,6 +66,43 @@ def _whole_ceiling(tenths: int, temperature_unit: str) -> int:
     while round(unit_to_celsius(whole, temperature_unit) * 10) > tenths:
         whole -= 1
     return whole
+
+
+def zone_temperature_range(
+    valve: Valve, zone: int, temperature_unit: str
+) -> tuple[float, float]:
+    """A zone's setpoint range in the account's unit: the floor and the scald limit.
+
+    Read live from the zone's first outlet: its ``minimumOutletTemperature``
+    (`_whole_floor`) and current ``maximumOutletTemperature`` (`_whole_ceiling`). Before
+    the valve reports them, 59 °F and the top of the app's Max Temperature. Shared by the
+    Temperature number and the sidebar panel, which stages showers inside it.
+    """
+    fahrenheit = temperature_unit.lower().startswith("f")
+    try:
+        outlet_id = valve.model.outlet_id(zone, 1)
+    except ValueError:
+        # The zone is gone; the Temperature number is unavailable then.
+        limits = None
+    else:
+        limits = valve.gcs_state.outlet_limits.get(outlet_id)
+
+    low = None if limits is None else limits.minimum_temperature_tenths
+    if low:
+        floor = float(_whole_floor(low, temperature_unit))
+    elif fahrenheit:
+        floor = float(ZONE_TEMPERATURE_MIN_F)
+    else:
+        floor = float(round(unit_to_celsius(ZONE_TEMPERATURE_MIN_F, "Fahrenheit")))
+
+    high = None if limits is None else limits.maximum_temperature_tenths
+    if high:
+        ceiling = max(float(_whole_ceiling(high, temperature_unit)), floor)
+    elif fahrenheit:
+        ceiling = float(UI_TEMPERATURE_MAX_F)
+    else:
+        ceiling = _celsius_ceiling(UI_TEMPERATURE_MAX_F)
+    return floor, ceiling
 
 
 def _whole_floor(tenths: int, temperature_unit: str) -> int:
@@ -97,6 +135,7 @@ async def async_setup_entry(
     # Controllers have no live temperature or flow control, only favorites.
     entities: list[NumberEntity] = []
     for valve in coordinator.valves:
+        entities.extend(panel_entities(coordinator, valve, "number"))
         for zone in valve.model.zones:
             entities.append(ZoneTemperatureNumber(coordinator, valve, zone))
             entities.append(ZoneFlowNumber(coordinator, valve, zone))
@@ -104,8 +143,10 @@ async def async_setup_entry(
         # the Konnect app offers one setting for the whole valve.
         entities.append(OutletMaxTemperatureNumber(coordinator, valve))
         entities.append(OutletDefaultTemperatureNumber(coordinator, valve))
-    for faucet in coordinator.faucets:
-        entities += faucet_numbers(faucet)
+    # Every other product's, each device with its own coordinator.
+    entities += product_entities(
+        hass, entry, coordinator, Platform.NUMBER, async_add_entities
+    )
     async_add_entities(entities)
 
 
@@ -156,25 +197,12 @@ class ZoneTemperatureNumber(ZoneNumberBase):
         """A Celsius value in the account's unit, as the whole number the app shows."""
         return float(_whole_degrees(round(celsius * 10), self._fahrenheit))
 
-    def _zone_limits(self):
-        state = self._valve.gcs_state
-        try:
-            outlet_id = self._valve.model.outlet_id(self._zone, 1)
-        except ValueError:
-            # The zone is gone; see `available`.
-            return None
-        return state.outlet_limits.get(outlet_id)
-
     @property
     def _floor(self) -> float:
-        """The lowest real setpoint: the outlet's minimum (`_whole_floor`), else 59 °F."""
-        limits = self._zone_limits()
-        tenths = None if limits is None else limits.minimum_temperature_tenths
-        if tenths:
-            return float(_whole_floor(tenths, self.coordinator.temperature_unit))
-        if self._fahrenheit:
-            return float(ZONE_TEMPERATURE_MIN_F)
-        return float(round(unit_to_celsius(ZONE_TEMPERATURE_MIN_F, "Fahrenheit")))
+        """The lowest real setpoint; see `zone_temperature_range`."""
+        return zone_temperature_range(
+            self._valve, self._zone, self.coordinator.temperature_unit
+        )[0]
 
     @property
     def native_min_value(self) -> float:
@@ -183,15 +211,10 @@ class ZoneTemperatureNumber(ZoneNumberBase):
 
     @property
     def native_max_value(self) -> float:
-        """The scald limit (`_whole_ceiling`), else the top of the app's Max Temperature."""
-        limits = self._zone_limits()
-        tenths = None if limits is None else limits.maximum_temperature_tenths
-        if tenths:
-            ceiling = _whole_ceiling(tenths, self.coordinator.temperature_unit)
-            return max(float(ceiling), self._floor)
-        if self._fahrenheit:
-            return float(UI_TEMPERATURE_MAX_F)
-        return _celsius_ceiling(UI_TEMPERATURE_MAX_F)
+        """The scald limit; see `zone_temperature_range`."""
+        return zone_temperature_range(
+            self._valve, self._zone, self.coordinator.temperature_unit
+        )[1]
 
     @property
     def native_value(self) -> float | None:

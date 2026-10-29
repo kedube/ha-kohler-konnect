@@ -47,10 +47,12 @@
         "description": "**Agrupación de zonas** decide cómo se nombran y agrupan las salidas, los controles de zona (Temperature, Flow) y los sensores de zona (Shower Active, Hex). Solo afecta a las válvulas con dos zonas (K-28211 y K-28212); en una válvula de una sola zona las tres opciones se ven igual.\n\n**Límite de seguridad del agua** se aplica a los grifos.",
         "data": {
           "zone_grouping": "Estilo de agrupación de zonas",
-          "max_run_minutes": "Límite de seguridad del agua"
+          "max_run_minutes": "Límite de seguridad del agua",
+          "sidebar_panel": "Mostrar el panel de Kohler Konnect en la barra lateral"
         },
         "data_description": {
-          "max_run_minutes": "Apaga el agua esta cantidad de minutos después de encenderla desde Home Assistant, salvo que se haya apagado antes. 0 desactiva el límite."
+          "max_run_minutes": "Apaga el agua esta cantidad de minutos después de encenderla desde Home Assistant, salvo que se haya apagado antes. 0 desactiva el límite.",
+          "sidebar_panel": "Un panel para todos los usuarios, con los controles, el consumo de agua y los detalles de tus dispositivos. Al desactivarlo, desaparece de la barra lateral al instante."
         }
       }
     }
@@ -72,6 +74,31 @@
         "qt": "Cuartos de galón",
         "gal": "Galones"
       }
+    },
+    "weekday": {
+      "options": {
+        "mon": "Lunes",
+        "tue": "Martes",
+        "wed": "Miércoles",
+        "thu": "Jueves",
+        "fri": "Viernes",
+        "sat": "Sábado",
+        "sun": "Domingo"
+      }
+    },
+    "schedule_repeat": {
+      "options": {
+        "everyday": "Todos los días",
+        "once": "Una vez",
+        "custom": "Los días elegidos"
+      }
+    },
+    "fan_speed": {
+      "options": {
+        "low": "Baja",
+        "medium": "Media",
+        "high": "Alta"
+      }
     }
   },
   "entity": {
@@ -87,6 +114,39 @@
       },
       "mqtt_connection": {
         "name": "Conexión MQTT"
+      },
+      "light_state": {
+        "name": "Luz"
+      },
+      "occupied": {
+        "name": "Ocupado"
+      },
+      "cleaning": {
+        "name": "Limpieza"
+      },
+      "wand_extended": {
+        "name": "Varilla extendida"
+      },
+      "low_power": {
+        "name": "Bajo consumo"
+      },
+      "shower_running": {
+        "name": "Ducha"
+      },
+      "ozone_cleaning": {
+        "name": "Limpieza con ozono"
+      },
+      "evo_problem": {
+        "name": "Problema"
+      },
+      "session_due": {
+        "name": "Sesión pendiente"
+      },
+      "water_saving_mode": {
+        "name": "Modo de ahorro de agua"
+      },
+      "bath_filling": {
+        "name": "Llenando la bañera"
       }
     },
     "button": {
@@ -122,16 +182,280 @@
       },
       "clear_leak": {
         "name": "Borrar alerta de fuga"
+      },
+      "stop_all": {
+        "name": "Detener todo"
+      },
+      "stop": {
+        "name": "Detener"
+      },
+      "start_front_wash": {
+        "name": "Iniciar lavado frontal"
+      },
+      "start_rear_wash": {
+        "name": "Iniciar lavado trasero"
+      },
+      "start_boost_wash": {
+        "name": "Iniciar lavado intenso"
+      },
+      "start_kid_wash": {
+        "name": "Iniciar lavado infantil"
+      },
+      "start_dryer": {
+        "name": "Iniciar secador"
+      },
+      "cover": {
+        "name": "Tapa"
+      },
+      "seat_ring": {
+        "name": "Aro del asiento"
+      },
+      "start_clean": {
+        "name": "Iniciar limpieza"
+      },
+      "stop_clean": {
+        "name": "Detener limpieza"
+      },
+      "extend_wand": {
+        "name": "Extender varilla"
+      },
+      "retract_wand": {
+        "name": "Retraer varilla"
+      },
+      "full_flush": {
+        "name": "Descarga completa"
+      },
+      "eco_flush": {
+        "name": "Descarga ecológica"
+      },
+      "start_rapid_clean": {
+        "name": "Iniciar limpieza rápida"
+      },
+      "start_deep_clean": {
+        "name": "Iniciar limpieza profunda"
+      },
+      "sync_clock": {
+        "name": "Sincronizar reloj"
       }
     },
     "number": {
       "dispense_amount": {
         "name": "Cantidad a dispensar"
+      },
+      "default_fan_run_time": {
+        "name": "Tiempo de funcionamiento predeterminado del ventilador"
+      },
+      "default_light_brightness": {
+        "name": "Brillo de luz predeterminado"
+      },
+      "default_temperature": {
+        "name": "Temperatura predeterminada"
+      },
+      "standard_max_temperature": {
+        "name": "Temperatura máxima en modo estándar"
+      },
+      "cycle_max_temperature": {
+        "name": "Temperatura máxima en modo ciclo"
+      },
+      "default_flow": {
+        "name": "Caudal predeterminado"
+      },
+      "water_saving_target": {
+        "name": "Porcentaje objetivo de ahorro"
+      },
+      "front_wash_temperature": {
+        "name": "Temperatura del lavado frontal"
+      },
+      "front_wash_pressure": {
+        "name": "Presión del lavado frontal"
+      },
+      "front_wash_position": {
+        "name": "Posición del lavado frontal"
+      },
+      "rear_wash_temperature": {
+        "name": "Temperatura del lavado trasero"
+      },
+      "rear_wash_pressure": {
+        "name": "Presión del lavado trasero"
+      },
+      "rear_wash_position": {
+        "name": "Posición del lavado trasero"
+      },
+      "boost_wash_temperature": {
+        "name": "Temperatura del lavado intenso"
+      },
+      "boost_wash_pressure": {
+        "name": "Presión del lavado intenso"
+      },
+      "boost_wash_position": {
+        "name": "Posición del lavado intenso"
+      },
+      "kid_wash_temperature": {
+        "name": "Temperatura del lavado infantil"
+      },
+      "kid_wash_pressure": {
+        "name": "Presión del lavado infantil"
+      },
+      "kid_wash_position": {
+        "name": "Posición del lavado infantil"
+      },
+      "dryer_temperature": {
+        "name": "Temperatura del secador"
+      },
+      "dryer_fan_speed": {
+        "name": "Velocidad del ventilador del secador"
+      },
+      "default_seat_heat": {
+        "name": "Calefacción predeterminada del asiento"
+      },
+      "default_night_light_brightness": {
+        "name": "Brillo de luz nocturna predeterminado"
+      },
+      "display_brightness": {
+        "name": "Brillo de la pantalla"
       }
     },
     "select": {
       "preset": {
         "name": "Preajuste"
+      },
+      "default_fan_speed": {
+        "name": "Velocidad predeterminada del ventilador",
+        "state": {
+          "low": "Baja",
+          "medium": "Media",
+          "high": "Alta"
+        }
+      },
+      "humidity_sensitivity": {
+        "name": "Sensibilidad a la humedad",
+        "state": {
+          "low": "Baja",
+          "medium": "Media",
+          "high": "Alta"
+        }
+      },
+      "default_light_color": {
+        "name": "Color de luz predeterminado",
+        "state": {
+          "warm": "Cálido",
+          "warmwhite": "Blanco cálido",
+          "cool": "Frío",
+          "coolwhite": "Blanco frío",
+          "daylight": "Luz de día"
+        }
+      },
+      "seat_heat_level": {
+        "name": "Nivel de calefacción del asiento",
+        "state": {
+          "off": "Apagada",
+          "lowest": "Mínima",
+          "low": "Baja",
+          "medium": "Media",
+          "high": "Alta",
+          "highest": "Máxima"
+        }
+      },
+      "auto_cover": {
+        "name": "Tapa automática",
+        "state": {
+          "off": "Apagada",
+          "near": "Cerca",
+          "medium": "Media",
+          "far": "Lejos"
+        }
+      },
+      "night_light": {
+        "name": "Luz nocturna",
+        "state": {
+          "off": "Apagada",
+          "low": "Baja",
+          "high": "Alta"
+        }
+      },
+      "evo_shower": {
+        "name": "Ducha",
+        "state": {
+          "off": "Apagada",
+          "standard": "Estándar",
+          "cycle": "Ciclo"
+        }
+      },
+      "default_shower_mode": {
+        "name": "Modo de ducha predeterminado",
+        "state": {
+          "standard": "Estándar",
+          "cycle": "Ciclo"
+        }
+      },
+      "panel_language": {
+        "name": "Idioma del panel",
+        "state": {
+          "en": "English",
+          "es": "Español",
+          "fr": "Français"
+        }
+      },
+      "panel_units": {
+        "name": "Unidades del panel",
+        "state": {
+          "us": "US (gal, °F)",
+          "metric": "Métrico (L, °C)"
+        }
+      },
+      "front_wash_pattern": {
+        "name": "Tipo de chorro del lavado frontal",
+        "state": {
+          "regular": "Normal",
+          "oscillate": "Oscilante",
+          "pulsate": "Pulsante",
+          "wave": "Onda"
+        }
+      },
+      "rear_wash_pattern": {
+        "name": "Tipo de chorro del lavado trasero",
+        "state": {
+          "regular": "Normal",
+          "oscillate": "Oscilante",
+          "pulsate": "Pulsante",
+          "wave": "Onda"
+        }
+      },
+      "boost_wash_pattern": {
+        "name": "Tipo de chorro del lavado intenso",
+        "state": {
+          "regular": "Normal",
+          "oscillate": "Oscilante",
+          "pulsate": "Pulsante",
+          "wave": "Onda"
+        }
+      },
+      "kid_wash_pattern": {
+        "name": "Tipo de chorro del lavado infantil",
+        "state": {
+          "regular": "Normal",
+          "oscillate": "Oscilante",
+          "pulsate": "Pulsante",
+          "wave": "Onda"
+        }
+      },
+      "valve_panel_language": {
+        "name": "Idioma del panel",
+        "state": {
+          "en_us": "English (United States)",
+          "en_gb": "English (United Kingdom)",
+          "es_mx": "Español (México)",
+          "fr_ca": "Français (Canada)",
+          "zh_cn": "中文 (中国)"
+        }
+      },
+      "wake_screen": {
+        "name": "Pantalla al activarse",
+        "state": {
+          "outlets": "Salidas",
+          "home": "Inicio",
+          "favorites": "Favoritos"
+        }
       }
     },
     "sensor": {
@@ -189,16 +513,248 @@
       },
       "duration_this_year": {
         "name": "Tiempo de uso este año"
+      },
+      "fan_state": {
+        "name": "Ventilador",
+        "state": {
+          "off": "Apagado",
+          "low": "Bajo",
+          "medium": "Medio",
+          "high": "Alto",
+          "on": "Encendido"
+        }
+      },
+      "controller_firmware": {
+        "name": "Firmware del controlador"
+      },
+      "air_temperature": {
+        "name": "Temperatura"
+      },
+      "air_humidity": {
+        "name": "Humedad"
+      },
+      "co2": {
+        "name": "CO₂"
+      },
+      "voc": {
+        "name": "COV"
+      },
+      "activity": {
+        "name": "Actividad",
+        "state": {
+          "idle": "Inactivo",
+          "front_wash": "Lavado frontal",
+          "rear_wash": "Lavado trasero",
+          "boost_wash": "Lavado intenso",
+          "kid_wash": "Lavado infantil",
+          "drying": "Secando"
+        }
+      },
+      "seat_heat": {
+        "name": "Calefacción del asiento",
+        "state": {
+          "off": "Apagada",
+          "lowest": "Mínima",
+          "low": "Baja",
+          "medium": "Media",
+          "high": "Alta",
+          "highest": "Máxima"
+        }
+      },
+      "last_error": {
+        "name": "Último error"
+      },
+      "evo_activity": {
+        "name": "Actividad",
+        "state": {
+          "idle": "Inactivo",
+          "standard": "Estándar",
+          "cycle": "Ciclo",
+          "rapid_clean": "Limpieza rápida",
+          "deep_clean": "Limpieza profunda",
+          "cancelling": "Cancelando limpieza"
+        }
+      },
+      "last_rapid_clean": {
+        "name": "Última limpieza rápida"
+      },
+      "last_deep_clean": {
+        "name": "Última limpieza profunda"
+      },
+      "water_saved": {
+        "name": "Agua ahorrada"
+      },
+      "last_session": {
+        "name": "Última sesión"
+      },
+      "last_session_duration": {
+        "name": "Duración de la última sesión"
+      },
+      "last_session_temperature": {
+        "name": "Temperatura de la última sesión"
+      },
+      "sessions_this_week": {
+        "name": "Sesiones esta semana"
+      },
+      "routine": {
+        "name": "Rutina"
+      },
+      "flushes_today": {
+        "name": "Descargas hoy"
+      },
+      "washes_today": {
+        "name": "Lavados hoy"
+      },
+      "dryer_runs_today": {
+        "name": "Usos del secador hoy"
+      },
+      "power_today": {
+        "name": "Consumo eléctrico hoy"
+      },
+      "missed_this_month": {
+        "name": "Omitidas este mes"
+      },
+      "cycled_water_this_week": {
+        "name": "Agua reciclada esta semana"
+      },
+      "fresh_water_this_week": {
+        "name": "Agua nueva esta semana"
+      },
+      "cycled_share_this_week": {
+        "name": "Proporción reciclada esta semana"
+      },
+      "water_saved_this_month": {
+        "name": "Agua ahorrada este mes"
+      },
+      "water_saved_this_year": {
+        "name": "Agua ahorrada este año"
+      },
+      "cycle_share_this_month": {
+        "name": "Proporción del modo Ciclo este mes"
       }
     },
     "switch": {
       "water": {
         "name": "Agua"
+      },
+      "default_fan_timer": {
+        "name": "Temporizador predeterminado del ventilador"
+      },
+      "humidity_sensing": {
+        "name": "Detección de humedad"
+      },
+      "audible_feedback": {
+        "name": "Confirmación sonora"
+      },
+      "fan_schedule": {
+        "name": "Programación del ventilador"
+      },
+      "circadian_lighting": {
+        "name": "Iluminación circadiana"
+      },
+      "power_save": {
+        "name": "Ahorro de energía"
+      },
+      "circadian_light": {
+        "name": "Luz circadiana"
+      },
+      "night_light": {
+        "name": "Luz nocturna"
+      },
+      "auto_flush": {
+        "name": "Descarga automática"
+      },
+      "auto_clean": {
+        "name": "Limpieza automática"
+      },
+      "auto_cover": {
+        "name": "Tapa automática"
+      },
+      "deodorizer": {
+        "name": "Ventilador desodorizante"
+      },
+      "bowl_mist": {
+        "name": "Niebla en la taza"
+      },
+      "long_sitting_reminder": {
+        "name": "Aviso de permanencia prolongada"
+      },
+      "auto_temperature": {
+        "name": "Temperatura automática"
+      },
+      "warmup": {
+        "name": "Precalentamiento"
+      },
+      "rapid_clean_reminder": {
+        "name": "Recordatorio de limpieza rápida"
+      },
+      "deep_clean_reminder": {
+        "name": "Recordatorio de limpieza profunda"
+      },
+      "filter_clean_reminder": {
+        "name": "Recordatorio de limpieza del filtro"
+      },
+      "haptic_feedback": {
+        "name": "Respuesta háptica"
+      },
+      "water_saving_goal": {
+        "name": "Objetivo de ahorro de agua"
+      },
+      "routine_reminders": {
+        "name": "Recordatorios de la rutina"
+      },
+      "follow_up_questions": {
+        "name": "Preguntas de seguimiento"
+      },
+      "accessible_display": {
+        "name": "Pantalla accesible"
+      },
+      "flow_control": {
+        "name": "Control del caudal"
       }
     },
     "update": {
       "firmware_status": {
         "name": "Estado del firmware"
+      }
+    },
+    "fan": {
+      "fan": {
+        "name": "Ventilador"
+      }
+    },
+    "light": {
+      "light": {
+        "name": "Luz"
+      },
+      "ambient_light": {
+        "name": "Luz ambiental",
+        "state_attributes": {
+          "effect": {
+            "state": {
+              "sunrise": "Amanecer",
+              "forest_breeze": "Brisa del bosque",
+              "deep_ocean": "Océano profundo",
+              "bokeh": "Bokeh",
+              "miami": "Miami",
+              "coral": "Coral",
+              "red": "Rojo",
+              "magenta": "Magenta",
+              "blue": "Azul",
+              "gold": "Dorado",
+              "yellow": "Amarillo",
+              "green": "Verde"
+            }
+          }
+        }
+      },
+      "night_light": {
+        "name": "Luz nocturna"
+      }
+    },
+    "calendar": {
+      "sessions": {
+        "name": "Sesiones"
       }
     }
   },
@@ -247,6 +803,63 @@
     },
     "faucet_required": {
       "message": "Hay más de un grifo configurado. Elige cuál debe dispensar."
+    },
+    "settings_while_running": {
+      "message": "{name} está en marcha y sus ajustes no se pueden cambiar hasta que se detenga, como en la app Konnect."
+    },
+    "settings_unreadable": {
+      "message": "No se pudieron leer los ajustes actuales de {name}, así que no se cambió nada: se reemplazan todos a la vez. Vuelve a intentarlo."
+    },
+    "favorite_not_found": {
+      "message": "{name} no tiene ningún favorito llamado {favorite}."
+    },
+    "toilet_not_seated": {
+      "message": "{name} solo inicia un lavado o el secador si hay alguien sentado, como en la app Konnect."
+    },
+    "toilet_seated": {
+      "message": "{name} no puede hacerlo mientras haya alguien sentado, como en la app Konnect."
+    },
+    "evocycle_fault": {
+      "message": "{name} informa del error {code}. Revísalo en la app Konnect antes de iniciar nada."
+    },
+    "evocycle_cleaning": {
+      "message": "{name} está realizando una limpieza con ozono. La ducha podrá iniciarse cuando termine."
+    },
+    "evocycle_running": {
+      "message": "{name} está en marcha. La limpieza con ozono solo se inicia con la ducha apagada y sin nadie dentro."
+    },
+    "ice_bath_session_exists": {
+      "message": "{name} ya tiene una sesión el {day}. El diario guarda una por día, así que esta no se registró."
+    },
+    "ice_bath_not_selected": {
+      "message": "Elige un diario de Ice Bath."
+    },
+    "ice_bath_in_future": {
+      "message": "Una sesión no puede terminar en el futuro."
+    },
+    "ice_bath_temperature": {
+      "message": "La temperatura debe estar entre {low} y {high} {unit}, lo que admite el diario."
+    },
+    "ice_bath_before_journal": {
+      "message": "El diario de {name} empezó el {day}, así que no se puede registrar ninguna sesión anterior."
+    },
+    "toilet_cleaning": {
+      "message": "{name} está realizando la limpieza UV. Espera a que termine, como en la app Konnect."
+    },
+    "smart_fan_not_selected": {
+      "message": "Elige un Smart Fan."
+    },
+    "fan_schedule_same_times": {
+      "message": "Una programación no puede empezar y terminar a la misma hora: debe durar menos de 24 horas, como en la app Konnect."
+    },
+    "fan_schedule_no_days": {
+      "message": "Elige los días en que se ejecuta la programación."
+    },
+    "panel_settings_while_running": {
+      "message": "{name} tiene el agua abierta: los ajustes de sus paneles no se pueden guardar hasta que se detenga, como en la app Konnect."
+    },
+    "panel_settings_unreadable": {
+      "message": "Los ajustes de los paneles de {name} no se leen como espera la app Konnect ({reason}), así que no se cambió nada: todos los ajustes de cada panel se escriben a la vez."
     }
   },
   "services": {
@@ -269,6 +882,88 @@
         "preset": {
           "name": "Preajuste",
           "description": "Un preajuste guardado en la app Konnect, con su nombre en la lista Preajuste. Úsalo en lugar de cantidad."
+        }
+      }
+    },
+    "log_ice_bath_session": {
+      "name": "Registrar una sesión de baño de hielo",
+      "description": "Registra una sesión en el diario de Ice Bath, como Nuevo registro en la app Konnect: cuándo, cuánto duró y a qué temperatura. Un día que ya tiene una sesión se rechaza en lugar de sobrescribirse.",
+      "fields": {
+        "device_id": {
+          "name": "Diario",
+          "description": "El diario de Ice Bath donde registrarla."
+        },
+        "duration": {
+          "name": "Duración",
+          "description": "Cuánto duró. Diez minutos o más se registra como el 10+ de la app."
+        },
+        "temperature": {
+          "name": "Temperatura",
+          "description": "Qué tan fría, en la unidad de temperatura de Home Assistant: 36–75 °F o 2–24 °C, lo que admite el diario."
+        },
+        "completed": {
+          "name": "Terminó",
+          "description": "Cuándo terminó. Por defecto, ahora."
+        }
+      }
+    },
+    "set_fan_schedule": {
+      "name": "Fijar la programación del ventilador",
+      "description": "Fija la programación de un Smart Fan como el editor de programación de la app Konnect: cuándo empieza y termina, cómo se repite y a qué velocidad. Al guardarla se activa. No puede cambiar mientras el ventilador funciona.",
+      "fields": {
+        "device_id": {
+          "name": "Ventilador",
+          "description": "El Smart Fan que se programa."
+        },
+        "start": {
+          "name": "Inicio",
+          "description": "Cuándo se enciende el ventilador."
+        },
+        "end": {
+          "name": "Fin",
+          "description": "Cuándo se apaga."
+        },
+        "repeat": {
+          "name": "Repetición",
+          "description": "Todos los días, una vez o los días elegidos abajo. Todos los días si se omite."
+        },
+        "days": {
+          "name": "Días",
+          "description": "Los días en que se ejecuta una programación de días elegidos."
+        },
+        "speed": {
+          "name": "Velocidad",
+          "description": "La velocidad del ventilador durante la programación. La actual si se omite."
+        }
+      }
+    },
+    "set_ice_bath_routine": {
+      "name": "Fijar la rutina de Ice Bath",
+      "description": "Cambia la rutina de un diario de Ice Bath como la pantalla de rutina de la app Konnect: sus días de la semana o cuántas sesiones por semana, y sus recordatorios. Indica solo lo que debe cambiar.",
+      "fields": {
+        "device_id": {
+          "name": "Diario",
+          "description": "El diario de Ice Bath cuya rutina se cambia."
+        },
+        "days": {
+          "name": "Días",
+          "description": "Los días de la semana con una sesión planificada. Indica esto o las sesiones por semana, no ambos."
+        },
+        "sessions_per_week": {
+          "name": "Sesiones por semana",
+          "description": "Cuántas sesiones por semana, en cualquier día."
+        },
+        "reminders": {
+          "name": "Recordatorios",
+          "description": "Si la app te recuerda la rutina."
+        },
+        "reminder_time": {
+          "name": "Hora del recordatorio",
+          "description": "Cuándo llega el recordatorio de la app."
+        },
+        "follow_ups": {
+          "name": "Preguntas de seguimiento",
+          "description": "Si la app pregunta cómo te sentiste tras una sesión. Tus respuestas se quedan en la app."
         }
       }
     }

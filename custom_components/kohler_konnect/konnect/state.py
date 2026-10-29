@@ -25,6 +25,7 @@ from .const import (
     MSG_GCS_OUTLET_CONFIG,
     MSG_GCS_PRESET_STATUS,
     MSG_GCS_SOLO_STATUS,
+    MSG_GCS_UI_CONFIG,
     MSG_GCS_WARMUP_STATUS,
     MSG_HUB_EXPERIENCE_CODES,
     MSG_HUB_FAVORITE,
@@ -42,6 +43,7 @@ from .const import (
 from .hub import outlet_flags, zone_number
 from .models import ValveModel
 from .mqtt import Envelope
+from .ui_config import merge_push
 from .valve_hex import (
     FLOW_BYTE_MAX,
     FLOW_BYTE_MIN,
@@ -254,6 +256,18 @@ class OutletLimits:
     purge: str | None = None
 
 
+def _preset_volume(value: Any) -> float | None:
+    """A preset's `volume`, litres, sent as a string; None when unreadable."""
+    number = _finite(value, 1)
+    return None if number is None or number < 0 else number
+
+
+def _preset_seconds(value: Any) -> int | None:
+    """A preset's `time`, seconds, sent as a string; None when unreadable."""
+    number = _finite(value, 1)
+    return None if number is None or number < 0 else int(number)
+
+
 @dataclass(frozen=True)
 class GcsPreset:
     """One stored preset slot.
@@ -267,6 +281,16 @@ class GcsPreset:
     name: str
     is_experience: bool = False
     valve_words: tuple[str, ...] = ()
+    #: The fill amount, litres, of a bath-fill preset; ``0`` for an ordinary one
+    #: (`docs/protocol/gcs_valve.md` §8).
+    volume: float | None = None
+    #: How long, in seconds, the valve lets the preset run.
+    run_time: int | None = None
+
+    @property
+    def is_bath_fill(self) -> bool:
+        """A preset that fills the tub to its `volume`, as the app's bath fill saves one."""
+        return self.volume is not None and self.volume > 0
 
     @property
     def is_empty(self) -> bool:
@@ -327,6 +351,8 @@ class GcsState:
     # Outlet records keyed by 0-based `outLetId`. MQTT fills them one outlet at a time,
     # so this may be partial: every reader must tolerate a missing entry.
     outlet_limits: dict[int, OutletLimits] = field(default_factory=dict)
+    # The touch panels' settings records, as `gcsadvancestate` lists them (`ui_config.py`).
+    ui_config: list[dict[str, Any]] = field(default_factory=list)
     # The fields the last applied message carried, so `Valve.apply_rest_reply` can keep
     # them over a REST read that message overtook.
     carried: frozenset[str] = field(default=frozenset(), compare=False)
@@ -494,6 +520,7 @@ class GcsState:
             MSG_GCS_PRESET_STATUS: self._apply_preset,
             MSG_GCS_OUTLET_CONFIG: self._apply_outlet_config,
             MSG_GCS_DISPENSED_VOLUME: self._apply_dispensed_volume,
+            MSG_GCS_UI_CONFIG: self._apply_ui_config,
         }.get(envelope.code)
         if handler is not None:
             handler(envelope)
@@ -581,6 +608,19 @@ class GcsState:
                 changed = True
         return changed
 
+    def _apply_ui_config(self, envelope: Envelope) -> bool:
+        """Merge a touch panel's record, only when the message carries exactly one, as
+        the app merges them (`gcs_valve.md` §6)."""
+        if len(envelope.attributes) != 1 or not isinstance(
+            envelope.attributes[0], dict
+        ):
+            return False
+        merged = merge_push(self.ui_config, envelope.attributes[0])
+        if merged is None or merged == self.ui_config:
+            return False
+        self.ui_config = merged
+        return True
+
     def _apply_dispensed_volume(self, envelope: Envelope) -> bool:
         """Record the bath-fill volume counter, raw. Diagnostic only."""
         for attribute in envelope.attributes:
@@ -638,6 +678,12 @@ class GcsState:
                 # The push carries no experience flag; keep what the REST list said.
                 is_experience=held.is_experience if held is not None else False,
                 valve_words=valve_words,
+                volume=_preset_volume(attribute.get("volume"))
+                if "volume" in attribute
+                else (held.volume if held is not None else None),
+                run_time=_preset_seconds(attribute.get("time"))
+                if "time" in attribute
+                else (held.run_time if held is not None else None),
             )
             if self.presets.get(preset_id) != preset:
                 self.presets[preset_id] = preset
@@ -808,6 +854,8 @@ class GcsState:
                 # be true for both.
                 is_experience=str(entry.get("isExperience")).strip().lower() == "true",
                 valve_words=_preset_words(by_valve),
+                volume=_preset_volume(entry.get("volume")),
+                run_time=_preset_seconds(entry.get("time")),
             )
         if presets == self.presets:
             return False

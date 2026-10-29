@@ -20,6 +20,7 @@ from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
@@ -38,8 +39,9 @@ from .const import (
 )
 from .coordinator import Controller, KohlerKonnectCoordinator, Valve
 from .entity import KohlerControllerEntity, KohlerValveEntity, outlet_name
-from .faucet.select import add_faucet_selects
 from .konnect import WARMUP_MODES_CURRENT
+from .panel_settings import panel_entities
+from .product_platforms import product_entities
 
 # Shown when nothing is running. A select's current option must be in its options, or
 # Home Assistant logs an error on every update.
@@ -145,6 +147,7 @@ async def async_setup_entry(
         entities.append(FavoriteSelect(coordinator, valve))
         entities.append(ValveExperienceSelect(coordinator, valve))
         entities.append(ValveWarmupSelect(coordinator, valve))
+        entities.extend(panel_entities(coordinator, valve, "select"))
         entities.append(OutletRunTimeSelect(coordinator, valve))
     # Each controller keeps its own favorites, on a different command surface from the
     # valve's, so each gets its own dropdowns on its own device.
@@ -152,9 +155,11 @@ async def async_setup_entry(
         entities.append(HubFavoriteSelect(coordinator, controller))
         entities.append(HubExperienceSelect(coordinator, controller))
     async_add_entities(entities)
-    # A faucet's Preset select appears once it has a preset, which may be later.
-    for faucet in coordinator.faucets:
-        add_faucet_selects(entry, faucet, async_add_entities)
+    # Every other product's; a faucet's Preset select appears once it has a preset.
+    if products := product_entities(
+        hass, entry, coordinator, Platform.SELECT, async_add_entities
+    ):
+        async_add_entities(products)
 
 
 class FavoriteSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
@@ -229,6 +234,15 @@ class FavoriteSelect(OptimisticOptionMixin, KohlerValveEntity, SelectEntity):
             "active_preset_id": state.active_preset_id,
             "favourite_count": len(self._presets),
         }
+        # Bath-fill presets run like any other, and stop when the tub holds their fill
+        # amount (`docs/protocol/gcs_valve.md` §8).
+        bath_fills = {
+            preset.name: preset.volume
+            for preset in self._presets
+            if preset.is_bath_fill
+        }
+        if bath_fills:
+            attributes["bath_fill_litres"] = bath_fills
         # Named, not offered: the Experience select starts them.
         experiences = self._experiences
         if experiences:

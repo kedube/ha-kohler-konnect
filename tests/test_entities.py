@@ -66,6 +66,7 @@ def test_temperature_and_flow_numbers_exist(coordinator):
     entities = collect("number", coordinator)
     assert sorted(e.name for e in entities) == [
         "Default Temperature",
+        "Display Brightness",
         "Flow",
         "Max Temperature",
         "Temperature",
@@ -134,9 +135,10 @@ def _zone_number_names(coordinator):
 
     `Max Temperature` and `Default Temperature` are per *valve* — `writeoutletconfig`
     replaces every outlet's record with the same value — so they carry no zone in their
-    name and are not what these naming tests are about.
+    name and are not what these naming tests are about; nor is the touch panels'
+    `Display Brightness`.
     """
-    valve_level = {"Max Temperature", "Default Temperature"}
+    valve_level = {"Max Temperature", "Default Temperature", "Display Brightness"}
     return {e.name for e in collect("number", coordinator)} - valve_level
 
 
@@ -685,18 +687,28 @@ def test_every_registered_service_is_also_unregistered():
     import re
 
     from custom_components.kohler_konnect import services
+    from custom_components.kohler_konnect.products import PRODUCTS
 
     registered = set(
         re.findall(
             r"SERVICE_[A-Z_]+", inspect.getsource(services.async_register_services)
         )
     )
+    # And every one a product registers (`Product.register_services`).
+    for product in PRODUCTS:
+        if product.register_services is not None:
+            registered |= set(
+                re.findall(
+                    r"SERVICE_[A-Z_]+", inspect.getsource(product.register_services)
+                )
+            )
     removed = set(
         re.findall(
             r"SERVICE_[A-Z_]+", inspect.getsource(services.async_unregister_services)
         )
     )
     assert registered, "no services found — the regex or the function shape changed"
+    assert "SERVICE_LOG_SESSION" in registered
     assert registered <= removed, sorted(registered - removed)
 
 
@@ -2487,7 +2499,9 @@ def test_no_device_id_reaches_a_non_debug_log():
         "password",
     )
     offenders = []
-    for path in sorted([*base.glob("*.py"), *base.glob("konnect/*.py")]):
+    # Every package: each product's own as well as the shared ones.
+    modules = list(base.glob("**/*.py"))
+    for path in sorted(modules):
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if not (

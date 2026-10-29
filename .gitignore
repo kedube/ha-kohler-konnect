@@ -6,6 +6,11 @@ __pycache__/
 .coverage.*
 htmlcov/
 
+# Front end: dependencies and the design-harness build. The panel bundle itself, under
+# custom_components/kohler_konnect/www/, is committed.
+frontend/node_modules/
+frontend/dist-mockup/
+
 # Report Log captures — runtime output of the "Report Log" switch, written INSIDE the
 # integration folder by design (owner's decision, see const.py's REPORT LOG section).
 # User data, never repository content.

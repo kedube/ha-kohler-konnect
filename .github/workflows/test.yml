@@ -80,3 +80,32 @@ jobs:
 
       - name: Ruff format check
         run: ruff format --check custom_components tests .github/scripts
+
+  # The sidebar panel's front end. Here rather than in its own workflow because Release
+  # follows only Test: a failing panel, or a bundle that no longer matches its source,
+  # holds the release back.
+  frontend:
+    name: Front end
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Lint, types, unit tests, the build and its size budget.
+      - name: Check
+        run: npm run check
+
+      # HACS installs the committed bundle, so it must be exactly what this source builds.
+      - name: Committed bundle matches its source
+        run: git diff --exit-code -- ../custom_components/kohler_konnect/www/

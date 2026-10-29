@@ -47,10 +47,12 @@
         "description": "**Zone grouping** decides how outlets, zone controls (Temperature, Flow) and zone sensors (Shower Active, Hex) are named and grouped. It only affects valves with two zones (K-28211 and K-28212); on a single-zone valve all three choices look the same.\n\n**Water safety limit** applies to faucets.",
         "data": {
           "zone_grouping": "Zone grouping style",
-          "max_run_minutes": "Water safety limit"
+          "max_run_minutes": "Water safety limit",
+          "sidebar_panel": "Show the Kohler Konnect panel in the sidebar"
         },
         "data_description": {
-          "max_run_minutes": "Turn the water off this many minutes after it's turned on from Home Assistant, unless it's turned off in the meantime. 0 turns the limit off."
+          "max_run_minutes": "Turn the water off this many minutes after it's turned on from Home Assistant, unless it's turned off in the meantime. 0 turns the limit off.",
+          "sidebar_panel": "One panel for every user, with your devices' controls, water use and details. Turning it off removes it from the sidebar straight away."
         }
       }
     }
@@ -72,6 +74,31 @@
         "qt": "Quarts",
         "gal": "Gallons"
       }
+    },
+    "weekday": {
+      "options": {
+        "mon": "Monday",
+        "tue": "Tuesday",
+        "wed": "Wednesday",
+        "thu": "Thursday",
+        "fri": "Friday",
+        "sat": "Saturday",
+        "sun": "Sunday"
+      }
+    },
+    "schedule_repeat": {
+      "options": {
+        "everyday": "Every day",
+        "once": "Once",
+        "custom": "On chosen days"
+      }
+    },
+    "fan_speed": {
+      "options": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High"
+      }
     }
   },
   "entity": {
@@ -87,6 +114,39 @@
       },
       "mqtt_connection": {
         "name": "MQTT connection"
+      },
+      "light_state": {
+        "name": "Light"
+      },
+      "occupied": {
+        "name": "Occupied"
+      },
+      "cleaning": {
+        "name": "Cleaning"
+      },
+      "wand_extended": {
+        "name": "Wand extended"
+      },
+      "low_power": {
+        "name": "Low power"
+      },
+      "shower_running": {
+        "name": "Shower"
+      },
+      "ozone_cleaning": {
+        "name": "Ozone clean"
+      },
+      "evo_problem": {
+        "name": "Problem"
+      },
+      "session_due": {
+        "name": "Session due"
+      },
+      "water_saving_mode": {
+        "name": "Water-saving mode"
+      },
+      "bath_filling": {
+        "name": "Bath filling"
       }
     },
     "button": {
@@ -122,16 +182,280 @@
       },
       "clear_leak": {
         "name": "Clear leak alert"
+      },
+      "stop_all": {
+        "name": "Stop all"
+      },
+      "stop": {
+        "name": "Stop"
+      },
+      "start_front_wash": {
+        "name": "Start front wash"
+      },
+      "start_rear_wash": {
+        "name": "Start rear wash"
+      },
+      "start_boost_wash": {
+        "name": "Start boost wash"
+      },
+      "start_kid_wash": {
+        "name": "Start kid wash"
+      },
+      "start_dryer": {
+        "name": "Start dryer"
+      },
+      "cover": {
+        "name": "Cover"
+      },
+      "seat_ring": {
+        "name": "Seat ring"
+      },
+      "start_clean": {
+        "name": "Start clean"
+      },
+      "stop_clean": {
+        "name": "Stop clean"
+      },
+      "extend_wand": {
+        "name": "Extend wand"
+      },
+      "retract_wand": {
+        "name": "Retract wand"
+      },
+      "full_flush": {
+        "name": "Full flush"
+      },
+      "eco_flush": {
+        "name": "Eco flush"
+      },
+      "start_rapid_clean": {
+        "name": "Start Rapid Clean"
+      },
+      "start_deep_clean": {
+        "name": "Start Deep Clean"
+      },
+      "sync_clock": {
+        "name": "Sync clock"
       }
     },
     "number": {
       "dispense_amount": {
         "name": "Dispense amount"
+      },
+      "default_fan_run_time": {
+        "name": "Default fan run time"
+      },
+      "default_light_brightness": {
+        "name": "Default light brightness"
+      },
+      "default_temperature": {
+        "name": "Default temperature"
+      },
+      "standard_max_temperature": {
+        "name": "Standard mode max temperature"
+      },
+      "cycle_max_temperature": {
+        "name": "Cycle mode max temperature"
+      },
+      "default_flow": {
+        "name": "Default flow"
+      },
+      "water_saving_target": {
+        "name": "Water savings target"
+      },
+      "front_wash_temperature": {
+        "name": "Front wash temperature"
+      },
+      "front_wash_pressure": {
+        "name": "Front wash pressure"
+      },
+      "front_wash_position": {
+        "name": "Front wash position"
+      },
+      "rear_wash_temperature": {
+        "name": "Rear wash temperature"
+      },
+      "rear_wash_pressure": {
+        "name": "Rear wash pressure"
+      },
+      "rear_wash_position": {
+        "name": "Rear wash position"
+      },
+      "boost_wash_temperature": {
+        "name": "Boost wash temperature"
+      },
+      "boost_wash_pressure": {
+        "name": "Boost wash pressure"
+      },
+      "boost_wash_position": {
+        "name": "Boost wash position"
+      },
+      "kid_wash_temperature": {
+        "name": "Kid wash temperature"
+      },
+      "kid_wash_pressure": {
+        "name": "Kid wash pressure"
+      },
+      "kid_wash_position": {
+        "name": "Kid wash position"
+      },
+      "dryer_temperature": {
+        "name": "Dryer temperature"
+      },
+      "dryer_fan_speed": {
+        "name": "Dryer fan speed"
+      },
+      "default_seat_heat": {
+        "name": "Default seat heat"
+      },
+      "default_night_light_brightness": {
+        "name": "Default night light brightness"
+      },
+      "display_brightness": {
+        "name": "Display brightness"
       }
     },
     "select": {
       "preset": {
         "name": "Preset"
+      },
+      "default_fan_speed": {
+        "name": "Default fan speed",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
+      },
+      "humidity_sensitivity": {
+        "name": "Humidity sensitivity",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
+      },
+      "default_light_color": {
+        "name": "Default light color",
+        "state": {
+          "warm": "Warm",
+          "warmwhite": "Warm white",
+          "cool": "Cool",
+          "coolwhite": "Cool white",
+          "daylight": "Daylight"
+        }
+      },
+      "seat_heat_level": {
+        "name": "Seat heat level",
+        "state": {
+          "off": "Off",
+          "lowest": "Lowest",
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High",
+          "highest": "Highest"
+        }
+      },
+      "auto_cover": {
+        "name": "Auto cover",
+        "state": {
+          "off": "Off",
+          "near": "Near",
+          "medium": "Medium",
+          "far": "Far"
+        }
+      },
+      "night_light": {
+        "name": "Night light",
+        "state": {
+          "off": "Off",
+          "low": "Low",
+          "high": "High"
+        }
+      },
+      "evo_shower": {
+        "name": "Shower",
+        "state": {
+          "off": "Off",
+          "standard": "Standard",
+          "cycle": "Cycle"
+        }
+      },
+      "default_shower_mode": {
+        "name": "Default shower mode",
+        "state": {
+          "standard": "Standard",
+          "cycle": "Cycle"
+        }
+      },
+      "panel_language": {
+        "name": "Panel language",
+        "state": {
+          "en": "English",
+          "es": "Español",
+          "fr": "Français"
+        }
+      },
+      "panel_units": {
+        "name": "Panel units",
+        "state": {
+          "us": "US (gal, °F)",
+          "metric": "Metric (L, °C)"
+        }
+      },
+      "front_wash_pattern": {
+        "name": "Front wash spray pattern",
+        "state": {
+          "regular": "Regular",
+          "oscillate": "Oscillate",
+          "pulsate": "Pulsate",
+          "wave": "Wave"
+        }
+      },
+      "rear_wash_pattern": {
+        "name": "Rear wash spray pattern",
+        "state": {
+          "regular": "Regular",
+          "oscillate": "Oscillate",
+          "pulsate": "Pulsate",
+          "wave": "Wave"
+        }
+      },
+      "boost_wash_pattern": {
+        "name": "Boost wash spray pattern",
+        "state": {
+          "regular": "Regular",
+          "oscillate": "Oscillate",
+          "pulsate": "Pulsate",
+          "wave": "Wave"
+        }
+      },
+      "kid_wash_pattern": {
+        "name": "Kid wash spray pattern",
+        "state": {
+          "regular": "Regular",
+          "oscillate": "Oscillate",
+          "pulsate": "Pulsate",
+          "wave": "Wave"
+        }
+      },
+      "valve_panel_language": {
+        "name": "Panel language",
+        "state": {
+          "en_us": "English (United States)",
+          "en_gb": "English (United Kingdom)",
+          "es_mx": "Español (México)",
+          "fr_ca": "Français (Canada)",
+          "zh_cn": "中文 (中国)"
+        }
+      },
+      "wake_screen": {
+        "name": "Wake screen",
+        "state": {
+          "outlets": "Outlets",
+          "home": "Home",
+          "favorites": "Favorites"
+        }
       }
     },
     "sensor": {
@@ -189,16 +513,248 @@
       },
       "duration_this_year": {
         "name": "Duration used this year"
+      },
+      "fan_state": {
+        "name": "Fan",
+        "state": {
+          "off": "Off",
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High",
+          "on": "On"
+        }
+      },
+      "controller_firmware": {
+        "name": "Controller firmware"
+      },
+      "air_temperature": {
+        "name": "Temperature"
+      },
+      "air_humidity": {
+        "name": "Humidity"
+      },
+      "co2": {
+        "name": "CO₂"
+      },
+      "voc": {
+        "name": "VOC"
+      },
+      "activity": {
+        "name": "Activity",
+        "state": {
+          "idle": "Idle",
+          "front_wash": "Front wash",
+          "rear_wash": "Rear wash",
+          "boost_wash": "Boost wash",
+          "kid_wash": "Kid wash",
+          "drying": "Drying"
+        }
+      },
+      "seat_heat": {
+        "name": "Seat heat",
+        "state": {
+          "off": "Off",
+          "lowest": "Lowest",
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High",
+          "highest": "Highest"
+        }
+      },
+      "last_error": {
+        "name": "Last error"
+      },
+      "evo_activity": {
+        "name": "Activity",
+        "state": {
+          "idle": "Idle",
+          "standard": "Standard",
+          "cycle": "Cycle",
+          "rapid_clean": "Rapid Clean",
+          "deep_clean": "Deep Clean",
+          "cancelling": "Cancelling clean"
+        }
+      },
+      "last_rapid_clean": {
+        "name": "Last Rapid Clean"
+      },
+      "last_deep_clean": {
+        "name": "Last Deep Clean"
+      },
+      "water_saved": {
+        "name": "Water saved"
+      },
+      "last_session": {
+        "name": "Last session"
+      },
+      "last_session_duration": {
+        "name": "Last session duration"
+      },
+      "last_session_temperature": {
+        "name": "Last session temperature"
+      },
+      "sessions_this_week": {
+        "name": "Sessions this week"
+      },
+      "routine": {
+        "name": "Routine"
+      },
+      "flushes_today": {
+        "name": "Flushes today"
+      },
+      "washes_today": {
+        "name": "Washes today"
+      },
+      "dryer_runs_today": {
+        "name": "Dryer runs today"
+      },
+      "power_today": {
+        "name": "Power used today"
+      },
+      "missed_this_month": {
+        "name": "Missed this month"
+      },
+      "cycled_water_this_week": {
+        "name": "Cycled water this week"
+      },
+      "fresh_water_this_week": {
+        "name": "Fresh water this week"
+      },
+      "cycled_share_this_week": {
+        "name": "Cycled share this week"
+      },
+      "water_saved_this_month": {
+        "name": "Water saved this month"
+      },
+      "water_saved_this_year": {
+        "name": "Water saved this year"
+      },
+      "cycle_share_this_month": {
+        "name": "Cycle mode share this month"
       }
     },
     "switch": {
       "water": {
         "name": "Water"
+      },
+      "default_fan_timer": {
+        "name": "Default fan timer"
+      },
+      "humidity_sensing": {
+        "name": "Humidity sensing"
+      },
+      "audible_feedback": {
+        "name": "Audible feedback"
+      },
+      "fan_schedule": {
+        "name": "Fan schedule"
+      },
+      "circadian_lighting": {
+        "name": "Circadian lighting"
+      },
+      "power_save": {
+        "name": "Power save"
+      },
+      "circadian_light": {
+        "name": "Circadian light"
+      },
+      "night_light": {
+        "name": "Night light"
+      },
+      "auto_flush": {
+        "name": "Auto flush"
+      },
+      "auto_clean": {
+        "name": "Auto clean"
+      },
+      "auto_cover": {
+        "name": "Auto cover"
+      },
+      "deodorizer": {
+        "name": "Deodorizer fan"
+      },
+      "bowl_mist": {
+        "name": "Bowl mist"
+      },
+      "long_sitting_reminder": {
+        "name": "Long sitting reminder"
+      },
+      "auto_temperature": {
+        "name": "Auto temperature"
+      },
+      "warmup": {
+        "name": "Warmup"
+      },
+      "rapid_clean_reminder": {
+        "name": "Rapid Clean reminder"
+      },
+      "deep_clean_reminder": {
+        "name": "Deep Clean reminder"
+      },
+      "filter_clean_reminder": {
+        "name": "Filter clean reminder"
+      },
+      "haptic_feedback": {
+        "name": "Haptic feedback"
+      },
+      "water_saving_goal": {
+        "name": "Water savings goal"
+      },
+      "routine_reminders": {
+        "name": "Routine reminders"
+      },
+      "follow_up_questions": {
+        "name": "Follow-up questions"
+      },
+      "accessible_display": {
+        "name": "Accessible display"
+      },
+      "flow_control": {
+        "name": "Flow control"
       }
     },
     "update": {
       "firmware_status": {
         "name": "Firmware status"
+      }
+    },
+    "fan": {
+      "fan": {
+        "name": "Fan"
+      }
+    },
+    "light": {
+      "light": {
+        "name": "Light"
+      },
+      "ambient_light": {
+        "name": "Ambient light",
+        "state_attributes": {
+          "effect": {
+            "state": {
+              "sunrise": "Sunrise",
+              "forest_breeze": "Forest breeze",
+              "deep_ocean": "Ocean deep",
+              "bokeh": "Bokeh",
+              "miami": "Miami",
+              "coral": "Coral",
+              "red": "Red",
+              "magenta": "Magenta",
+              "blue": "Blue",
+              "gold": "Gold",
+              "yellow": "Yellow",
+              "green": "Green"
+            }
+          }
+        }
+      },
+      "night_light": {
+        "name": "Night light"
+      }
+    },
+    "calendar": {
+      "sessions": {
+        "name": "Sessions"
       }
     }
   },
@@ -247,6 +803,63 @@
     },
     "faucet_required": {
       "message": "More than one faucet is set up. Choose which faucet should dispense."
+    },
+    "settings_while_running": {
+      "message": "{name} is running, and its settings can't change until it stops, as in the Konnect app."
+    },
+    "settings_unreadable": {
+      "message": "{name}'s current settings couldn't be read, so nothing was changed: they are all replaced at once. Try again."
+    },
+    "favorite_not_found": {
+      "message": "{name} has no favorite called {favorite}."
+    },
+    "toilet_not_seated": {
+      "message": "{name} only starts a spray or the dryer for someone who is seated, as in the Konnect app."
+    },
+    "toilet_seated": {
+      "message": "{name} can't do that while someone is seated, as in the Konnect app."
+    },
+    "evocycle_fault": {
+      "message": "{name} reports fault {code}. Check it in the Konnect app before starting anything."
+    },
+    "evocycle_cleaning": {
+      "message": "{name} is running an ozone clean. The shower can start once the clean has finished."
+    },
+    "evocycle_running": {
+      "message": "{name} is running. An ozone clean starts only when the shower is off and nobody is in it."
+    },
+    "ice_bath_session_exists": {
+      "message": "{name} already has a session on {day}. The journal keeps one a day, so this one wasn't recorded."
+    },
+    "ice_bath_not_selected": {
+      "message": "Choose an Ice Bath journal."
+    },
+    "ice_bath_in_future": {
+      "message": "A session can't finish in the future."
+    },
+    "ice_bath_temperature": {
+      "message": "The temperature must be between {low} and {high} {unit}, what the journal can hold."
+    },
+    "ice_bath_before_journal": {
+      "message": "{name}'s journal began on {day}, so no session can be logged before then."
+    },
+    "toilet_cleaning": {
+      "message": "{name} is running its UV clean. Wait until it has finished, as in the Konnect app."
+    },
+    "smart_fan_not_selected": {
+      "message": "Choose a Smart Fan."
+    },
+    "fan_schedule_same_times": {
+      "message": "A schedule can't start and end at the same time: it must run for less than 24 hours, as in the Konnect app."
+    },
+    "fan_schedule_no_days": {
+      "message": "Choose the days for a schedule that runs on chosen days."
+    },
+    "panel_settings_while_running": {
+      "message": "{name} is running water: its touch panels' settings can't be saved until it stops, as in the Konnect app."
+    },
+    "panel_settings_unreadable": {
+      "message": "{name}'s touch panel settings don't read as the Konnect app expects ({reason}), so nothing was changed: every panel's settings are written at once."
     }
   },
   "services": {
@@ -269,6 +882,88 @@
         "preset": {
           "name": "Preset",
           "description": "A preset saved in the Konnect app, by its name in the Preset dropdown. Use instead of amount."
+        }
+      }
+    },
+    "log_ice_bath_session": {
+      "name": "Log an ice bath session",
+      "description": "Records a session in an Ice Bath journal, as the Konnect app's New Record does: when, how long and how cold. A day that already has a session is refused rather than overwritten.",
+      "fields": {
+        "device_id": {
+          "name": "Journal",
+          "description": "The Ice Bath journal to record it in."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "How long it lasted. Ten minutes or more is recorded as the app's 10+."
+        },
+        "temperature": {
+          "name": "Temperature",
+          "description": "How cold, in Home Assistant's temperature unit: 36–75 °F or 2–24 °C, what the journal can hold."
+        },
+        "completed": {
+          "name": "Finished",
+          "description": "When it ended. Defaults to now."
+        }
+      }
+    },
+    "set_fan_schedule": {
+      "name": "Set a fan schedule",
+      "description": "Sets a Smart Fan's schedule as the Konnect app's Fan Schedule editor does: when it starts and ends, how it repeats and at what speed. Saving switches the schedule on. It can't change while the fan runs.",
+      "fields": {
+        "device_id": {
+          "name": "Fan",
+          "description": "The Smart Fan to schedule."
+        },
+        "start": {
+          "name": "Start",
+          "description": "When the fan comes on."
+        },
+        "end": {
+          "name": "End",
+          "description": "When it goes off."
+        },
+        "repeat": {
+          "name": "Repeat",
+          "description": "Every day, once, or on the days chosen below. Every day if left out."
+        },
+        "days": {
+          "name": "Days",
+          "description": "The days it runs on, when it repeats on chosen days."
+        },
+        "speed": {
+          "name": "Speed",
+          "description": "The fan's speed while the schedule runs. The one it has if left out."
+        }
+      }
+    },
+    "set_ice_bath_routine": {
+      "name": "Set an ice bath routine",
+      "description": "Changes an Ice Bath journal's routine as the Konnect app's Routine screen does: its weekdays or how many sessions a week, and its reminders. Give only what should change.",
+      "fields": {
+        "device_id": {
+          "name": "Journal",
+          "description": "The Ice Bath journal whose routine to change."
+        },
+        "days": {
+          "name": "Days",
+          "description": "The weekdays a session is planned for. Give this or sessions a week, not both."
+        },
+        "sessions_per_week": {
+          "name": "Sessions a week",
+          "description": "How many sessions a week, on any days."
+        },
+        "reminders": {
+          "name": "Reminders",
+          "description": "Whether the app reminds you of the routine."
+        },
+        "reminder_time": {
+          "name": "Reminder time",
+          "description": "When the app's reminder comes."
+        },
+        "follow_ups": {
+          "name": "Follow-up questions",
+          "description": "Whether the app asks how you felt after a session. Your answers stay in the app."
         }
       }
     }

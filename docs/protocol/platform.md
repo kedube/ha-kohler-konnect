@@ -74,7 +74,7 @@ Konnect models `statusCode` as a **string** and translates it only when the HTTP
 | 917 | The server's message ("Something went wrong") | all |
 | 919 | EvoCycle ozone | EvoCycle |
 
-**201 means "accepted for delivery", never "applied".** Command endpoints return a correlation id and no echo. Confirm through MQTT or by reading back after a few seconds (live; an immediate read can still show the old value).
+**201 means "accepted for delivery", never "applied".** Command endpoints return a correlation id and no echo. Confirm through MQTT or by reading back after a few seconds (live; an immediate read can still show the old value). The products beyond the shower and faucet (`product_base.py`) do as the app does: after a command they wait about 8 s for a message about the device and read it again only if none comes, and a message that arrives while a read is out is laid over its result. A settings write can lag too, so the values just written are laid over each read until it shows them.
 
 ### 2.2 Ids in paths
 
@@ -214,7 +214,8 @@ Read it when you have a reason to doubt reachability. Silence alone is not one (
 
   If today falls inside the range, the end date is clamped to today.
 - **`WEEK` and `YEAR` are not intervals.** The server refuses `WEEK` with a 400 at every range (live), and the app never sends either. The uppercase constants that suggested otherwise belong to another product's screen. Build a week from seven `Day` buckets.
-- **The server also accepts ISO dates (`yyyy-MM-dd`) and uppercase `DAY` / `MONTH`.** This integration uses those (live 2026-09-10/11); daily buckets summed exactly to the monthly figure.
+- **The server also accepts ISO dates (`yyyy-MM-dd`) and uppercase `DAY` / `MONTH`.** This integration uses those for valves and faucets (live 2026-09-10/11); daily buckets summed exactly to the monthly figure.
+- **The products nobody here has seen are asked as the app asks**, since no capture shows what else they take. A toilet is sent what the app's toilet screen sends (`uq0/z.java`), dates year first and `Day`/`Month` ([Numi and Purewash §6.2](numi_purewash.md#62-usage-water-used)), not `rg0/t0`'s `MM-dd-yyyy`, which can't show a toilet's reply. An EvoCycle is sent `MM-dd-yyyy` and `TimeZone=UTC` ([EvoCycle §2.1](evocycle.md)). Their windows are the app's shapes: this year's months by `Month`, and a month of days by `Day`, reaching back at least a week. The window ends on the later of the local and UTC dates, as the valve's does, so a US evening's bucket under tomorrow's UTC date is read too.
 - **Response** (`AnthemWaterUsageModel` for GCS; other products are analogous):
   - Summary fields: `avg/min/max` of `AverageBlendTemperature`, `NumberOfTimesValveSwitchedOn`, `OnDuration` and `Volume`, plus `interval` and `deviceId`.
   - Buckets: `gcsUsageDataDetailsList[] {intervalKey, volume, onDuration, numberOfTimesValveSwitchedOn, averageBlendTemperature, timestamp}`. `intervalKey` is `yyyy-MM-dd` or `yyyy-MM`.

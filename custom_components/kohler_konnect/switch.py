@@ -33,6 +33,7 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
@@ -40,14 +41,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 
 from .const import (
-    CONF_WARMUP_AUTO_RESTORE,
     DOMAIN,
     OPTIMISTIC_GRACE_SECONDS,
     OUTLET_TYPE_NAMES,
     OUTLET_TYPE_VARIANTS,
     WARMUP_AUTO_RESTORE_DELAY_SECONDS,
-    WARMUP_AUTO_RESTORE_NO_TARGET,
-    WARMUP_AUTO_RESTORE_ON,
 )
 from .coordinator import Controller, KohlerKonnectCoordinator, Valve
 from .entity import (
@@ -56,7 +54,9 @@ from .entity import (
     outlet_name,
     outlet_unique_id,
 )
-from .faucet.switch import faucet_switches
+from .panel_settings import panel_entities
+from .product_base import ProductCoordinator, ProductEntity
+from .product_platforms import product_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -102,6 +102,7 @@ async def async_setup_entry(
     for valve in coordinator.valves:
         model = valve.model
         entities.append(ShowerSwitch(coordinator, valve))
+        entities.extend(panel_entities(coordinator, valve, "switch"))
         # Only with a controller: its web UI is the one known cause of a spontaneous
         # `warmUpDisabled`. Without one the switch would only add an unprompted writer.
         # Per account, not per valve: which valve a controller fronts can't be told from
@@ -127,9 +128,18 @@ async def async_setup_entry(
         if controller.capabilities.steam:
             entities.append(HubSteamSwitch(coordinator, controller))
 
-    # Each faucet is its own device, with its own coordinator.
-    for faucet in coordinator.faucets:
-        entities += faucet_switches(faucet)
+    # Every other product's, each device with its own coordinator.
+    entities += product_entities(
+        hass, entry, coordinator, Platform.SWITCH, async_add_entities
+    )
+    # The one Report Log again, on each product page whose messages it records, so an
+    # account without a shower can still send one.
+    entities += [
+        ProductReportLogSwitch(device)
+        for devices in coordinator.products.values()
+        for device in devices
+        if isinstance(device, ProductCoordinator) and device.streams
+    ]
     async_add_entities(entities)
 
 
@@ -315,25 +325,10 @@ class WarmupAutoRestoreSwitch(KohlerValveEntity, SwitchEntity):
         }
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        await self._async_set(True)
+        self._valve.set_warmup_auto_restore(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self._async_set(False)
-
-    async def _async_set(self, value: bool) -> None:
-        self._valve.set_option(CONF_WARMUP_AUTO_RESTORE, value)
-        if not value:
-            _LOGGER.info("Warmup Auto-Restore disabled")
-        elif self._valve.last_warmup_mode is None:
-            # On but inert, which is indistinguishable from broken unless it says so.
-            _LOGGER.warning(WARMUP_AUTO_RESTORE_NO_TARGET)
-        else:
-            _LOGGER.warning(
-                WARMUP_AUTO_RESTORE_ON,
-                self._valve.last_warmup_mode,
-                WARMUP_AUTO_RESTORE_DELAY_SECONDS,
-            )
-        self.async_write_ha_state()
+        self._valve.set_warmup_auto_restore(False)
 
 
 class ZoneOutletSwitch(OptimisticSwitchMixin, KohlerValveEntity, SwitchEntity):
@@ -596,9 +591,9 @@ class _ReportLogSwitch(SwitchEntity):
     """Shared half of the Report Log switch: a raw MQTT capture for bug reports.
 
     One file per switch-on; a Home Assistant restart mid-capture appends to the same
-    file. The valve and controller copies toggle the one capture and refresh together
-    through `async_update_listeners`. Behaviour lives in `konnect/report_log.py`; see
-    `docs/mqtt/capture_runbook.md`.
+    file. Every copy (valve, controller, product) toggles the one capture of the account
+    and refreshes through its `async_update_listeners`. Behaviour lives in
+    `konnect/report_log.py`; see `docs/mqtt/capture_runbook.md`.
 
     Files go to `custom_components/kohler_konnect/reports/`; a HACS update or reinstall
     replaces that folder and deletes them.
@@ -609,18 +604,23 @@ class _ReportLogSwitch(SwitchEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
+    def _account(self) -> KohlerKonnectCoordinator:
+        """The account whose capture this is."""
+        return self.coordinator
+
+    @property
     def available(self) -> bool:
         """A tool, not a reading — usable before any device state has arrived."""
-        return self.coordinator.last_update_success
+        return self._account.last_update_success
 
     @property
     def is_on(self) -> bool:
-        return self.coordinator.report_log_active
+        return self._account.report_log_active
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Where the capture is going, visible without shell access."""
-        log = self.coordinator.report_log
+        log = self._account.report_log
         path = log.path if log is not None else None
         return {
             "file": os.path.basename(path) if path else None,
@@ -628,10 +628,10 @@ class _ReportLogSwitch(SwitchEntity):
         }
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        await self.coordinator.async_start_report_log()
+        await self._account.async_start_report_log()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.coordinator.async_stop_report_log()
+        await self._account.async_stop_report_log()
 
 
 class ValveReportLogSwitch(_ReportLogSwitch, KohlerValveEntity):
@@ -650,3 +650,21 @@ class ControllerReportLogSwitch(_ReportLogSwitch, KohlerControllerEntity):
     ) -> None:
         super().__init__(coordinator, controller)
         self._attr_unique_id = f"{self._device_id}_report_log"
+
+
+class ProductReportLogSwitch(_ReportLogSwitch, ProductEntity):
+    """The Report Log switch on a Smart Fan's, toilet's or EvoCycle's device page."""
+
+    def __init__(self, device: ProductCoordinator) -> None:
+        super().__init__(device, "report_log")
+
+    @property
+    def _account(self) -> KohlerKonnectCoordinator:
+        return self.coordinator.account
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        # The capture is the account's, so follow the account as the shower's copies do.
+        self.async_on_remove(
+            self._account.async_add_listener(self.async_write_ha_state)
+        )

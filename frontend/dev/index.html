@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kohler Konnect panel · design harness</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Helvetica Neue", Helvetica, Roboto, Arial, sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #0c0d0e;
+        color: #e8e9eb;
+      }
+      .bar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px 16px;
+        padding: 10px 16px;
+        background: #161719;
+        border-bottom: 1px solid #26282b;
+        font-size: 13px;
+      }
+      .bar strong {
+        font-weight: 600;
+        margin-right: 8px;
+      }
+      .bar label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: #a5a7ab;
+      }
+      .bar select,
+      .bar button {
+        font: inherit;
+        color: #e8e9eb;
+        background: #222428;
+        border: 1px solid #333539;
+        border-radius: 8px;
+        padding: 5px 10px;
+      }
+      .bar .note {
+        margin-left: auto;
+        color: #7d8084;
+      }
+      .stage {
+        display: flex;
+        justify-content: center;
+        padding: 24px 16px 48px;
+      }
+      .frame {
+        width: 100%;
+        transition: max-width 240ms ease;
+        border-radius: 0;
+        overflow: hidden;
+      }
+      .frame.phone {
+        max-width: 402px;
+        min-height: 874px;
+        border-radius: 44px;
+        box-shadow: 0 0 0 10px #1d1e20, 0 30px 80px rgba(0, 0, 0, 0.6);
+      }
+      .frame.tablet {
+        max-width: 834px;
+        border-radius: 24px;
+        box-shadow: 0 0 0 8px #1d1e20, 0 30px 80px rgba(0, 0, 0, 0.5);
+      }
+      .frame.desktop {
+        max-width: 1400px;
+        border-radius: 14px;
+        box-shadow: 0 0 0 1px #26282b;
+      }
+      body.bare .bar {
+        display: none;
+      }
+      body.bare .stage {
+        padding: 0;
+      }
+      body.bare .stage {
+        justify-content: flex-start;
+      }
+      body.bare .frame {
+        border-radius: 0;
+        box-shadow: none;
+        min-height: 0;
+      }
+      body.bare .frame.desktop {
+        max-width: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bar">
+      <strong>Kohler Konnect panel</strong>
+      <label>Scenario <select id="scenario"></select></label>
+      <label>Theme
+        <select id="theme"><option value="dark">Dark</option><option value="light">Light</option></select>
+      </label>
+      <label>Width
+        <select id="width">
+          <option value="phone">Phone</option>
+          <option value="tablet">Tablet</option>
+          <option value="desktop">Desktop</option>
+        </select>
+      </label>
+      <label>User
+        <select id="user"><option value="admin">Admin</option><option value="member">Non-admin</option></select>
+      </label>
+      <button id="reset">Reset</button>
+      <span class="note">Design harness · sample data · nothing here reaches Kohler</span>
+    </div>
+    <div class="stage"><div class="frame" id="frame"></div></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

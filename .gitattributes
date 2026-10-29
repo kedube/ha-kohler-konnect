@@ -1,0 +1,3 @@
+# The sidebar panel's bundle is built from frontend/ and committed so HACS installs it.
+# Fixed line endings keep CI's rebuild byte-identical; GitHub folds it in diffs.
+custom_components/kohler_konnect/www/kohler-konnect-panel.js eol=lf linguist-generated

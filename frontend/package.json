@@ -1,0 +1,34 @@
+{
+  "name": "kohler-konnect-panel",
+  "private": true,
+  "description": "The Kohler Konnect sidebar panel for Home Assistant.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "vite --config vite.dev.config.ts",
+    "mockup": "vite build --config vite.dev.config.ts",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "size": "node scripts/size-budget.mjs",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build && npm run size"
+  },
+  "dependencies": {
+    "@mdi/js": "7.4.47",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.13.0",
+    "happy-dom": "21.0.4",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vite": "8.3.5",
+    "vite-plugin-singlefile": "2.3.4",
+    "vitest": "5.0.5"
+  }
+}

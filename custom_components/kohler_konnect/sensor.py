@@ -20,6 +20,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    Platform,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -35,8 +36,8 @@ from .entity import (
     ZoneWordEntity,
     zone_label,
 )
-from .faucet.sensor import faucet_sensors
 from .konnect.valve_hex import encode_word
+from .product_platforms import product_entities
 from .water import (
     DailyDurationUsage,
     DailyWaterUsage,
@@ -118,8 +119,10 @@ async def async_setup_entry(
         ]
         entities.append(ControllerStatusSensor(coordinator, controller))
 
-    for faucet in coordinator.faucets:
-        entities += faucet_sensors(faucet)
+    # Every other product's, each device with its own coordinator.
+    entities += product_entities(
+        hass, entry, coordinator, Platform.SENSOR, async_add_entities
+    )
     async_add_entities(entities)
 
 
@@ -441,6 +444,33 @@ class ValveComponentFirmwareSensor(ValveDiagnosticSensor):
         return self._valve.component_firmware(self._component)
 
 
+def kohler_timestamp(raw: object) -> datetime | None:
+    """A date Kohler sends as ISO-8601 or epoch seconds/milliseconds; None if unreadable.
+
+    Always aware: a timestamp sensor needs that, and the API's dates are UTC.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+
+    # Epoch, seconds or milliseconds.
+    if text.isdigit():
+        epoch = int(text)
+        if epoch > 10**12:
+            epoch //= 1000
+        try:
+            return datetime.fromtimestamp(epoch, tz=UTC)
+        except (OverflowError, OSError, ValueError):
+            return None
+
+    # ISO-8601, `Z` suffix included (`fromisoformat` reads it from Python 3.11).
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 class ValveRegisteredSensor(ValveDiagnosticSensor):
     """When Kohler's cloud created this valve's record (``createdTime``).
 
@@ -458,28 +488,7 @@ class ValveRegisteredSensor(ValveDiagnosticSensor):
 
     @property
     def native_value(self) -> datetime | None:
-        raw = self._valve.created_time
-        if raw is None:
-            return None
-        text = str(raw).strip()
-
-        # Epoch, seconds or milliseconds.
-        if text.isdigit():
-            epoch = int(text)
-            if epoch > 10**12:
-                epoch //= 1000
-            try:
-                return datetime.fromtimestamp(epoch, tz=UTC)
-            except (OverflowError, OSError, ValueError):
-                return None
-
-        # ISO-8601, `Z` suffix included (`fromisoformat` reads it from Python 3.11).
-        try:
-            parsed = datetime.fromisoformat(text)
-        except ValueError:
-            return None
-        # A timestamp sensor needs an aware datetime; the API's dates are UTC.
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+        return kohler_timestamp(self._valve.created_time)
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:

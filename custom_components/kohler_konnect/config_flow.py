@@ -15,7 +15,7 @@ password again and replaces only the credential (and the email, if it changed).
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Mapping
 from typing import Any
 
 import voluptuous as vol
@@ -26,9 +26,10 @@ from homeassistant.config_entries import (
     OptionsFlow,
 )
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -41,6 +42,7 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_MAX_RUN_MINUTES,
     CONF_REFRESH_TOKEN,
+    CONF_SIDEBAR_PANEL,
     CONF_TEMPERATURE_UNIT,
     CONF_TENANT_ID,
     CONF_VALVE_MODEL,
@@ -48,6 +50,7 @@ from .const import (
     CONF_ZONE_GROUPING,
     CONF_ZONE_OUTLETS,
     DEFAULT_MAX_RUN_MINUTES,
+    DEFAULT_SIDEBAR_PANEL,
     DEFAULT_ZONE_GROUPING,
     DOMAIN,
     ZONE_GROUPING_NUMBERED,
@@ -113,6 +116,7 @@ def _options_schema(
     * Multi-zone grouping, for valves and controllers (labels in `strings.json`,
       `selector.zone_grouping`).
     * The water safety limit, for faucets.
+    * The sidebar panel, for every account.
     """
     fields: dict[Any, Any] = {}
     if showers:
@@ -139,7 +143,62 @@ def _options_schema(
                 default=options.get(CONF_MAX_RUN_MINUTES, DEFAULT_MAX_RUN_MINUTES),
             )
         ] = MAX_RUN_SELECTOR
+    fields[
+        vol.Required(
+            CONF_SIDEBAR_PANEL,
+            default=options.get(CONF_SIDEBAR_PANEL, DEFAULT_SIDEBAR_PANEL),
+        )
+    ] = BooleanSelector()
     return vol.Schema(fields)
+
+
+def options_schema(hass: HomeAssistant, entry: ConfigEntry) -> vol.Schema:
+    """The options form for one account, filled in as the account is set.
+
+    Both kinds' options are offered until the entry has loaded; an unused one is harmless.
+    """
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    showers = coordinator is None or bool(coordinator.valves or coordinator.controllers)
+    faucets = coordinator is None or bool(coordinator.faucets)
+    return _options_schema(dict(entry.options), showers=showers, faucets=faucets)
+
+
+def _stored(key: str, value: Any) -> Any:
+    """A form value as the entry stores it: the safety limit in whole minutes."""
+    return int(value) if key == CONF_MAX_RUN_MINUTES else value
+
+
+def option_values(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
+    """Every option the form offers this account, as set or by default."""
+    return {
+        key: _stored(key, value)
+        for key, value in options_schema(hass, entry)({}).items()
+    }
+
+
+def validate_options(
+    hass: HomeAssistant, entry: ConfigEntry, changes: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Some of an account's options, checked as its options form checks them.
+
+    Raises `vol.Invalid` for a value the form refuses, or an option it doesn't offer this
+    account. Returns only the options given: one not given, written out as its default,
+    would count as a change and reload the entry.
+    """
+    checked = options_schema(hass, entry)(dict(changes))
+    return {key: checked[key] for key in changes}
+
+
+def merge_options(entry: ConfigEntry, changes: Mapping[str, Any]) -> dict[str, Any]:
+    """The entry's options with ``changes`` applied, as the entry stores them.
+
+    Merged, not replaced: `entry.options` also holds per-valve Warmup Auto-Restore and
+    report-log keys.
+    """
+    return {
+        **entry.options,
+        **{key: _stored(key, value) for key, value in changes.items()},
+    }
 
 
 def _entry_title(username: str) -> str:
@@ -425,33 +484,16 @@ class KohlerKonnectConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class KohlerKonnectOptionsFlow(OptionsFlow):
-    """Options for Kohler Konnect: multi-zone grouping and the faucet safety limit."""
+    """Options for Kohler Konnect: zone grouping, the faucet safety limit, the panel."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Show the options that apply to the devices on this account."""
-        existing_options = dict(self.config_entry.options)
-
         if user_input is not None:
-            if CONF_MAX_RUN_MINUTES in user_input:
-                user_input[CONF_MAX_RUN_MINUTES] = int(user_input[CONF_MAX_RUN_MINUTES])
-            # Merge: `entry.options` also holds per-valve Warmup Auto-Restore and
-            # report-log keys.
             return self.async_create_entry(
-                title="",
-                data={**existing_options, **user_input},
+                title="", data=merge_options(self.config_entry, user_input)
             )
-
-        # Offer both kinds' options until the entry has loaded; an unused one is harmless.
-        coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
-        showers = coordinator is None or bool(
-            coordinator.valves or coordinator.controllers
-        )
-        faucets = coordinator is None or bool(coordinator.faucets)
         return self.async_show_form(
-            step_id="init",
-            data_schema=_options_schema(
-                existing_options, showers=showers, faucets=faucets
-            ),
+            step_id="init", data_schema=options_schema(self.hass, self.config_entry)
         )

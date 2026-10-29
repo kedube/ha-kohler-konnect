@@ -41,6 +41,7 @@ from custom_components.kohler_konnect.const import (
     CONF_MOBILE_DEVICE_ID,
     CONF_REFRESH_TOKEN,
     CONF_REPORT_LOG_FILE,
+    CONF_SIDEBAR_PANEL,
     CONF_TEMPERATURE_UNIT,
     CONF_TENANT_ID,
     CONF_VALVE_MODEL,
@@ -75,6 +76,7 @@ from .conftest import (
     FakeMqttClient,
     account,
     make_jwt,
+    panel_record,
     registered_device,
     unload,
     wait_for,
@@ -156,7 +158,8 @@ def valve_settings(
             "valveSettings": [
                 valve("valve1", first, range(first)),
                 valve("valve2", second, range(3, 3 + second)),
-            ]
+            ],
+            "uiConfig": [panel_record()],
         }
     }
 
@@ -1717,7 +1720,10 @@ async def test_options_for_a_shower_account_offer_grouping_and_keep_per_valve_se
     )
     await start(hass, shower_entry)
     result = await hass.config_entries.options.async_init(shower_entry.entry_id)
-    assert [str(key) for key in result["data_schema"].schema] == [CONF_ZONE_GROUPING]
+    assert [str(key) for key in result["data_schema"].schema] == [
+        CONF_ZONE_GROUPING,
+        CONF_SIDEBAR_PANEL,
+    ]
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_ZONE_GROUPING: "subdevices"}
     )
@@ -1725,6 +1731,7 @@ async def test_options_for_a_shower_account_offer_grouping_and_keep_per_valve_se
     assert shower_entry.options == {
         CONF_VALVES: {LEFT: {"warmup_auto_restore": True}},
         CONF_ZONE_GROUPING: "subdevices",
+        CONF_SIDEBAR_PANEL: True,
     }
 
 

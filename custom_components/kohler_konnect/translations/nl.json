@@ -47,10 +47,12 @@
         "description": "**Zonegroepering** bepaalt hoe uitlaten, zonebediening (Temperature, Flow) en zonesensoren (Shower Active, Hex) worden benoemd en gegroepeerd. Dit geldt alleen voor kleppen met twee zones (K-28211 en K-28212); bij een klep met één zone zien alle drie de keuzes er hetzelfde uit.\n\n**Waterveiligheidslimiet** geldt voor kranen.",
         "data": {
           "zone_grouping": "Groeperingsstijl voor zones",
-          "max_run_minutes": "Waterveiligheidslimiet"
+          "max_run_minutes": "Waterveiligheidslimiet",
+          "sidebar_panel": "Kohler Konnect-paneel in de zijbalk tonen"
         },
         "data_description": {
-          "max_run_minutes": "Zet het water zoveel minuten nadat het vanuit Home Assistant is aangezet weer uit, tenzij het intussen al is uitgezet. 0 schakelt de limiet uit."
+          "max_run_minutes": "Zet het water zoveel minuten nadat het vanuit Home Assistant is aangezet weer uit, tenzij het intussen al is uitgezet. 0 schakelt de limiet uit.",
+          "sidebar_panel": "Eén paneel voor alle gebruikers, met de bediening, het waterverbruik en de details van je apparaten. Uitschakelen haalt het meteen uit de zijbalk."
         }
       }
     }
@@ -72,6 +74,31 @@
         "qt": "Quarts",
         "gal": "Gallons"
       }
+    },
+    "weekday": {
+      "options": {
+        "mon": "Maandag",
+        "tue": "Dinsdag",
+        "wed": "Woensdag",
+        "thu": "Donderdag",
+        "fri": "Vrijdag",
+        "sat": "Zaterdag",
+        "sun": "Zondag"
+      }
+    },
+    "schedule_repeat": {
+      "options": {
+        "everyday": "Elke dag",
+        "once": "Eenmalig",
+        "custom": "Op gekozen dagen"
+      }
+    },
+    "fan_speed": {
+      "options": {
+        "low": "Laag",
+        "medium": "Gemiddeld",
+        "high": "Hoog"
+      }
     }
   },
   "entity": {
@@ -87,6 +114,39 @@
       },
       "mqtt_connection": {
         "name": "MQTT-verbinding"
+      },
+      "light_state": {
+        "name": "Licht"
+      },
+      "occupied": {
+        "name": "Bezet"
+      },
+      "cleaning": {
+        "name": "Reiniging"
+      },
+      "wand_extended": {
+        "name": "Spuitstaaf uitgeschoven"
+      },
+      "low_power": {
+        "name": "Laag verbruik"
+      },
+      "shower_running": {
+        "name": "Douche"
+      },
+      "ozone_cleaning": {
+        "name": "Ozonreiniging"
+      },
+      "evo_problem": {
+        "name": "Probleem"
+      },
+      "session_due": {
+        "name": "Sessie gepland"
+      },
+      "water_saving_mode": {
+        "name": "Waterbesparende modus"
+      },
+      "bath_filling": {
+        "name": "Bad vult"
       }
     },
     "button": {
@@ -122,16 +182,280 @@
       },
       "clear_leak": {
         "name": "Lekmelding wissen"
+      },
+      "stop_all": {
+        "name": "Alles stoppen"
+      },
+      "stop": {
+        "name": "Stoppen"
+      },
+      "start_front_wash": {
+        "name": "Voorste reiniging starten"
+      },
+      "start_rear_wash": {
+        "name": "Achterste reiniging starten"
+      },
+      "start_boost_wash": {
+        "name": "Intensieve reiniging starten"
+      },
+      "start_kid_wash": {
+        "name": "Kinderreiniging starten"
+      },
+      "start_dryer": {
+        "name": "Droger starten"
+      },
+      "cover": {
+        "name": "Deksel"
+      },
+      "seat_ring": {
+        "name": "Toiletbril"
+      },
+      "start_clean": {
+        "name": "Reiniging starten"
+      },
+      "stop_clean": {
+        "name": "Reiniging stoppen"
+      },
+      "extend_wand": {
+        "name": "Spuitstaaf uitschuiven"
+      },
+      "retract_wand": {
+        "name": "Spuitstaaf intrekken"
+      },
+      "full_flush": {
+        "name": "Volledige spoeling"
+      },
+      "eco_flush": {
+        "name": "Eco-spoeling"
+      },
+      "start_rapid_clean": {
+        "name": "Snelle reiniging starten"
+      },
+      "start_deep_clean": {
+        "name": "Grondige reiniging starten"
+      },
+      "sync_clock": {
+        "name": "Klok synchroniseren"
       }
     },
     "number": {
       "dispense_amount": {
         "name": "Doseerhoeveelheid"
+      },
+      "default_fan_run_time": {
+        "name": "Standaard looptijd ventilator"
+      },
+      "default_light_brightness": {
+        "name": "Standaard lichthelderheid"
+      },
+      "default_temperature": {
+        "name": "Standaardtemperatuur"
+      },
+      "standard_max_temperature": {
+        "name": "Maximale temperatuur standaardmodus"
+      },
+      "cycle_max_temperature": {
+        "name": "Maximale temperatuur kringloopmodus"
+      },
+      "default_flow": {
+        "name": "Standaard doorstroming"
+      },
+      "water_saving_target": {
+        "name": "Streefwaarde waterbesparing"
+      },
+      "front_wash_temperature": {
+        "name": "Voorste reiniging: temperatuur"
+      },
+      "front_wash_pressure": {
+        "name": "Voorste reiniging: druk"
+      },
+      "front_wash_position": {
+        "name": "Voorste reiniging: positie"
+      },
+      "rear_wash_temperature": {
+        "name": "Achterste reiniging: temperatuur"
+      },
+      "rear_wash_pressure": {
+        "name": "Achterste reiniging: druk"
+      },
+      "rear_wash_position": {
+        "name": "Achterste reiniging: positie"
+      },
+      "boost_wash_temperature": {
+        "name": "Intensieve reiniging: temperatuur"
+      },
+      "boost_wash_pressure": {
+        "name": "Intensieve reiniging: druk"
+      },
+      "boost_wash_position": {
+        "name": "Intensieve reiniging: positie"
+      },
+      "kid_wash_temperature": {
+        "name": "Kinderreiniging: temperatuur"
+      },
+      "kid_wash_pressure": {
+        "name": "Kinderreiniging: druk"
+      },
+      "kid_wash_position": {
+        "name": "Kinderreiniging: positie"
+      },
+      "dryer_temperature": {
+        "name": "Droger: temperatuur"
+      },
+      "dryer_fan_speed": {
+        "name": "Droger: ventilatorsnelheid"
+      },
+      "default_seat_heat": {
+        "name": "Standaard zittingverwarming"
+      },
+      "default_night_light_brightness": {
+        "name": "Standaard helderheid nachtlampje"
+      },
+      "display_brightness": {
+        "name": "Schermhelderheid"
       }
     },
     "select": {
       "preset": {
         "name": "Voorinstelling"
+      },
+      "default_fan_speed": {
+        "name": "Standaard ventilatorsnelheid",
+        "state": {
+          "low": "Laag",
+          "medium": "Gemiddeld",
+          "high": "Hoog"
+        }
+      },
+      "humidity_sensitivity": {
+        "name": "Vochtgevoeligheid",
+        "state": {
+          "low": "Laag",
+          "medium": "Gemiddeld",
+          "high": "Hoog"
+        }
+      },
+      "default_light_color": {
+        "name": "Standaard lichtkleur",
+        "state": {
+          "warm": "Warm",
+          "warmwhite": "Warmwit",
+          "cool": "Koel",
+          "coolwhite": "Koelwit",
+          "daylight": "Daglicht"
+        }
+      },
+      "seat_heat_level": {
+        "name": "Niveau zittingverwarming",
+        "state": {
+          "off": "Uit",
+          "lowest": "Laagst",
+          "low": "Laag",
+          "medium": "Gemiddeld",
+          "high": "Hoog",
+          "highest": "Hoogst"
+        }
+      },
+      "auto_cover": {
+        "name": "Automatisch deksel",
+        "state": {
+          "off": "Uit",
+          "near": "Dichtbij",
+          "medium": "Gemiddeld",
+          "far": "Ver"
+        }
+      },
+      "night_light": {
+        "name": "Nachtlampje",
+        "state": {
+          "off": "Uit",
+          "low": "Laag",
+          "high": "Hoog"
+        }
+      },
+      "evo_shower": {
+        "name": "Douche",
+        "state": {
+          "off": "Uit",
+          "standard": "Standaard",
+          "cycle": "Kringloop"
+        }
+      },
+      "default_shower_mode": {
+        "name": "Standaard douchemodus",
+        "state": {
+          "standard": "Standaard",
+          "cycle": "Kringloop"
+        }
+      },
+      "panel_language": {
+        "name": "Taal van het bedieningspaneel",
+        "state": {
+          "en": "English",
+          "es": "Español",
+          "fr": "Français"
+        }
+      },
+      "panel_units": {
+        "name": "Eenheden van het bedieningspaneel",
+        "state": {
+          "us": "US (gal, °F)",
+          "metric": "Metrisch (L, °C)"
+        }
+      },
+      "front_wash_pattern": {
+        "name": "Voorste reiniging: straalpatroon",
+        "state": {
+          "regular": "Normaal",
+          "oscillate": "Oscillerend",
+          "pulsate": "Pulserend",
+          "wave": "Golf"
+        }
+      },
+      "rear_wash_pattern": {
+        "name": "Achterste reiniging: straalpatroon",
+        "state": {
+          "regular": "Normaal",
+          "oscillate": "Oscillerend",
+          "pulsate": "Pulserend",
+          "wave": "Golf"
+        }
+      },
+      "boost_wash_pattern": {
+        "name": "Intensieve reiniging: straalpatroon",
+        "state": {
+          "regular": "Normaal",
+          "oscillate": "Oscillerend",
+          "pulsate": "Pulserend",
+          "wave": "Golf"
+        }
+      },
+      "kid_wash_pattern": {
+        "name": "Kinderreiniging: straalpatroon",
+        "state": {
+          "regular": "Normaal",
+          "oscillate": "Oscillerend",
+          "pulsate": "Pulserend",
+          "wave": "Golf"
+        }
+      },
+      "valve_panel_language": {
+        "name": "Paneeltaal",
+        "state": {
+          "en_us": "English (United States)",
+          "en_gb": "English (United Kingdom)",
+          "es_mx": "Español (México)",
+          "fr_ca": "Français (Canada)",
+          "zh_cn": "中文 (中国)"
+        }
+      },
+      "wake_screen": {
+        "name": "Wekscherm",
+        "state": {
+          "outlets": "Uitlaten",
+          "home": "Start",
+          "favorites": "Favorieten"
+        }
       }
     },
     "sensor": {
@@ -189,16 +513,248 @@
       },
       "duration_this_year": {
         "name": "Gebruiksduur dit jaar"
+      },
+      "fan_state": {
+        "name": "Ventilator",
+        "state": {
+          "off": "Uit",
+          "low": "Laag",
+          "medium": "Middel",
+          "high": "Hoog",
+          "on": "Aan"
+        }
+      },
+      "controller_firmware": {
+        "name": "Controllerfirmware"
+      },
+      "air_temperature": {
+        "name": "Temperatuur"
+      },
+      "air_humidity": {
+        "name": "Luchtvochtigheid"
+      },
+      "co2": {
+        "name": "CO₂"
+      },
+      "voc": {
+        "name": "VOS"
+      },
+      "activity": {
+        "name": "Activiteit",
+        "state": {
+          "idle": "Inactief",
+          "front_wash": "Voorste reiniging",
+          "rear_wash": "Achterste reiniging",
+          "boost_wash": "Intensieve reiniging",
+          "kid_wash": "Kinderreiniging",
+          "drying": "Drogen"
+        }
+      },
+      "seat_heat": {
+        "name": "Zittingverwarming",
+        "state": {
+          "off": "Uit",
+          "lowest": "Laagst",
+          "low": "Laag",
+          "medium": "Gemiddeld",
+          "high": "Hoog",
+          "highest": "Hoogst"
+        }
+      },
+      "last_error": {
+        "name": "Laatste fout"
+      },
+      "evo_activity": {
+        "name": "Activiteit",
+        "state": {
+          "idle": "Inactief",
+          "standard": "Standaard",
+          "cycle": "Kringloop",
+          "rapid_clean": "Snelle reiniging",
+          "deep_clean": "Grondige reiniging",
+          "cancelling": "Reiniging wordt geannuleerd"
+        }
+      },
+      "last_rapid_clean": {
+        "name": "Laatste snelle reiniging"
+      },
+      "last_deep_clean": {
+        "name": "Laatste grondige reiniging"
+      },
+      "water_saved": {
+        "name": "Bespaard water"
+      },
+      "last_session": {
+        "name": "Laatste sessie"
+      },
+      "last_session_duration": {
+        "name": "Duur laatste sessie"
+      },
+      "last_session_temperature": {
+        "name": "Temperatuur laatste sessie"
+      },
+      "sessions_this_week": {
+        "name": "Sessies deze week"
+      },
+      "routine": {
+        "name": "Routine"
+      },
+      "flushes_today": {
+        "name": "Spoelingen vandaag"
+      },
+      "washes_today": {
+        "name": "Wasbeurten vandaag"
+      },
+      "dryer_runs_today": {
+        "name": "Droogbeurten vandaag"
+      },
+      "power_today": {
+        "name": "Stroomverbruik vandaag"
+      },
+      "missed_this_month": {
+        "name": "Deze maand gemist"
+      },
+      "cycled_water_this_week": {
+        "name": "Kringloopwater deze week"
+      },
+      "fresh_water_this_week": {
+        "name": "Vers water deze week"
+      },
+      "cycled_share_this_week": {
+        "name": "Kringloopaandeel deze week"
+      },
+      "water_saved_this_month": {
+        "name": "Bespaard water deze maand"
+      },
+      "water_saved_this_year": {
+        "name": "Bespaard water dit jaar"
+      },
+      "cycle_share_this_month": {
+        "name": "Aandeel kringloopmodus deze maand"
       }
     },
     "switch": {
       "water": {
         "name": "Water"
+      },
+      "default_fan_timer": {
+        "name": "Standaard ventilatortimer"
+      },
+      "humidity_sensing": {
+        "name": "Vochtdetectie"
+      },
+      "audible_feedback": {
+        "name": "Geluidssignaal"
+      },
+      "fan_schedule": {
+        "name": "Ventilatorschema"
+      },
+      "circadian_lighting": {
+        "name": "Circadiaanse verlichting"
+      },
+      "power_save": {
+        "name": "Energiebesparing"
+      },
+      "circadian_light": {
+        "name": "Circadiaans licht"
+      },
+      "night_light": {
+        "name": "Nachtlampje"
+      },
+      "auto_flush": {
+        "name": "Automatisch spoelen"
+      },
+      "auto_clean": {
+        "name": "Automatische reiniging"
+      },
+      "auto_cover": {
+        "name": "Automatisch deksel"
+      },
+      "deodorizer": {
+        "name": "Geurafzuiging"
+      },
+      "bowl_mist": {
+        "name": "Potbevochtiging"
+      },
+      "long_sitting_reminder": {
+        "name": "Herinnering lang zitten"
+      },
+      "auto_temperature": {
+        "name": "Automatische temperatuur"
+      },
+      "warmup": {
+        "name": "Voorverwarmen"
+      },
+      "rapid_clean_reminder": {
+        "name": "Herinnering snelle reiniging"
+      },
+      "deep_clean_reminder": {
+        "name": "Herinnering grondige reiniging"
+      },
+      "filter_clean_reminder": {
+        "name": "Herinnering filterreiniging"
+      },
+      "haptic_feedback": {
+        "name": "Haptische feedback"
+      },
+      "water_saving_goal": {
+        "name": "Waterbesparingsdoel"
+      },
+      "routine_reminders": {
+        "name": "Routineherinneringen"
+      },
+      "follow_up_questions": {
+        "name": "Vervolgvragen"
+      },
+      "accessible_display": {
+        "name": "Toegankelijk scherm"
+      },
+      "flow_control": {
+        "name": "Debietregeling"
       }
     },
     "update": {
       "firmware_status": {
         "name": "Firmwarestatus"
+      }
+    },
+    "fan": {
+      "fan": {
+        "name": "Ventilator"
+      }
+    },
+    "light": {
+      "light": {
+        "name": "Licht"
+      },
+      "ambient_light": {
+        "name": "Sfeerverlichting",
+        "state_attributes": {
+          "effect": {
+            "state": {
+              "sunrise": "Zonsopgang",
+              "forest_breeze": "Bosbries",
+              "deep_ocean": "Diepe oceaan",
+              "bokeh": "Bokeh",
+              "miami": "Miami",
+              "coral": "Koraal",
+              "red": "Rood",
+              "magenta": "Magenta",
+              "blue": "Blauw",
+              "gold": "Goud",
+              "yellow": "Geel",
+              "green": "Groen"
+            }
+          }
+        }
+      },
+      "night_light": {
+        "name": "Nachtlampje"
+      }
+    },
+    "calendar": {
+      "sessions": {
+        "name": "Sessies"
       }
     }
   },
@@ -247,6 +803,63 @@
     },
     "faucet_required": {
       "message": "Er is meer dan één kraan ingesteld. Kies welke kraan moet doseren."
+    },
+    "settings_while_running": {
+      "message": "{name} is in werking en de instellingen kunnen pas worden gewijzigd als het stopt, zoals in de Konnect-app."
+    },
+    "settings_unreadable": {
+      "message": "De huidige instellingen van {name} konden niet worden gelezen, dus er is niets gewijzigd: ze worden allemaal tegelijk vervangen. Probeer het opnieuw."
+    },
+    "favorite_not_found": {
+      "message": "{name} heeft geen favoriet met de naam {favorite}."
+    },
+    "toilet_not_seated": {
+      "message": "{name} start een reiniging of de droger alleen als er iemand zit, zoals in de Konnect-app."
+    },
+    "toilet_seated": {
+      "message": "{name} kan dat niet zolang er iemand zit, zoals in de Konnect-app."
+    },
+    "evocycle_fault": {
+      "message": "{name} meldt storing {code}. Controleer die in de Konnect-app voordat je iets start."
+    },
+    "evocycle_cleaning": {
+      "message": "{name} voert een ozonreiniging uit. De douche kan pas weer starten als die klaar is."
+    },
+    "evocycle_running": {
+      "message": "{name} is in werking. Een ozonreiniging start alleen als de douche uit is en er niemand in staat."
+    },
+    "ice_bath_session_exists": {
+      "message": "{name} heeft op {day} al een sessie. Het logboek houdt er één per dag bij, dus deze is niet vastgelegd."
+    },
+    "ice_bath_not_selected": {
+      "message": "Kies een Ice Bath-logboek."
+    },
+    "ice_bath_in_future": {
+      "message": "Een sessie kan niet in de toekomst eindigen."
+    },
+    "ice_bath_temperature": {
+      "message": "De temperatuur moet tussen {low} en {high} {unit} liggen, wat het logboek kan bewaren."
+    },
+    "ice_bath_before_journal": {
+      "message": "Het logboek van {name} begint op {day}, dus daarvoor kan geen sessie worden vastgelegd."
+    },
+    "toilet_cleaning": {
+      "message": "{name} voert de uv-reiniging uit. Wacht tot die klaar is, zoals in de Konnect-app."
+    },
+    "smart_fan_not_selected": {
+      "message": "Kies een Smart Fan."
+    },
+    "fan_schedule_same_times": {
+      "message": "Een schema kan niet op hetzelfde tijdstip beginnen en eindigen: het moet korter dan 24 uur duren, zoals in de Konnect-app."
+    },
+    "fan_schedule_no_days": {
+      "message": "Kies de dagen waarop het schema loopt."
+    },
+    "panel_settings_while_running": {
+      "message": "{name} laat water lopen: de instellingen van de bedieningspanelen kunnen pas worden opgeslagen als het stopt, zoals in de Konnect-app."
+    },
+    "panel_settings_unreadable": {
+      "message": "De paneelinstellingen van {name} lezen niet zoals de Konnect-app verwacht ({reason}), dus er is niets gewijzigd: alle instellingen van elk paneel worden in één keer geschreven."
     }
   },
   "services": {
@@ -269,6 +882,88 @@
         "preset": {
           "name": "Voorinstelling",
           "description": "Een voorinstelling uit de Konnect-app, met de naam uit de lijst Voorinstelling. Gebruik dit in plaats van Hoeveelheid."
+        }
+      }
+    },
+    "log_ice_bath_session": {
+      "name": "IJsbadsessie vastleggen",
+      "description": "Legt een sessie vast in het Ice Bath-logboek, zoals Nieuw record in de Konnect-app: wanneer, hoe lang en hoe koud. Een dag die al een sessie heeft, wordt geweigerd in plaats van overschreven.",
+      "fields": {
+        "device_id": {
+          "name": "Logboek",
+          "description": "Het Ice Bath-logboek waarin ze wordt vastgelegd."
+        },
+        "duration": {
+          "name": "Duur",
+          "description": "Hoe lang ze duurde. Tien minuten of meer wordt vastgelegd als de 10+ van de app."
+        },
+        "temperature": {
+          "name": "Temperatuur",
+          "description": "Hoe koud, in de temperatuureenheid van Home Assistant: 36–75 °F of 2–24 °C, wat het logboek kan bewaren."
+        },
+        "completed": {
+          "name": "Afgerond",
+          "description": "Wanneer ze eindigde. Standaard nu."
+        }
+      }
+    },
+    "set_fan_schedule": {
+      "name": "Ventilatorschema instellen",
+      "description": "Stelt het schema van een Smart Fan in zoals de schema-editor van de Konnect-app: begin en einde, herhaling en snelheid. Opslaan zet het schema aan. Het kan niet veranderen terwijl de ventilator draait.",
+      "fields": {
+        "device_id": {
+          "name": "Ventilator",
+          "description": "De Smart Fan die het schema krijgt."
+        },
+        "start": {
+          "name": "Begin",
+          "description": "Wanneer de ventilator aangaat."
+        },
+        "end": {
+          "name": "Einde",
+          "description": "Wanneer hij uitgaat."
+        },
+        "repeat": {
+          "name": "Herhaling",
+          "description": "Elke dag, eenmalig of op de dagen hieronder. Elke dag als je niets kiest."
+        },
+        "days": {
+          "name": "Dagen",
+          "description": "De dagen waarop een schema op gekozen dagen loopt."
+        },
+        "speed": {
+          "name": "Snelheid",
+          "description": "De ventilatorsnelheid tijdens het schema. De huidige als je niets kiest."
+        }
+      }
+    },
+    "set_ice_bath_routine": {
+      "name": "Ice Bath-routine instellen",
+      "description": "Wijzigt de routine van een Ice Bath-logboek zoals het routinescherm van de Konnect-app: de weekdagen of het aantal sessies per week, en de herinneringen. Geef alleen op wat moet veranderen.",
+      "fields": {
+        "device_id": {
+          "name": "Logboek",
+          "description": "Het Ice Bath-logboek waarvan de routine verandert."
+        },
+        "days": {
+          "name": "Dagen",
+          "description": "De weekdagen waarop een sessie gepland is. Geef dit of het aantal sessies per week op, niet allebei."
+        },
+        "sessions_per_week": {
+          "name": "Sessies per week",
+          "description": "Hoeveel sessies per week, op willekeurige dagen."
+        },
+        "reminders": {
+          "name": "Herinneringen",
+          "description": "Of de app je aan de routine herinnert."
+        },
+        "reminder_time": {
+          "name": "Herinneringstijd",
+          "description": "Wanneer de herinnering van de app komt."
+        },
+        "follow_ups": {
+          "name": "Vervolgvragen",
+          "description": "Of de app na een sessie vraagt hoe je je voelde. Je antwoorden blijven in de app."
         }
       }
     }

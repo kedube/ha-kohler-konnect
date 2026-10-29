@@ -17,13 +17,14 @@ from typing import Any
 
 from homeassistant.components.update import UpdateEntity, UpdateEntityFeature
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import Controller, KohlerKonnectCoordinator, Valve
 from .entity import KohlerControllerEntity, KohlerValveEntity
-from .faucet.update import faucet_updates
+from .product_platforms import product_entities
 
 
 async def async_setup_entry(
@@ -39,9 +40,10 @@ async def async_setup_entry(
         entities.append(ValveFirmwareUpdate(coordinator, valve, "gateway"))
     for controller in coordinator.controllers:
         entities.append(ControllerFirmwareUpdate(coordinator, controller))
-    # Each faucet is its own device, with its own coordinator.
-    for faucet in coordinator.faucets:
-        entities += faucet_updates(faucet)
+    # Every other product's, each device with its own coordinator.
+    entities += product_entities(
+        hass, entry, coordinator, Platform.UPDATE, async_add_entities
+    )
     async_add_entities(entities)
 
 

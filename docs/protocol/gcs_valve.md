@@ -212,23 +212,33 @@ How the valve's Max Shower Duration (`maximumRunTime`) actually ends a shower. A
 
 ## 6. Touch-panel UI config
 
-Each touch interface has its own record, keyed by `UI`. Records arrive in `gcsadvancestate` `setting.uiConfig[]` and are pushed as `READ_GCS_UI_CFG`.
+Each touch interface has its own record. Records arrive in `gcsadvancestate` `setting.uiConfig[]`, keyed by `ui` (`UI1`, `UI2`), and are pushed as `READ_GCS_UI_CFG`, keyed by `UI` (app). The app merges a push only when it carries exactly one record, matched on that key (`db0/c.java` `Z0`). UI1 appears to belong to valve 1 and UI2 to valve 2 (inferred).
 
 - **Settings fields:** `temperatureUnits`, `flowUnits`, `standbyLighting`, `timeFormat`, `demoMode`, `bathFillPresetId`, `delayStart`, `toggleOutlets`, `waterSavingMode`, `accessibilityMode`, `backLight`, `hapticFeedback`, `sounderVolume`, `defaultHomeScreen`, `proximitySensorMode`, `proximitySensorDistance`, `proximitySensorTime`, `notification`, `defaultMemory`, `language`, `languageRegion`.
-- **Identity and status fields** (REST only): `status`, `firmware`, `bootloder` (sic), `installedDate`, `model`, `serialNo`.
+- **Identity and status fields** (REST only): `status`, `firmware`, `bootloder` (sic), `installedDate`, `model`, `serialNo`. The record also carries a second spelling, `standByLighting`.
 
-The app writes the **whole record** through `writeuiconfig`. Values it writes:
+**What the app lets a user change.** Settings → **Control Panel** (`dc0/n.java`, view model `dc0/s.java`), reachable in both the old and the new control screens:
 
-| Field | Values |
-|---|---|
-| `temperatureUnits` | `C`/`F` |
-| `flowUnits` | `Liters`/`Gallons` |
-| `accessibilityMode`, `hapticFeedback` | `1`/`0` |
-| `waterSavingMode` | `1`/`0` |
-| `defaultHomeScreen` | `0`-`2`, +192 when valve 2 has outlets |
-| `demoMode` | `Disabled` |
+| Label | Fields | Read | Written |
+|---|---|---|---|
+| Panel Language | `language`, `languageRegion` | the pair | `en`/`US`, `en`/`GB`, `es`/`MX`, `fr`/`CA`, `zh`/`CN` |
+| Panel Units | `temperatureUnits`, `flowUnits` | `F`+`Gallons` or `C`+`Liters`; a mixed pair selects neither, and Save waits for one | always the pair |
+| Haptic Feedback, Accessible Display | `hapticFeedback`, `accessibilityMode` | `Enabled`/`Disabled` | `1`/`0` |
+| Display Brightness | `backLight` | an integer | `1`–`10` |
+| Default Screen / Wake Screen | `defaultHomeScreen` | Home 0, 64, 192; Favorites 2, 66, 130, 194; anything else the outlets | Outlets `1`, Home `0`, Favorites `2`, **plus 192 when valve 2 has outlets** |
 
-⚠️ Reads appear to use `Enabled` where writes use `1`/`0`. This is unverified live, and this integration doesn't write UI config yet.
+The old control screens also have **Flow Control** (`ic0/p.java`), bit 2 (`0x04`) of `notification`; the new screens hide it. **`waterSavingMode`** is a low-flow mode set at setup: it forces selected-outlet warmup (§5), and the app's new screens then run one outlet at a time. The app never changes it. **`defaultMemory`** is the setup-complete flag: `1` once setup has finished, `255` before; anything but `1` makes the app demand the whole setup again.
+
+**The write.** `POST /platform/api/v1/commands/gcs/writeuiconfig`, body `{deviceId, sku: "GCS", tenantId, gcsUIConfigModel: {…}}`: the **whole record**, every value a string, a null left out. The Control Panel's Save (`dc0/s.java` `M()`) sends **one POST per record**, in the read's order, each after the last succeeded, stopping at a failure. For each record:
+
+- copied as read: `ui`, `standbyLighting`, `timeFormat`, `demoMode`, `bathFillPresetId`, `delayStart`, `toggleOutlets`, `sounderVolume`, `proximitySensorMode`, `proximitySensorDistance`, `notification`, `defaultMemory`;
+- `waterSavingMode`: `1` only if it reads exactly `Enabled`, else `0`; left out when null;
+- the shared settings, **taken from the first record** and written to every one: the units, `accessibilityMode`, `hapticFeedback`, `backLight`, `defaultHomeScreen` (normalised as above, which drops its 64/128 flags and turns 255 into 1), `language`, `languageRegion`;
+- sent empty: `standByLighting`, `proximitySensorTime`, `status`, `firmware`, `bootloder`, `installedDate`, `model`, `serialNo`.
+
+Save is refused while any outlet is open ("Settings cannot be saved while any outlet is running."), and enabled only when something differs from the first record. Switching Accessible Display on asks first. Nothing is re-read afterwards.
+
+⚠️ **Why a careless write is dangerous.** A switch read in any form but `Enabled`/`Disabled` is written as `0`, which for `waterSavingMode` silently turns off a regulatory low-flow mode. A `defaultMemory` written as anything but `1` sends the owner back through setup. And a stale record undoes changes made at the panel since. None of the record shapes above has been captured live.
 
 ## 7. MQTT messages
 
@@ -257,14 +267,20 @@ Idle words can carry transient flow bytes in recurring pairs (34.5 %/82.5 %, for
 
 **Cloud reachability.** A valve can drop off Kohler's cloud while still working from the wall, and comes back only after a power cycle (live). Reachability is read from `connectionState` (§2, [platform §5](platform.md#5-device-connection-state)), not from any MQTT field.
 
-## 8. Bath fill (older app screens only)
+## 8. Bath fill
 
-1. `POST bathfillervolume {index: "0"}`. The valve answers with `READ_DISPENSED_WATER_VOLUME_STS {volume}`.
-2. To start, `solowritesystem` with **bit 7 set** plus the tub filler's (type 21) outlet bit added to what is open, at the current temperature and flow.
-3. To stop, byte 3 = `0xC0`.
-4. Setup samples the volume before and after a fill and stores the difference. Under 1.0, it falls back to `bathfillDefaultFillAmount` (4 L) from `deviceconfig.properties`.
+A bath fill is a **preset** with a fill amount: `volume` (litres, as a string) above 0, `time` 1800, and words that open only the tub filler (type 21). Both the REST preset list and `GCS_PRESET_STS` carry `volume` and `time` (app).
 
-The units are unstated, and none of this is live-verified.
+- **Running one** is reachable in 3.0.6 from the Home and All Presets screens, which open a bath-fill page (Temp, Flow Rate, Fill Amount, Start/Stop) for any preset with `volume` above 0 (`gr0/j.java`). Start is `startpreset` there, or `controlpresetorexperience` from the new screens, which list it as an ordinary favorite. The app sets no timer and never watches the volume: ending the fill is left to the valve, presumably at the preset's `volume`, and in any case at its `time` (inferred; **live check**). The old control screen shows "Bathfill is running" while one runs.
+- **Creating one** is only in the old control screens (`AnthemControlActivity`), which a remote-config flag hides by default. It needs a type-21 outlet, and calibrates by filling the tub once by hand:
+  1. Start: `solowritesystem` opening only the tub filler(s) at the preset's temperature and flow, with **bit 7 set on both words**. Refused while any outlet is open.
+  2. While it fills, and once after it stops, `POST bathfillervolume {index: "0"}`; the valve answers `READ_DISPENSED_WATER_VOLUME_STS {volume}`, read as litres.
+  3. Stop when the user presses Stop: the same words, no outlets, pause and bit 7 set (byte 3 `0xC0`).
+  4. The fill amount is the reading after, less the one before if the valve was paused; anything under 1 L becomes 4 L (`bathfillDefaultFillAmount`).
+  5. `createpreset` with `time` `"1800"` and that `volume`.
+- Editing a bath-fill preset from the new screens writes `volume` `"0"`, which turns it into an ordinary preset (inferred).
+
+The units are the app's assumption, and none of this is live-verified.
 
 ## 9. Firmware
 
@@ -290,4 +306,6 @@ OTA records (`otaReportedProperties`, `firmwareUpdate`) carry `firmwareType`: `A
 | Firmware update entities (read-only) | ✅ |
 | Fault: error flag plus `currentSystemState == error`, and the fault log's active entries (read at setup, on each reconnect and twice a day); the whole log in diagnostics | ✅ |
 | Connection state (`Disconnected`) | ✅ |
-| Bath fill, UI config writes, eco/water-saving mode, experience management, factory reset | ❌ documented only |
+| Touch-panel settings (§6): Panel Language, Panel Units, Wake Screen, Display Brightness, Haptic Feedback, Accessible Display, and Flow Control (off by default, as the new app hides it), written as the Control Panel writes them: every record, whole, from a fresh read; refused while water runs, and when a record reads in a form the app doesn't expect or isn't set up. Water-saving mode is a reading | ✅ app-confirmed only, untested |
+| Bath fill (§8): a preset's fill amount (`bath_fill_litres` on the Favorite select), and Bath Filling while one runs, on a valve with a tub filler. Started like any preset | ✅ app-confirmed only |
+| Creating bath-fill presets (§8's calibration), experience management, factory reset | ❌ documented only |

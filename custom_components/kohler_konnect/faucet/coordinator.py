@@ -58,7 +58,7 @@ from ..const import (
     RETRY_AFTER_MIN,
     device_issue_key,
 )
-from ..konnect import AuthError, Device, KohlerError, credential_is_dead
+from ..konnect import AuthError, Device, Envelope, KohlerError, credential_is_dead
 from ..konnect.const import (
     CONNECTION_CONNECTED,
     FAUCET_SKUS,
@@ -77,6 +77,7 @@ from ..konnect.faucet import (
     FaucetPreset,
     FaucetSnapshot,
     FirmwareInfo,
+    parse_event,
     parse_firmware,
     water_running,
 )
@@ -451,7 +452,7 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         late save from this one would overwrite what that one keeps.
         """
         if not self._shut_down:
-            await self.account.async_save_faucet(self)
+            await self.account.async_save_device_state(self)
 
     @callback
     def _async_save_soon(self, what: str) -> None:
@@ -761,7 +762,7 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 from_date=(today - timedelta(days=days_back)).isoformat(),
                 to_date=today.isoformat(),
                 interval=interval,
-                faucet=True,
+                product="faucet",
             )
 
         try:
@@ -1329,6 +1330,24 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # --- instant updates ------------------------------------------------------------
 
     @callback
+    def async_stream_connected(self, *, just_read: bool) -> None:
+        """The stream connected: read the faucet again, unless its first read stands in."""
+        if just_read:
+            self.async_note_stream_up()
+        else:
+            self.async_push_activity(False)
+
+    @callback
+    def async_stream_disconnected(self) -> None:
+        """The stream dropped: catch up now, then poll at the pace for no stream."""
+        self.async_push_activity(False)
+
+    @callback
+    def async_handle_envelope(self, envelope: Envelope) -> None:
+        """A stream message about this faucet: read it again, knowing what happened."""
+        self.async_push_activity(True, parse_event(envelope))
+
+    @callback
     def async_note_stream_up(self) -> None:
         """The stream's first connect, which this faucet's first read stands in for.
 
@@ -1471,6 +1490,11 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """The faucet is downloading firmware, which blocks remote water."""
         progress = (self.data or {}).get("progress")
         return isinstance(progress, str) and progress.lower() == PROGRESS_DOWNLOADING
+
+    @property
+    def auto_off_at(self) -> float | None:
+        """When the water safety limit turns the water off, in epoch seconds; or None."""
+        return self._auto_off_at
 
     @property
     def about(self) -> dict[str, Any]:

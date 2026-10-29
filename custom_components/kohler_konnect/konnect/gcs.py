@@ -23,6 +23,7 @@ from .const import (
     GCS_WARMUP,
     GCS_WRITE_OUTLET_CONFIG,
     GCS_WRITE_PRESET,
+    GCS_WRITE_UI_CONFIG,
     SKU_GCS,
 )
 from .models import DEFAULT_VALVE_MODEL, ValveModel, get_valve_model
@@ -356,6 +357,22 @@ class GcsDevice:
         }
         return await self._client.async_request(
             "POST", GCS_WRITE_OUTLET_CONFIG, json_body=payload
+        )
+
+    async def async_write_ui_config(self, record: dict[str, str]) -> Any:
+        """Replace one touch panel's settings record (`gcs_valve.md` §6).
+
+        ``record`` is whole, as `ui_config.control_panel_writes` builds it: the write has no
+        partial form.
+        """
+        payload = {
+            "deviceId": self.device_id,
+            "sku": SKU_GCS,
+            "tenantId": await self._client.async_tenant_id(),
+            "gcsUIConfigModel": record,
+        }
+        return await self._client.async_request(
+            "POST", GCS_WRITE_UI_CONFIG, json_body=payload
         )
 
     async def async_create_preset(

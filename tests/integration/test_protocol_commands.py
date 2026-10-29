@@ -449,7 +449,7 @@ async def test_editing_a_favorite_while_the_system_runs_is_device_running(
     hub: HubDevice, kohler: FakeKohler
 ) -> None:
     kohler.fail_api("/commands/hub/favorite", (400, {"statusCode": "902"}))
-    with pytest.raises(DeviceRunning, match="stopall") as err:
+    with pytest.raises(DeviceRunning, match=r"is running.*Stop it first") as err:
         await hub.async_edit_favorite(4, "Rinse")
     assert isinstance(err.value, KohlerError)
     assert err.value.code == "902"
@@ -650,13 +650,29 @@ async def test_diagnostic_reads_return_what_kohler_sent_when_it_is_readable(
     )
 
 
-@pytest.mark.parametrize("faucet", [False, True])
+_ISO = {"FromDate": "2026-10-01", "ToDate": "2026-10-07", "Interval": "DAY"}
+# What the app's screen showing each product's water sends, for the reads no capture has
+# shown: a toilet's dates year first (numi_purewash.md §6.1), an EvoCycle's month first.
+_TOILET = {"FromDate": "2026-10-01", "ToDate": "2026-10-07", "Interval": "Day"}
+_APP = {"FromDate": "10-01-2026", "ToDate": "10-07-2026", "Interval": "Day"}
+
+
+@pytest.mark.parametrize(
+    ("product", "query"),
+    [
+        ("gcs", _ISO),
+        ("faucet", _ISO),
+        ("numi", _TOILET),
+        ("blade", _TOILET),
+        # EvoCycle's adds the zone a US phone sends (evocycle.md §2.1).
+        ("evo", {**_APP, "TimeZone": "UTC"}),
+    ],
+)
 async def test_usage_is_asked_for_with_pascal_case_query_and_empty_on_failure(
-    client: KohlerClient, kohler: FakeKohler, faucet: bool
+    client: KohlerClient, kohler: FakeKohler, product: str, query: dict[str, str]
 ) -> None:
     """A camelCase query gets the same generic 400 as a bare call (platform.md §6)."""
-    device = DEVICE_ID if faucet else VALVE_ID
-    product = "faucet" if faucet else "gcs"
+    device = f"{product}-0001"
     kohler.fail_api(
         f"/{product}-usage/{device}", (200, {"rows": 1}), (400, {"message": "Bad"})
     )
@@ -666,16 +682,12 @@ async def test_usage_is_asked_for_with_pascal_case_query_and_empty_on_failure(
             from_date="2026-10-01",
             to_date="2026-10-07",
             interval="DAY",
-            faucet=faucet,
+            product=product,
         )
         assert usage == expected
     url = kohler.mocker.mock_calls[-1][1]
     assert url.path == f"{DEVICES}/{product}-usage/{device}"
-    assert dict(url.query) == {
-        "FromDate": "2026-10-01",
-        "ToDate": "2026-10-07",
-        "Interval": "DAY",
-    }
+    assert dict(url.query) == query
 
 
 async def test_unreadable_replies_to_reads_entities_depend_on_are_errors(

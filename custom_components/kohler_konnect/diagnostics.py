@@ -21,6 +21,7 @@ copied from Kohler's records, whose shapes are not fully known, also pass the
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -42,9 +43,11 @@ from .const import (
     SHOWER_ON_PRESET_ID,
 )
 from .coordinator import Controller, KohlerKonnectCoordinator, Valve
-from .faucet.diagnostics import faucet_report
 from .konnect import AuthError, GcsState
 from .konnect.valve_hex import ValveHexError, decode_word
+from .products import PRODUCTS, Product
+
+_LOGGER = logging.getLogger(__name__)
 
 # Entry data/options keys whose values are secrets or identity. The rest of the entry is
 # configuration a report needs (model, outlet split, units, per-valve settings).
@@ -379,6 +382,12 @@ def _default_shower_zone(gcs: GcsState, zone: int, word: str) -> dict[str, Any]:
     }
 
 
+# A touch panel's identity, left out of its record in a report.
+_PANEL_IDENTITY = frozenset(
+    {"serialNo", "model", "firmware", "bootloder", "installedDate", "status"}
+)
+
+
 def _valve_report(valve: Valve) -> dict[str, Any]:
     """One valve's state, limits, run-time clocks and warm-up settings."""
     gcs = valve.gcs_state
@@ -421,7 +430,19 @@ def _valve_report(valve: Valve) -> dict[str, Any]:
             ),
             "experiences": sum(1 for p in gcs.presets.values() if p.is_experience),
             "empty": sum(1 for p in gcs.presets.values() if p.is_empty),
+            # Bath-fill presets' fill amounts and run times (`gcs_valve.md` §8).
+            "bath_fills": [
+                {"volume": p.volume, "time": p.run_time}
+                for p in gcs.presets.values()
+                if p.is_bath_fill
+            ],
         },
+        # The touch panels' records as read (`gcs_valve.md` §6), less their identity: the
+        # shapes a touch-panel write is checked against.
+        "touch_panels": [
+            {key: value for key, value in record.items() if key not in _PANEL_IDENTITY}
+            for record in gcs.ui_config
+        ],
         "default_shower": _default_shower_report(valve),
         # Keyed by the device's own 0-based outLetId. Fills in gradually over MQTT
         # and REST; a missing outlet means "never announced", not zero.
@@ -573,14 +594,15 @@ def _build(
     requested_for: str,
     valve_index: int = 0,
     controller_index: int = 0,
-    faucet_index: int | None = None,
+    product: tuple[str, int] | None = None,
 ) -> dict[str, Any]:
     """The whole installation, as this integration currently understands it.
 
     ``valve_index`` / ``controller_index`` pick the device the singular ``valve`` /
-    ``controller`` blocks describe: the one whose button was pressed. With
-    ``faucet_index`` set, the singular block is ``faucet`` and there is no ``valve`` or
-    ``controller``. The ``valves`` / ``controllers`` / ``faucets`` lists always carry
+    ``controller`` blocks describe: the one whose button was pressed. With ``product``
+    set (a product key and an index into its devices), the singular block is that device,
+    under the product's key (``faucet``), and there is no ``valve`` or ``controller``. The
+    ``valves`` / ``controllers`` lists, and one list per product (``faucets``), always carry
     every device.
     """
     model = coordinator.model
@@ -600,7 +622,10 @@ def _build(
             "valve_count": len(coordinator.valves),
             "controller_present": bool(coordinator.controllers),
             "controller_count": len(coordinator.controllers),
-            "faucet_count": len(coordinator.faucets),
+            **{
+                f"{p.key}_count": len(coordinator.products.get(p.key, ()))
+                for p in PRODUCTS
+            },
         },
         "entry": {
             "data": _redact_entry(coordinator, coordinator.entry.data),
@@ -613,8 +638,8 @@ def _build(
 
     # One entry per valve, in the cloud's order, each with its own `run_time` and `warmup`.
     # The singular `valve`, `run_time` and `warmup` describe the pressed valve, and are
-    # left out of a faucet's report.
-    shower_blocks = faucet_index is None
+    # left out of another product's report.
+    shower_blocks = product is None
     reports = [_valve_report(valve) for valve in coordinator.valves]
     if reports and shower_blocks:
         # An out-of-range index is a caller bug, but the report must still build.
@@ -630,7 +655,7 @@ def _build(
         payload["valves"] = reports
 
     # One entry per controller, in the cloud's order. The singular `controller` describes
-    # the pressed controller, and is left out of a faucet's report.
+    # the pressed controller, and is left out of another product's report.
     reports = [_controller_report(controller) for controller in coordinator.controllers]
     if reports and shower_blocks:
         payload["controller"] = (
@@ -641,14 +666,29 @@ def _build(
     if reports:
         payload["controllers"] = reports
 
-    # One entry per faucet, in the cloud's order; from a faucet's button, its report again
-    # as the singular `faucet`.
-    if coordinator.faucets:
-        payload["faucets"] = [faucet_report(faucet) for faucet in coordinator.faucets]
-        if faucet_index is not None and 0 <= faucet_index < len(payload["faucets"]):
-            payload["faucet"] = payload["faucets"][faucet_index]
+    # One entry per device of every other product, in the cloud's order; from a device's
+    # button, its report again as the singular block (`faucet`).
+    for each in PRODUCTS:
+        devices = coordinator.products.get(each.key)
+        if not devices:
+            continue
+        reports = [_product_report(each, device) for device in devices]
+        payload[f"{each.key}s"] = reports
+        if product is not None and product[0] == each.key:
+            index = product[1]
+            if 0 <= index < len(reports):
+                payload[each.key] = reports[index]
 
     return payload
+
+
+def _product_report(product: Product, device: Any) -> dict[str, Any]:
+    """One device's block; a fault in it leaves the rest of the download whole."""
+    try:
+        return product.diagnostics(device)
+    except Exception:
+        _LOGGER.exception("Could not report %s", device.device_name)
+        return {"error": "This device's report failed; see the log."}
 
 
 def _coordinator(hass: HomeAssistant, entry: ConfigEntry) -> KohlerKonnectCoordinator:
@@ -714,15 +754,15 @@ async def async_get_device_diagnostics(
     """Diagnostics from any device page.
 
     The same whole-installation report as the config entry's, with `requested_for` and
-    the singular `valve` / `controller` (or, for a faucet, `faucet`) blocks set to the
-    device whose page it came from.
+    the singular `valve` / `controller` (or, for another product, its own: `faucet`)
+    blocks set to the device whose page it came from.
     """
     coordinator = _coordinator(hass, entry)
     requested_for = "unknown_device"
     # Default to the first of each, as the config-entry button does.
     valve_index = 0
     controller_index = 0
-    faucet_index: int | None = None
+    product: tuple[str, int] | None = None
     for domain, identifier in device.identifiers:
         if domain != DOMAIN:
             continue
@@ -744,13 +784,14 @@ async def async_get_device_diagnostics(
                     else f"controller_{index}"
                 )
                 controller_index = index
-        for index, faucet in enumerate(coordinator.faucets):
-            if identifier == faucet.device_id:
-                # Always an index into `faucets`.
-                requested_for = f"faucet_{index}"
-                faucet_index = index
+        for key, devices in coordinator.products.items():
+            for index, product_device in enumerate(devices):
+                if identifier == product_device.device_id:
+                    # Always an index into the product's list (`faucets`).
+                    requested_for = f"{key}_{index}"
+                    product = (key, index)
     return await _async_add_fault_logs(
         coordinator,
-        _build(coordinator, requested_for, valve_index, controller_index, faucet_index),
+        _build(coordinator, requested_for, valve_index, controller_index, product),
         valve_index,
     )

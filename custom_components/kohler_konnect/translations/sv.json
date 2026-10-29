@@ -47,10 +47,12 @@
         "description": "**Zongruppering** avgör hur utlopp, zonreglage (Temperature, Flow) och zonsensorer (Shower Active, Hex) namnges och grupperas. Det gäller bara ventiler med två zoner (K-28211 och K-28212); på en ventil med en zon ser alla tre valen likadana ut.\n\n**Säkerhetsgräns för vatten** gäller kranar.",
         "data": {
           "zone_grouping": "Sätt att gruppera zoner",
-          "max_run_minutes": "Säkerhetsgräns för vatten"
+          "max_run_minutes": "Säkerhetsgräns för vatten",
+          "sidebar_panel": "Visa Kohler Konnect-panelen i sidofältet"
         },
         "data_description": {
-          "max_run_minutes": "Stänger av vattnet så många minuter efter att det slagits på från Home Assistant, om det inte har stängts av under tiden. 0 stänger av gränsen."
+          "max_run_minutes": "Stänger av vattnet så många minuter efter att det slagits på från Home Assistant, om det inte har stängts av under tiden. 0 stänger av gränsen.",
+          "sidebar_panel": "En panel för alla användare, med styrning, vattenförbrukning och detaljer för dina enheter. Stängs den av försvinner den direkt från sidofältet."
         }
       }
     }
@@ -72,6 +74,31 @@
         "qt": "Quarts",
         "gal": "Gallon"
       }
+    },
+    "weekday": {
+      "options": {
+        "mon": "Måndag",
+        "tue": "Tisdag",
+        "wed": "Onsdag",
+        "thu": "Torsdag",
+        "fri": "Fredag",
+        "sat": "Lördag",
+        "sun": "Söndag"
+      }
+    },
+    "schedule_repeat": {
+      "options": {
+        "everyday": "Varje dag",
+        "once": "En gång",
+        "custom": "Valda dagar"
+      }
+    },
+    "fan_speed": {
+      "options": {
+        "low": "Låg",
+        "medium": "Medel",
+        "high": "Hög"
+      }
     }
   },
   "entity": {
@@ -87,6 +114,39 @@
       },
       "mqtt_connection": {
         "name": "MQTT-anslutning"
+      },
+      "light_state": {
+        "name": "Ljus"
+      },
+      "occupied": {
+        "name": "Upptagen"
+      },
+      "cleaning": {
+        "name": "Rengöring"
+      },
+      "wand_extended": {
+        "name": "Munstycke utfällt"
+      },
+      "low_power": {
+        "name": "Lågeffektläge"
+      },
+      "shower_running": {
+        "name": "Dusch"
+      },
+      "ozone_cleaning": {
+        "name": "Ozonrengöring"
+      },
+      "evo_problem": {
+        "name": "Problem"
+      },
+      "session_due": {
+        "name": "Pass att göra"
+      },
+      "water_saving_mode": {
+        "name": "Vattensparläge"
+      },
+      "bath_filling": {
+        "name": "Badkaret fylls"
       }
     },
     "button": {
@@ -122,16 +182,280 @@
       },
       "clear_leak": {
         "name": "Rensa läckagelarm"
+      },
+      "stop_all": {
+        "name": "Stoppa allt"
+      },
+      "stop": {
+        "name": "Stoppa"
+      },
+      "start_front_wash": {
+        "name": "Starta främre tvätt"
+      },
+      "start_rear_wash": {
+        "name": "Starta bakre tvätt"
+      },
+      "start_boost_wash": {
+        "name": "Starta intensiv tvätt"
+      },
+      "start_kid_wash": {
+        "name": "Starta barntvätt"
+      },
+      "start_dryer": {
+        "name": "Starta torkning"
+      },
+      "cover": {
+        "name": "Lock"
+      },
+      "seat_ring": {
+        "name": "Sits"
+      },
+      "start_clean": {
+        "name": "Starta rengöring"
+      },
+      "stop_clean": {
+        "name": "Stoppa rengöring"
+      },
+      "extend_wand": {
+        "name": "Fäll ut munstycket"
+      },
+      "retract_wand": {
+        "name": "Fäll in munstycket"
+      },
+      "full_flush": {
+        "name": "Full spolning"
+      },
+      "eco_flush": {
+        "name": "Eco-spolning"
+      },
+      "start_rapid_clean": {
+        "name": "Starta snabbrengöring"
+      },
+      "start_deep_clean": {
+        "name": "Starta djuprengöring"
+      },
+      "sync_clock": {
+        "name": "Synkronisera klockan"
       }
     },
     "number": {
       "dispense_amount": {
         "name": "Tappmängd"
+      },
+      "default_fan_run_time": {
+        "name": "Standardkörtid för fläkt"
+      },
+      "default_light_brightness": {
+        "name": "Standardljusstyrka"
+      },
+      "default_temperature": {
+        "name": "Standardtemperatur"
+      },
+      "standard_max_temperature": {
+        "name": "Maxtemperatur i standardläge"
+      },
+      "cycle_max_temperature": {
+        "name": "Maxtemperatur i cirkulationsläge"
+      },
+      "default_flow": {
+        "name": "Standardflöde"
+      },
+      "water_saving_target": {
+        "name": "Målvärde för vattenbesparing"
+      },
+      "front_wash_temperature": {
+        "name": "Främre tvätt: temperatur"
+      },
+      "front_wash_pressure": {
+        "name": "Främre tvätt: tryck"
+      },
+      "front_wash_position": {
+        "name": "Främre tvätt: position"
+      },
+      "rear_wash_temperature": {
+        "name": "Bakre tvätt: temperatur"
+      },
+      "rear_wash_pressure": {
+        "name": "Bakre tvätt: tryck"
+      },
+      "rear_wash_position": {
+        "name": "Bakre tvätt: position"
+      },
+      "boost_wash_temperature": {
+        "name": "Intensiv tvätt: temperatur"
+      },
+      "boost_wash_pressure": {
+        "name": "Intensiv tvätt: tryck"
+      },
+      "boost_wash_position": {
+        "name": "Intensiv tvätt: position"
+      },
+      "kid_wash_temperature": {
+        "name": "Barntvätt: temperatur"
+      },
+      "kid_wash_pressure": {
+        "name": "Barntvätt: tryck"
+      },
+      "kid_wash_position": {
+        "name": "Barntvätt: position"
+      },
+      "dryer_temperature": {
+        "name": "Torkning: temperatur"
+      },
+      "dryer_fan_speed": {
+        "name": "Torkning: fläkthastighet"
+      },
+      "default_seat_heat": {
+        "name": "Standard sitsvärme"
+      },
+      "default_night_light_brightness": {
+        "name": "Standardljusstyrka för nattlampan"
+      },
+      "display_brightness": {
+        "name": "Skärmens ljusstyrka"
       }
     },
     "select": {
       "preset": {
         "name": "Förinställning"
+      },
+      "default_fan_speed": {
+        "name": "Standardhastighet för fläkt",
+        "state": {
+          "low": "Låg",
+          "medium": "Medel",
+          "high": "Hög"
+        }
+      },
+      "humidity_sensitivity": {
+        "name": "Fuktkänslighet",
+        "state": {
+          "low": "Låg",
+          "medium": "Medel",
+          "high": "Hög"
+        }
+      },
+      "default_light_color": {
+        "name": "Standardljusfärg",
+        "state": {
+          "warm": "Varm",
+          "warmwhite": "Varmvit",
+          "cool": "Kall",
+          "coolwhite": "Kallvit",
+          "daylight": "Dagsljus"
+        }
+      },
+      "seat_heat_level": {
+        "name": "Sitsvärmenivå",
+        "state": {
+          "off": "Av",
+          "lowest": "Lägsta",
+          "low": "Låg",
+          "medium": "Medel",
+          "high": "Hög",
+          "highest": "Högsta"
+        }
+      },
+      "auto_cover": {
+        "name": "Automatiskt lock",
+        "state": {
+          "off": "Av",
+          "near": "Nära",
+          "medium": "Medel",
+          "far": "Långt"
+        }
+      },
+      "night_light": {
+        "name": "Nattlampa",
+        "state": {
+          "off": "Av",
+          "low": "Låg",
+          "high": "Hög"
+        }
+      },
+      "evo_shower": {
+        "name": "Dusch",
+        "state": {
+          "off": "Av",
+          "standard": "Standard",
+          "cycle": "Cirkulation"
+        }
+      },
+      "default_shower_mode": {
+        "name": "Standardläge för dusch",
+        "state": {
+          "standard": "Standard",
+          "cycle": "Cirkulation"
+        }
+      },
+      "panel_language": {
+        "name": "Manöverpanelens språk",
+        "state": {
+          "en": "English",
+          "es": "Español",
+          "fr": "Français"
+        }
+      },
+      "panel_units": {
+        "name": "Manöverpanelens enheter",
+        "state": {
+          "us": "US (gal, °F)",
+          "metric": "Metriskt (L, °C)"
+        }
+      },
+      "front_wash_pattern": {
+        "name": "Främre tvätt: strålmönster",
+        "state": {
+          "regular": "Normal",
+          "oscillate": "Oscillerande",
+          "pulsate": "Pulserande",
+          "wave": "Våg"
+        }
+      },
+      "rear_wash_pattern": {
+        "name": "Bakre tvätt: strålmönster",
+        "state": {
+          "regular": "Normal",
+          "oscillate": "Oscillerande",
+          "pulsate": "Pulserande",
+          "wave": "Våg"
+        }
+      },
+      "boost_wash_pattern": {
+        "name": "Intensiv tvätt: strålmönster",
+        "state": {
+          "regular": "Normal",
+          "oscillate": "Oscillerande",
+          "pulsate": "Pulserande",
+          "wave": "Våg"
+        }
+      },
+      "kid_wash_pattern": {
+        "name": "Barntvätt: strålmönster",
+        "state": {
+          "regular": "Normal",
+          "oscillate": "Oscillerande",
+          "pulsate": "Pulserande",
+          "wave": "Våg"
+        }
+      },
+      "valve_panel_language": {
+        "name": "Panelspråk",
+        "state": {
+          "en_us": "English (United States)",
+          "en_gb": "English (United Kingdom)",
+          "es_mx": "Español (México)",
+          "fr_ca": "Français (Canada)",
+          "zh_cn": "中文 (中国)"
+        }
+      },
+      "wake_screen": {
+        "name": "Väckningsskärm",
+        "state": {
+          "outlets": "Utlopp",
+          "home": "Start",
+          "favorites": "Favoriter"
+        }
       }
     },
     "sensor": {
@@ -189,16 +513,248 @@
       },
       "duration_this_year": {
         "name": "Användningstid i år"
+      },
+      "fan_state": {
+        "name": "Fläkt",
+        "state": {
+          "off": "Av",
+          "low": "Låg",
+          "medium": "Medel",
+          "high": "Hög",
+          "on": "På"
+        }
+      },
+      "controller_firmware": {
+        "name": "Styrenhetens firmware"
+      },
+      "air_temperature": {
+        "name": "Temperatur"
+      },
+      "air_humidity": {
+        "name": "Luftfuktighet"
+      },
+      "co2": {
+        "name": "CO₂"
+      },
+      "voc": {
+        "name": "VOC"
+      },
+      "activity": {
+        "name": "Aktivitet",
+        "state": {
+          "idle": "Inaktiv",
+          "front_wash": "Främre tvätt",
+          "rear_wash": "Bakre tvätt",
+          "boost_wash": "Intensiv tvätt",
+          "kid_wash": "Barntvätt",
+          "drying": "Torkning"
+        }
+      },
+      "seat_heat": {
+        "name": "Sitsvärme",
+        "state": {
+          "off": "Av",
+          "lowest": "Lägsta",
+          "low": "Låg",
+          "medium": "Medel",
+          "high": "Hög",
+          "highest": "Högsta"
+        }
+      },
+      "last_error": {
+        "name": "Senaste fel"
+      },
+      "evo_activity": {
+        "name": "Aktivitet",
+        "state": {
+          "idle": "Inaktiv",
+          "standard": "Standard",
+          "cycle": "Cirkulation",
+          "rapid_clean": "Snabbrengöring",
+          "deep_clean": "Djuprengöring",
+          "cancelling": "Avbryter rengöring"
+        }
+      },
+      "last_rapid_clean": {
+        "name": "Senaste snabbrengöring"
+      },
+      "last_deep_clean": {
+        "name": "Senaste djuprengöring"
+      },
+      "water_saved": {
+        "name": "Sparat vatten"
+      },
+      "last_session": {
+        "name": "Senaste pass"
+      },
+      "last_session_duration": {
+        "name": "Längd på senaste pass"
+      },
+      "last_session_temperature": {
+        "name": "Temperatur vid senaste pass"
+      },
+      "sessions_this_week": {
+        "name": "Pass den här veckan"
+      },
+      "routine": {
+        "name": "Rutin"
+      },
+      "flushes_today": {
+        "name": "Spolningar i dag"
+      },
+      "washes_today": {
+        "name": "Tvättningar i dag"
+      },
+      "dryer_runs_today": {
+        "name": "Torkningar i dag"
+      },
+      "power_today": {
+        "name": "Strömförbrukning i dag"
+      },
+      "missed_this_month": {
+        "name": "Missade den här månaden"
+      },
+      "cycled_water_this_week": {
+        "name": "Cirkulerat vatten den här veckan"
+      },
+      "fresh_water_this_week": {
+        "name": "Färskvatten den här veckan"
+      },
+      "cycled_share_this_week": {
+        "name": "Cirkulerad andel den här veckan"
+      },
+      "water_saved_this_month": {
+        "name": "Sparat vatten denna månad"
+      },
+      "water_saved_this_year": {
+        "name": "Sparat vatten i år"
+      },
+      "cycle_share_this_month": {
+        "name": "Andel cirkulationsläge denna månad"
       }
     },
     "switch": {
       "water": {
         "name": "Vatten"
+      },
+      "default_fan_timer": {
+        "name": "Standardtimer för fläkt"
+      },
+      "humidity_sensing": {
+        "name": "Fuktavkänning"
+      },
+      "audible_feedback": {
+        "name": "Ljudsignal"
+      },
+      "fan_schedule": {
+        "name": "Fläktschema"
+      },
+      "circadian_lighting": {
+        "name": "Dygnsrytmbelysning"
+      },
+      "power_save": {
+        "name": "Energisparläge"
+      },
+      "circadian_light": {
+        "name": "Dygnsrytmljus"
+      },
+      "night_light": {
+        "name": "Nattlampa"
+      },
+      "auto_flush": {
+        "name": "Automatisk spolning"
+      },
+      "auto_clean": {
+        "name": "Automatisk rengöring"
+      },
+      "auto_cover": {
+        "name": "Automatiskt lock"
+      },
+      "deodorizer": {
+        "name": "Luktfläkt"
+      },
+      "bowl_mist": {
+        "name": "Skålbefuktning"
+      },
+      "long_sitting_reminder": {
+        "name": "Påminnelse om långt sittande"
+      },
+      "auto_temperature": {
+        "name": "Automatisk temperatur"
+      },
+      "warmup": {
+        "name": "Förvärmning"
+      },
+      "rapid_clean_reminder": {
+        "name": "Påminnelse om snabbrengöring"
+      },
+      "deep_clean_reminder": {
+        "name": "Påminnelse om djuprengöring"
+      },
+      "filter_clean_reminder": {
+        "name": "Påminnelse om filterrengöring"
+      },
+      "haptic_feedback": {
+        "name": "Haptisk återkoppling"
+      },
+      "water_saving_goal": {
+        "name": "Vattenbesparingsmål"
+      },
+      "routine_reminders": {
+        "name": "Rutinpåminnelser"
+      },
+      "follow_up_questions": {
+        "name": "Uppföljningsfrågor"
+      },
+      "accessible_display": {
+        "name": "Tillgänglig skärm"
+      },
+      "flow_control": {
+        "name": "Flödesstyrning"
       }
     },
     "update": {
       "firmware_status": {
         "name": "Firmwarestatus"
+      }
+    },
+    "fan": {
+      "fan": {
+        "name": "Fläkt"
+      }
+    },
+    "light": {
+      "light": {
+        "name": "Ljus"
+      },
+      "ambient_light": {
+        "name": "Stämningsbelysning",
+        "state_attributes": {
+          "effect": {
+            "state": {
+              "sunrise": "Soluppgång",
+              "forest_breeze": "Skogsbris",
+              "deep_ocean": "Djupt hav",
+              "bokeh": "Bokeh",
+              "miami": "Miami",
+              "coral": "Korall",
+              "red": "Röd",
+              "magenta": "Magenta",
+              "blue": "Blå",
+              "gold": "Guld",
+              "yellow": "Gul",
+              "green": "Grön"
+            }
+          }
+        }
+      },
+      "night_light": {
+        "name": "Nattlampa"
+      }
+    },
+    "calendar": {
+      "sessions": {
+        "name": "Pass"
       }
     }
   },
@@ -247,6 +803,63 @@
     },
     "faucet_required": {
       "message": "Mer än en kran är konfigurerad. Välj vilken kran som ska tappa."
+    },
+    "settings_while_running": {
+      "message": "{name} är igång och inställningarna kan inte ändras förrän den stannar, precis som i Konnect-appen."
+    },
+    "settings_unreadable": {
+      "message": "De aktuella inställningarna för {name} kunde inte läsas, så inget ändrades: alla ersätts på en gång. Försök igen."
+    },
+    "favorite_not_found": {
+      "message": "{name} har ingen favorit som heter {favorite}."
+    },
+    "toilet_not_seated": {
+      "message": "{name} startar en tvätt eller torkningen bara när någon sitter, precis som i Konnect-appen."
+    },
+    "toilet_seated": {
+      "message": "{name} kan inte göra det medan någon sitter, precis som i Konnect-appen."
+    },
+    "evocycle_fault": {
+      "message": "{name} rapporterar fel {code}. Kontrollera det i Konnect-appen innan du startar något."
+    },
+    "evocycle_cleaning": {
+      "message": "{name} kör en ozonrengöring. Duschen kan startas igen när den är klar."
+    },
+    "evocycle_running": {
+      "message": "{name} är igång. En ozonrengöring startar bara när duschen är av och ingen är i den."
+    },
+    "ice_bath_session_exists": {
+      "message": "{name} har redan ett pass {day}. Dagboken sparar ett per dag, så det här loggades inte."
+    },
+    "ice_bath_not_selected": {
+      "message": "Välj en Ice Bath-dagbok."
+    },
+    "ice_bath_in_future": {
+      "message": "Ett pass kan inte sluta i framtiden."
+    },
+    "ice_bath_temperature": {
+      "message": "Temperaturen måste vara mellan {low} och {high} {unit}, det dagboken kan lagra."
+    },
+    "ice_bath_before_journal": {
+      "message": "{name}s dagbok började {day}, så inget pass kan loggas före det."
+    },
+    "toilet_cleaning": {
+      "message": "{name} kör sin UV-rengöring. Vänta tills den är klar, precis som i Konnect-appen."
+    },
+    "smart_fan_not_selected": {
+      "message": "Välj en Smart Fan."
+    },
+    "fan_schedule_same_times": {
+      "message": "Ett schema kan inte börja och sluta samma tid: det måste pågå kortare än 24 timmar, precis som i Konnect-appen."
+    },
+    "fan_schedule_no_days": {
+      "message": "Välj de dagar schemat ska gälla."
+    },
+    "panel_settings_while_running": {
+      "message": "{name} spolar vatten: panelernas inställningar kan inte sparas förrän det slutar, precis som i Konnect-appen."
+    },
+    "panel_settings_unreadable": {
+      "message": "Panelinställningarna för {name} läses inte som Konnect-appen väntar sig ({reason}), så inget ändrades: alla inställningar för varje panel skrivs på en gång."
     }
   },
   "services": {
@@ -269,6 +882,88 @@
         "preset": {
           "name": "Förinställning",
           "description": "En förinställning som sparats i Konnect-appen, med namnet i listan Förinställning. Används i stället för Mängd."
+        }
+      }
+    },
+    "log_ice_bath_session": {
+      "name": "Logga ett isbadspass",
+      "description": "Loggar ett pass i Ice Bath-dagboken, som Ny post i Konnect-appen: när, hur länge och hur kallt. En dag som redan har ett pass avvisas i stället för att skrivas över.",
+      "fields": {
+        "device_id": {
+          "name": "Dagbok",
+          "description": "Ice Bath-dagboken att logga passet i."
+        },
+        "duration": {
+          "name": "Längd",
+          "description": "Hur länge det varade. Tio minuter eller mer loggas som appens 10+."
+        },
+        "temperature": {
+          "name": "Temperatur",
+          "description": "Hur kallt, i Home Assistants temperaturenhet: 36–75 °F eller 2–24 °C, det dagboken kan lagra."
+        },
+        "completed": {
+          "name": "Avslutades",
+          "description": "När det slutade. Standard är nu."
+        }
+      }
+    },
+    "set_fan_schedule": {
+      "name": "Ställ in fläktschema",
+      "description": "Ställer in en Smart Fans schema som schemaredigeraren i Konnect-appen: start och slut, upprepning och hastighet. Att spara slår på schemat. Det kan inte ändras medan fläkten går.",
+      "fields": {
+        "device_id": {
+          "name": "Fläkt",
+          "description": "Den Smart Fan som ska få schemat."
+        },
+        "start": {
+          "name": "Start",
+          "description": "När fläkten slås på."
+        },
+        "end": {
+          "name": "Slut",
+          "description": "När den stängs av."
+        },
+        "repeat": {
+          "name": "Upprepning",
+          "description": "Varje dag, en gång eller de dagar som väljs nedan. Varje dag om inget anges."
+        },
+        "days": {
+          "name": "Dagar",
+          "description": "De dagar ett schema för valda dagar gäller."
+        },
+        "speed": {
+          "name": "Hastighet",
+          "description": "Fläktens hastighet medan schemat gäller. Den nuvarande om inget anges."
+        }
+      }
+    },
+    "set_ice_bath_routine": {
+      "name": "Ställ in Ice Bath-rutin",
+      "description": "Ändrar rutinen i en Ice Bath-dagbok som rutinskärmen i Konnect-appen: veckodagarna eller antalet pass i veckan, och påminnelserna. Ange bara det som ska ändras.",
+      "fields": {
+        "device_id": {
+          "name": "Dagbok",
+          "description": "Den Ice Bath-dagbok vars rutin ska ändras."
+        },
+        "days": {
+          "name": "Dagar",
+          "description": "Veckodagarna då ett pass är planerat. Ange detta eller pass i veckan, inte båda."
+        },
+        "sessions_per_week": {
+          "name": "Pass i veckan",
+          "description": "Hur många pass i veckan, vilka dagar som helst."
+        },
+        "reminders": {
+          "name": "Påminnelser",
+          "description": "Om appen påminner dig om rutinen."
+        },
+        "reminder_time": {
+          "name": "Påminnelsetid",
+          "description": "När appens påminnelse kommer."
+        },
+        "follow_ups": {
+          "name": "Uppföljningsfrågor",
+          "description": "Om appen frågar hur du mådde efter ett pass. Dina svar stannar i appen."
         }
       }
     }

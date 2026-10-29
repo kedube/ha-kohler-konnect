@@ -1,7 +1,7 @@
 <h1 align="center">Kohler Konnect</h1>
 
 <p align="center">
-  Home Assistant integration for <b>Kohler Digital Anthem</b> and <b>Anthem+</b> shower systems and <b>Sensate</b> kitchen faucets.
+  Home Assistant integration for <b>Kohler Digital Anthem</b> and <b>Anthem+</b> shower systems and <b>Sensate</b> kitchen faucets, with early support for the <b>Smart Fan</b>, <b>Numi 2.0</b>, <b>Purewash E930</b>, <b>EvoCycle</b> and <b>Ice Bath</b>.
 </p>
 
 <p align="center">
@@ -26,8 +26,10 @@
 - [At a glance](#at-a-glance)
 - [Two shower products](#two-shower-products)
 - [Sensate faucets](#sensate-faucets)
+- [Other products](#other-products)
 - [How it works](#how-it-works)
 - [In Home Assistant](#in-home-assistant)
+- [The Kohler Konnect panel](#the-kohler-konnect-panel)
 - [Entities](#entities)
 - [Using both together](#using-both-together)
 - [Services](#services)
@@ -51,6 +53,10 @@
 Puts your Kohler Konnect devices in Home Assistant under one sign-in: the shower — outlets,
 temperature, presets, and the Anthem Plus controller's music, lighting and steam — and the
 Sensate kitchen faucet — water on and off, measured dispenses, presets and leak alerts.
+
+It also reads the Smart Fan, the Numi 2.0 toilet, the Purewash E930 seat and the EvoCycle
+shower, and drives them if you choose to, and it shows the Ice Bath's session journal. All of
+that is new and untested on real hardware: see [Other products](#other-products).
 
 No official Kohler integration exists for these products. The community integrations that do
 exist support only the older, simpler Anthem valve. This one was built by reverse-engineering
@@ -87,6 +93,11 @@ somewhere. Faucets share that one stream and also poll, as a safety net — see
   Kohler's own figures, the ones the Konnect app charts.
 * **Diagnostics built in.** A Report Log switch for bug reports, and a raw MQTT capture for
   deeper digging — see [Diagnostics](#diagnostics).
+* **A panel of its own.** A sidebar page laid out like the Konnect app — see
+  [The Kohler Konnect panel](#the-kohler-konnect-panel).
+* **More products, carefully.** The Smart Fan, Numi 2.0, Purewash E930, EvoCycle and Ice Bath,
+  with everything the app shows on and the untested controls marked as such — see
+  [Other products](#other-products).
 
 ## Two shower products
 
@@ -133,6 +144,39 @@ presets, made in the Konnect app.
 | Blocks remote water | A closed handle, or a firmware download — as the Konnect app does |
 | In the code and docs | `SEN` (and `SET`, a second faucet the app treats identically — probably the Setra) |
 
+## Other products
+
+The **Smart Fan**, the **Numi 2.0** toilet, the **Purewash E930** bidet seat, the
+**EvoCycle** shower and the **Ice Bath** are supported from what the Konnect app sends and
+expects, not from anyone having run them: nobody on this project owns one.
+
+* **Readings are on from the start.** Until an owner's Report Log shows what the hardware
+  really sends, one may be missing or wrong.
+* **Controls are on, and marked untested.** Each is built to the app's exact request and
+  carries `untested: true` in its attributes; the panel tags it **Untested**. Turn off any
+  you'd rather not have from the device page. A few are off until you turn them on there:
+  the EvoCycle's ozone-clean starts, which the app asks about first, and the Smart Fan's
+  night light and air readings, which the app never shows.
+* **The products' own rules hold, and a few more.** A toilet starts no wash unless someone is
+  seated, nor during its UV clean, and won't move its cover, start a clean or extend its
+  wand while someone is. An EvoCycle starts no ozone clean while its shower runs, nor its
+  shower while a clean runs, nor what a fault it reports stops in the app. Settings the app
+  writes all at once are written the same way, from a fresh read, and refused rather than
+  sent when that read comes back empty; changes made together, as a scene makes them, go
+  one at a time, so neither undoes the other. Stops always go through.
+* **The Ice Bath isn't on Kohler's cloud.** The Konnect app keeps a journal there of your
+  routine and the sessions you record, and that journal is what Home Assistant shows: there
+  is nothing to control. Notes and answers stay private.
+
+Each has its own section under [Entities](#entities), and the developer notes for each are in
+[`protocol/`](protocol/README.md). If you own one, see [Diagnostics](#diagnostics): a Report
+Log of it at work is the most useful thing you can send.
+
+**Not here:** the PerfectFill and the Aquifer Refine, which the Konnect app can't reach through
+Kohler's cloud either ([PerfectFill](protocol/perfectfill.md), [Aquifer](protocol/aquifer.md));
+Moxie, Verdera Voice and H2Wise, which work over Bluetooth
+or Alexa or have moved to another app; and DTV systems.
+
 ## How it works
 
 **Two APIs, in two directions.** Commands go out over Kohler's Konnect REST API. State comes
@@ -178,8 +222,8 @@ turns.
 ## In Home Assistant
 
 One device per product, each with its own entities: an **Anthem Valve** for each valve on
-the account, an **Anthem Plus** for each controller, and a device for each faucet, named as
-it is in the Konnect app (**Kitchen**, say).
+the account, an **Anthem Plus** for each controller, and a device for each faucet, fan,
+toilet, EvoCycle and Ice Bath journal, named as it is in the Konnect app (**Kitchen**, say).
 
 **Several of either.** An account with more than one valve or controller — one per
 bathroom, say — gets one device per unit, each with the full set of entities, its own
@@ -192,6 +236,70 @@ The `custom_shower` and `send_valve_hex` actions show a **Valve** field to say w
 they are for. It appears only when there is more than one — with a single valve there is
 nothing to choose, so the field is not shown, just as Zone 2 is not shown on a single-zone
 valve.
+
+## The Kohler Konnect panel
+
+A page of its own in Home Assistant's sidebar, laid out like the Konnect app: your devices
+as tiles, a shower you set up and start in one go, the faucet's dispense amounts and
+presets, water-usage charts, and each device's settings and hardware details. It works
+through the same entities and actions as everything else here, so every safeguard on this
+page applies to it too, and nothing it does is out of reach of an automation.
+
+It is on unless you turn it off: **Show the Kohler Konnect panel in the sidebar** in
+Configure, or on the panel's own **Account** tab. That removes it for every user, and
+doesn't reconnect to Kohler. With several Kohler accounts, it stays while any of them has
+the setting on, and shows only those accounts' devices.
+
+**Home.** Your devices, by area, each saying what it is doing — running at 104 °F with 12
+minutes left, dispensing, a leak, offline. **Usage** shows each device's water today, this
+month and over the last seven days. **Account**, for administrators, has the connection to
+Kohler, the settings Configure has, and **Download diagnostics**.
+
+**A shower.** **Simple Start** turns `Shower on`: the valve's own default shower, which the
+panel spells out — "Rainhead · 106 °F". For anything else, choose outlets and a temperature
+while the shower is off — nothing is sent yet — and **Start** sends them as one
+`custom_shower`, the way the valve takes a shower: whole, never outlet by outlet. Once
+water runs, each change goes to the valve as you make it, one at a time, and a slider sends
+when you let go. **Stop** always goes first, ahead of anything still waiting. While the
+valve warms up, the controls wait, as the valve does; a paused shower offers **Resume**.
+The temperature tops out at the valve's scald limit. **Favorites** and **Experiences**
+start what is saved in the Konnect app.
+
+**A faucet.** **Faucet** turns the water on, and the panel counts down to your
+[water safety limit](#water-safety-limit). **Dispense Amount** pours one of the quick
+amounts the app offers, or an amount you set, through `dispense`. **See more** lists your
+Konnect presets. A closed handle, a firmware download and a leak (with **Clear**) show as
+banners; the faucet refuses remote water while its handle is closed or it is downloading
+firmware, and the panel says why.
+
+**The other products.** A Smart Fan has its own page: the fan and the light, each with its
+favorites, and **Stop all**, with its settings under ⋯. A toilet or an EvoCycle lists its
+readings and its controls, each control tagged **Untested**. On Home, each
+says what it's doing: a wash running, an ozone clean, a fault. An Ice Bath journal shows this
+week's sessions against your routine.
+
+**Water Usage.** Week, Month and Year, with **‹ ›** to page back. Each bar is a day, or a
+month on Year. **Average** is per day, **High** is the tallest bar, and **Total** is the
+whole period; **Water** and **Time** switch between volume and how long the water ran. The
+current week, month and year come from what the integration already holds, so their totals
+match the usage sensors. Earlier ones are read from Kohler when you page back to them, and
+kept. A week starts on the first day of the week set in your Home Assistant profile and is a
+calendar week — unlike `Water Used This Week`, which covers the last seven days.
+
+**Settings**, the ⋯ button, for administrators: the default temperature, Warmup and Warmup
+Auto-Restore, Max Temperature (which asks you to confirm), Max Shower Duration and Flow;
+then **About** (model, serial numbers, install date, each part's firmware), **Diagnostics**
+(the connection, active faults with **Clear error log**, and the Report Log), and
+**Restart Product**, which asks first because it stops running water. As in the Konnect
+app, outlet settings can't change while water runs.
+
+**Who sees what.** Everyone can use the controls, just as everyone can use the entities.
+Settings, About, Diagnostics and Account are for administrators. Serial numbers, the
+controller's local web address and your Kohler email are sent to administrators' browsers
+only, and Kohler's own device ids never reach a browser at all.
+
+**What it leaves out.** A control whose entity is disabled doesn't appear, so disabling an
+entity — a workaround this guide suggests in places — carries over to the panel.
 
 ## Entities
 
@@ -259,7 +367,8 @@ zone 2:
 | `Rainhead`, `Showerhead`, `Handshower`, `Tub Filler`, `Body Sprays`, `Foot Sprays`… | switch | One per outlet, named after the fixture the valve reports. See **Outlet names** below |
 | `Temperature` | number | Setpoint for that zone, in your account's unit — the Konnect app's slider: **Cold**, then 59 °F up to the valve's current `Max Temperature`, in whole degrees that never go above it (a 47.7 °C limit tops out at 47 °C). The bottom step (58 °F / 14 °C) is **Cold**: the valve stops mixing in hot water, as the app's `COLD` stop does, and the `cold` attribute reads true. `Temperature 1` / `Temperature 2` on a two-zone valve |
 | `Flow` | number | Flow as a percentage, bounded by the limits the valve itself reports. `Flow 1` / `Flow 2` on a two-zone valve. See **Flow** below |
-| `Favorite` | select | Presets **stored on the valve**, added in the Konnect app or at the first-generation touchscreen |
+| `Favorite` | select | Presets **stored on the valve**, added in the Konnect app or at the first-generation touchscreen. A bath-fill preset, which fills the tub to a stored amount, starts like any other; `bath_fill_litres` lists them with their fill amounts |
+| `Bath Filling` | binary sensor | A bath-fill preset is filling the tub, as the app shows "Bathfill is running". Only on a valve with a tub filler |
 | `Experience` | select | The valve's stored **experiences** (Wake Up, Cool Down…), added in the Konnect app. Started with the same command the app uses; see [Favorites and presets](#favorites-and-presets) |
 | `Warmup` | select | Off / All Outlets / Started Outlets. See [Warmup](#warmup) |
 | `System Status` | sensor | `Water Running`, `Paused`, `Warming Up`, `Idle`. Whole-valve: warm-up and pause are system-level, not per-zone. Carries `seconds_remaining` — how long before the valve's run-time limit closes the water |
@@ -332,6 +441,26 @@ Home Assistant restarts, along with anything still waiting to be confirmed.
 if you tap Save. Fixed in 3.0.5. Setting 45 or 60 here is safe for the valve and safe in a
 current app; only an out-of-date one would quietly undo it.
 
+#### The touchscreen
+
+Configuration entities for the touch panels' settings, as the Konnect app's Settings → Control
+Panel has them: `Panel Language`, `Panel Units`, `Wake Screen`, `Display Brightness` (1–10),
+`Haptic Feedback` and `Accessible Display`, and `Flow Control`, which the app's current screens
+hide, so it starts off. Each is **untested**: nobody has yet seen one written on a valve.
+
+The app writes every panel's settings at once, whole, from what it read when the screen opened;
+this does the same, from a read made just before. Two safeguards go further than the app:
+
+* **Nothing is written while water runs**, as the app refuses it too.
+* **Nothing is written from a record that doesn't read as the app expects.** The panels keep
+  switches as `Enabled` or `Disabled` but are written `1` or `0`, and keep the valve's
+  setup-complete flag; written from a guess, a switch could turn off water-saving mode, or the
+  app could ask for the whole setup again. The message names what didn't read right, and
+  diagnostics show the records.
+
+`Water-Saving Mode` is a reading: a low-flow mode set when the shower was installed, which
+runs one outlet at a time. The app never changes it, and nothing here does.
+
 #### Outlet names
 
 Outlet switches are named after the fixture the valve reports for that outlet, not its
@@ -361,7 +490,8 @@ Each zone has a Flow number, bounded by the minimum and maximum the valve report
 zone rather than a fixed range — a valve with flow control disabled at the fixture offers
 only the value it will honour, and says so in `flow_control_available`.
 
-While the shower is off it shows the last flow Home Assistant wrote, defaulting to 100 %,
+While the shower is off it shows the last flow Home Assistant wrote — set here, or sent by
+`custom_shower` — defaulting to 100 %,
 **not** the valve's idle flow byte — that byte can hold a calibrated ceiling rather than a
 chosen setting while idle. While water is running the valve's own byte is authoritative,
 including a change made at the panel mid-shower. `flow_is_live` says which of the two you are
@@ -489,6 +619,135 @@ entities:
   - select.kitchen_preset
   - button.kitchen_dispense_preset
 ```
+
+### Smart Fan
+
+Each Smart Fan is its own device. Everything the app shows is on from the start; every
+control is
+**untested** (see [Other products](#other-products)).
+
+| Entity | Type | What it does |
+|---|---|---|
+| `Fan` | sensor | What the fan is doing: `off`, `low`, `medium`, `high`, or `on` when it runs at a speed the fan doesn't report. `favorite` attribute: the fan favorite running |
+| `Light` | binary sensor | Whether the light is on, with `brightness`, `color` and `favorite` attributes. Only when your Konnect account lists the fan with a light, as the app shows it |
+| `Cloud connection` | binary sensor | Diagnostic. Whether Kohler's cloud can reach the fan; its controls refuse while it can't |
+| `Firmware status` | update | Whether Kohler has newer firmware, checked twice a day. **Read-only** — install from the Konnect app |
+| `Gateway firmware`, `Controller firmware` | sensor | Diagnostic. The versions the Konnect app shows |
+| `Last update` | sensor | Diagnostic. When the fan last reported something new |
+| `Temperature`, `Humidity`, `CO₂`, `VOC` | sensor | Diagnostic, off until you turn it on. The fan sends them but the app never shows them, and nobody has confirmed their units, so they show the bare number |
+| `Fan` | fan, **untested** | On runs the fan's defaults, and its preset modes are your fan favorites from the Konnect app. Off stops whatever runs. It has no speed control: Kohler has no command that changes a running fan's speed |
+| `Light` | light, **untested** | On and off as the fan, with your light favorites as effects. Only on a fan with a light |
+| `Stop all` | button, **untested** | Stops the fan and the light. Always available, though the app shows it only while something runs |
+| `Default fan speed`, `Default fan timer`, `Default fan run time`, `Default light color`, `Default light brightness`, `Circadian lighting`, `Humidity sensing`, `Humidity sensitivity`, `Audible feedback` | select, switch, number, **untested** | What the fan and light do when started without a favorite, and how the fan behaves, as in the Konnect app's settings. As the app hides them, the run time is unavailable while the timer is off, the sensitivity while humidity sensing is off, and the light color while circadian lighting is on. Switching the timer puts the run time back to 30 minutes, as the app does |
+| `Fan schedule` | switch, **untested** | Turns the fan's own schedule on or off; its attributes say when it runs (`start`, `end`, `repeat`, `days`, `speed`). Unavailable until one exists: set one up with [`set_fan_schedule`](#kohler_konnectset_fan_schedule) or in the Konnect app |
+| `Night light` | light, **untested** | Configuration, off until you turn it on. The fan's night light, on at its default brightness. The Konnect app has these controls but never shows them, so your fan may well have no night light. Turning on an area's lights leaves it alone. Only on a fan with a light |
+| `Default night light brightness` | number, **untested** | Off until you turn it on. The brightness the night light comes on at. Changes only while the night light is off |
+| `Sync clock` | button, **untested** | Gives the fan Home Assistant's time zone. The app sets it only when the fan is set up, so press this after a move. Whether the fan follows daylight saving by itself isn't known: if its schedule runs an hour out after a change, press it then too |
+
+The Konnect app writes the fan's settings all at once, and so does this: each change reads them
+afresh and sends them back whole, and is refused when that read comes back empty, since
+writing from nothing would reset the rest. A setting for the fan or the light can't change
+while that part runs, and `Audible feedback` while anything runs, the night light included;
+whether something runs is read afresh too, as the app's Save reads it. Run time and
+brightness go in the app's steps of 10, to the nearest.
+
+### Numi 2.0 toilet and Purewash E930 seat
+
+The two share one protocol, so they share one set of entities, less what a model lacks.
+Everything is on from the start; every control is **untested**.
+
+| Entity | Type | What it does | Model |
+|---|---|---|---|
+| `Occupied` | binary sensor | Someone is seated | both |
+| `Activity` | sensor | `idle`, the wash running (`front_wash`, `rear_wash`, and on the Purewash `boost_wash` and `kid_wash`), or `drying` | both |
+| `Cleaning` | binary sensor | The UV self-clean is running | both |
+| `Wand extended` | binary sensor | The wand is out for cleaning by hand | both |
+| `Seat heat` | sensor | The seat's heat, `off` to `highest` | both |
+| `Last error` | sensor | Diagnostic. The last error the toilet reported, until it reports none | both |
+| `Cloud connection` | binary sensor | Diagnostic. Off when Kohler reports the toilet disconnected. Controls are available only while Kohler reports it connected, the Konnect app's own test | both |
+| `Low power` | binary sensor | Diagnostic. The toilet reports its low-power state | both |
+| `Firmware status` | update | Whether Kohler has newer firmware, checked twice a day. **Read-only** | both |
+| `Start front wash`, `Start rear wash`, `Start dryer`, `Stop` | button, **untested** | Refused unless someone is seated, as the toilet itself refuses, and during the UV clean. Once started, a wash or the dryer that would run at other settings is set to its defaults, as the app does. `Stop` always goes | both |
+| `Start boost wash`, `Start kid wash` | button, **untested** | As above | Purewash |
+| `Full flush`, `Eco flush` | button, **untested** | Flushes, with no seated test, as in the app | Numi |
+| `Cover`, `Seat ring` | button, **untested** | Opens or closes it; refused while someone is seated | both |
+| `Start clean`, `Stop clean`, `Extend wand`, `Retract wand` | button, **untested** | Starting a clean and extending the wand are refused while someone is seated | both |
+| `Seat heat level` | select, **untested** | Sets the seat's heat | both |
+| `Power save` | switch, **untested** | The toilet's power saving | both |
+| `Night light`, `Auto flush`, `Auto clean`; `Auto cover` (off, near, medium, far) | switch, select, **untested** | The automatic settings | Numi |
+| `Auto cover`, `Deodorizer fan`, `Bowl mist`, `Long sitting reminder`, `Auto temperature`, `Auto clean`; `Night light` (off, low, high) | switch, select, **untested** | The automatic settings | Purewash |
+| `Ambient light` | light, **untested** | On, off and brightness, with the Numi's twelve light themes as effects | Numi |
+| `Circadian light` | switch, **untested** | The ambient light follows the time of day | Numi |
+| `Front wash temperature`, `… pressure`, `… position`, `… spray pattern`, and the same for each wash | numbers and a select, **untested** | A wash's settings on the app's dials: temperature 0–5 (0 is off), pressure and position 1–5, and the spray pattern. While that wash runs they show and change it live; otherwise they are its defaults, and one never saved counts as the dial's middle, as in the app | both; boost and kid on the Purewash |
+| `Dryer temperature`, `Dryer fan speed` | number, **untested** | The dryer's, the same way. The Purewash keeps its fan speed only as a default, so that one waits until the dryer stops | both |
+| `Default seat heat` | number, **untested** | The seat heat a visit starts with, 0–5 | both |
+| `Water used today` … `this year`, `Duration used today` … `this year` | sensor | The toilet's water and use time, as the faucet's are — see [The Energy dashboard](#the-energy-dashboard) | both |
+| `Flushes today`, `Washes today`, `Dryer runs today` | sensor | Today's counts from Kohler's usage data. Flushes have `full` and `eco` attributes, washes `front` and `rear` | both |
+| `Power used today` | sensor | Diagnostic. Kohler reports it, but in a unit nobody has confirmed, so it is the bare number | both |
+
+An automatic setting is written with all the others, from a fresh read of the toilet, and is
+refused when that read brings nothing back, since writing from nothing would turn every other
+setting off. A default is saved as the app saves it: sent to the toilet, then stored two
+seconds later. Changes made together go one at a time. A Numi that reports no time zone is
+sent Home Assistant's once, as the app sends the phone's.
+
+### EvoCycle
+
+The recirculating shower. Everything is on from the start but the two ozone-clean starts;
+every control is **untested**.
+
+| Entity | Type | What it does |
+|---|---|---|
+| `Activity` | sensor | `idle`; `standard` or `cycle` while the shower runs; `rapid_clean` or `deep_clean` during an ozone clean; `cancelling` while one stops |
+| `Shower` | binary sensor | The shower is running, in either mode |
+| `Ozone clean` | binary sensor | A clean is running or stopping |
+| `Problem` | binary sensor | The EvoCycle reports a fault the Konnect app knows; `error_code` attribute |
+| `Last Rapid Clean`, `Last Deep Clean` | sensor | When each clean last finished |
+| `Water saved` | sensor | Water saved by recirculating, in your Konnect account's unit |
+| `Cloud connection` | binary sensor | Diagnostic. Whether Kohler's cloud can reach the EvoCycle |
+| `Firmware status` | update | Whether Kohler has newer firmware, checked twice a day. **Read-only** |
+| `Shower` | select, **untested** | `off`, `standard` or `cycle`: starts the shower in that mode at the mode's own temperature and flow, or stops it. Choosing the mode already running does nothing |
+| `Start Rapid Clean`, `Start Deep Clean`, `Stop clean` | button, **untested** | The ozone cleans. The two starts are off until you turn them on: nobody may be in the shower while ozone runs through it, and the app asks first, which Home Assistant's own buttons can't. Once on, a start in the panel still asks |
+| `Default shower mode`, `Default temperature`, `Standard mode max temperature`, `Cycle mode max temperature`, `Default flow`, `Warmup` | select, number, switch, **untested** | What the shower does when started without settings, written all at once. The default temperature goes no higher than the lower of the two maximums, and lowering the Standard maximum below it lowers it too, as in the app |
+| `Rapid Clean reminder`, `Deep Clean reminder`, `Filter clean reminder` | switch, **untested** | The app's cleaning reminders |
+| `Panel language`, `Panel units`, `Haptic feedback` | selects and a switch, **untested** | The shower's touchscreen: English, Español or Français; US or metric units; a buzz on touch. Written together, from a fresh read |
+| `Water savings goal`, `Water savings target` | switch and number, **untested** | The monthly goal the app shows on its dashboard, 10–100 %; the target is unavailable while the goal is off, as the app hides it. Kept on your Kohler account's record of the shower, which is read fresh before each change so a rename made in the app since isn't undone, and read again hourly for a goal changed in the app |
+| `Water used today` … `this year`, `Duration used today` … `this year` | sensor | The fresh water the shower used and how long it ran, as the app's Water Usage screen charts them |
+| `Cycled water this week`, `Fresh water this week`, `Cycled share this week` | sensor | The app's Water Savings donut: water the shower recirculated and fresh water it drew this week, and the recirculated share |
+| `Water saved this month`, `Water saved this year`, `Cycle mode share this month` | sensor | The Water Savings screen's saved-water figures, and the share of this month's showering in Cycle mode |
+
+An ozone clean is refused while the shower or another clean runs, so it never starts with
+someone in the shower. The shower is refused while a clean runs or is stopping, and a fault
+stops what it stops in the app: most stop everything, a few leave only the Standard shower,
+one only the cleans, and a controller-memory warning nothing. Settings can't change while
+anything runs. Stops always go through, after a fresh look if Home Assistant thought
+nothing ran.
+
+### Ice Bath
+
+The bath itself isn't on Kohler's cloud. What is there is the journal the Konnect app keeps —
+your routine, and the session you record after each plunge — and that is this device, one per
+journal, named as in the app. It's read every half hour. There is nothing to control, but you
+can record a session.
+
+| Entity | Type | What it does |
+|---|---|---|
+| `Last session` | sensor | When you last recorded a session |
+| `Last session duration` | sensor | How long it lasted, as recorded. The app's "10+" reads as 10 minutes, with `ten_minutes_or_more: true` |
+| `Last session temperature` | sensor | How cold, as recorded, in your Home Assistant's unit |
+| `Sessions this week` | sensor | Days with a session since Sunday, as the app counts them. `target` attribute: how many your routine asks for |
+| `Routine` | sensor | Diagnostic. Your routine's days (`Mon, Wed, Fri`) or count (`3/week`). Its `days` attribute uses the weekday keys of a time condition, so an automation can use it as one; `reminders`, `reminder_time` and `follow_ups` say how the app reminds you |
+| `Session due` | binary sensor | On when a session is still due: today is a routine day and none is recorded yet, or, for a sessions-a-week routine, the week is short of it |
+| `Missed this month` | sensor | Routine days marked missed this month, as the app's calendar marks them; today doesn't count until it's over |
+| `Sessions` | calendar | Each session from start to finish, titled with its length and temperature only, for any month you page back to |
+| `Routine reminders`, `Follow-up questions` | switch, **untested** | Configuration. The routine's two switches in the app's Settings: whether the app reminds you, and whether it asks how you felt after a session. Your answers stay in the app |
+
+To record a session from Home Assistant, use the
+[`log_ice_bath_session`](#kohler_konnectlog_ice_bath_session) action; to change the
+routine, [`set_ice_bath_routine`](#kohler_konnectset_ice_bath_routine).
+
+**What stays private.** Your notes, your answers to the app's questions, and the follow-up and
+sleep answers never reach Home Assistant: not in a state, an attribute or the diagnostics.
 
 ## Using both together
 
@@ -656,6 +915,7 @@ data:
 
   keep_on_after_warmup: true  # default false; beta, see below
   flow: 100                   # default 100; 8–100 % of full flow
+  zone2_flow: 60              # default: follows flow; shown only on a two-zone valve
 ```
 
 Every key is flat — the **Zone 1**, **Zone 2** and **Advanced** headings you see in the editor
@@ -673,7 +933,10 @@ What it does:
   outlets you wrote, so this action never sends a second command on its own.
 * **Flow** is under *Advanced* and defaults to full flow: this action states the whole
   shower, so it does not take the Flow numbers' values. Like them, it is a percent of each
-  zone's own ceiling — `0xC8` (200) on every valve seen so far. The flow you set holds only
+  zone's own ceiling — `0xC8` (200) on every valve seen so far. `zone2_flow` sets zone 2's
+  apart; left unset, it follows `flow`. Once the command is accepted, each zone's
+  [Flow](#flow) number takes the flow it sent, so the next outlet or temperature change
+  keeps it rather than jumping back to the number's old value. The flow you set holds only
   until someone presses the flow button on the touchscreen, which takes over from then on.
 * **No pausing warm-up (beta).** Keeps the shower on after the valve's warm-up is finished.
   Only matters when the valve's warm-up is enabled. On such a valve every outlet command first
@@ -752,6 +1015,59 @@ data:
 action: kohler_konnect.dispense
 data:
   preset: A Glass of Water
+```
+
+### `kohler_konnect.log_ice_bath_session`
+
+Records a session in an Ice Bath journal, as the Konnect app's **New Record** does: when it
+finished, how long it lasted and how cold it was. Ten minutes or more is recorded as the
+app's "10+". The temperature is in your Home Assistant's unit: 36–75 °F, or 2–24 °C, what
+the journal can hold. Nothing else goes with it: an empty note, as the app sends one, and no
+answers.
+
+The journal keeps one record a day, so a day that already has a session is refused rather
+than overwritten; a day only marked missed takes the session. A day before the journal
+began is refused, as the app offers none.
+
+```yaml
+action: kohler_konnect.log_ice_bath_session
+data:
+  device_id: 7c4e…   # the journal's device
+  duration: "00:03:30"
+  temperature: 39
+```
+
+### `kohler_konnect.set_ice_bath_routine`
+
+Changes an Ice Bath journal's routine, as the Konnect app's Routine screen does: the
+weekdays you plan a session (`days`), or how many sessions a week on any days
+(`sessions_per_week`, 1–7), not both; whether the app reminds you and when; and whether it
+asks follow-up questions. Give only what should change.
+
+```yaml
+action: kohler_konnect.set_ice_bath_routine
+data:
+  device_id: 7c4e…   # the journal's device
+  days: [mon, wed, fri]
+  reminder_time: "07:30"
+```
+
+### `kohler_konnect.set_fan_schedule`
+
+Sets a Smart Fan's own schedule, as the Konnect app's Fan Schedule editor does: when it
+starts and ends, whether it repeats every day, once or on chosen `days`, and at what
+`speed` (the one it has, if left out). Saving switches the schedule on, as in the app. It
+can't change while the fan runs, and start and end can't be the same time.
+
+```yaml
+action: kohler_konnect.set_fan_schedule
+data:
+  device_id: 9a1b…   # the fan's device
+  start: "19:00"
+  end: "20:00"
+  repeat: custom
+  days: [mon, tue, wed, thu, fri]
+  speed: low
 ```
 
 ## Features in detail
@@ -967,10 +1283,12 @@ Temperature and water units are read from your Konnect account, not chosen here 
 the Konnect app and they follow. That includes the faucets' dispense units: US cups, quarts
 and fl oz on a `Standard` account, millilitres and litres on a metric one.
 
-**Configure** on the integration card has two settings, each shown only on an account where
-it applies: how a two-zone valve's entities are named and grouped — see
+**Configure** on the integration card has three settings. Two are shown only on an account
+where they apply: how a two-zone valve's entities are named and grouped — see
 [Multi-zone naming](#multi-zone-naming) — and the faucets'
-[water safety limit](#water-safety-limit). Every other setting that can change after setup is
+[water safety limit](#water-safety-limit). The third, on every account, puts
+[the Kohler Konnect panel](#the-kohler-konnect-panel) in the sidebar; it is on unless you
+turn it off. Every other setting that can change after setup is
 an entity on the device page (`Warmup`, `Max Shower Duration` and — where an Anthem Plus
 controller is present — `Warmup Auto-Restore`), where automations and dashboards can reach it
 too.
@@ -983,9 +1301,10 @@ what `Shower on` would start — its outlets, temperature and flow — or why it
 raw traffic, see
 [`mqtt/capture_runbook.md`](mqtt/capture_runbook.md) for the full walkthrough.
 
-In short: turn on the **Report Log** switch on a valve or controller page to capture a
-bug-report-sized file under `custom_components/kohler_konnect/reports/` — it records every
-MQTT message on the account, faucets' included. For REST requests, set
+In short: turn on the **Report Log** switch on a valve, controller, Smart Fan, toilet or
+EvoCycle page to capture a bug-report-sized file under
+`custom_components/kohler_konnect/reports/`. It records every MQTT message on the account,
+faucets' included, and every copy of the switch controls the same capture. For REST requests, set
 `custom_components.kohler_konnect.konnect.client` to `debug` with `logger.set_level` and they
 appear in Home Assistant's own log. For a raw MQTT capture across a longer stretch, see
 [Captures and journals](#captures-and-journals). All of them redact credentials but not device
@@ -1298,6 +1617,9 @@ itself for that faucet before the last restart, and no message has come since.
   faucet by this integration.
 * **The faucet's `SET` sibling is untested.** It is handled as the app handles it, exactly
   like the Sensate.
+* **The Smart Fan, Numi 2.0, Purewash E930, EvoCycle and Ice Bath are entirely untested.**
+  Their support comes from the Konnect app's own requests. Readings may be missing or wrong,
+  and every control is marked untested until an owner confirms it.
 * **The API is undocumented** and Kohler can change it without notice.
 
 ## Tested against
@@ -1311,6 +1633,9 @@ Other models and configurations are supported on the basis of what the protocol 
 the basis of anyone having run them. If you have different hardware, reports are genuinely
 useful — particularly from a single-zone valve, or from a valve without a controller in front
 of it.
+
+**None of the other products** — Smart Fan, Numi 2.0, Purewash E930, EvoCycle, Ice Bath — has
+been run against this integration. Their support was written from the Konnect app alone.
 
 ## Documentation
 
@@ -1326,9 +1651,16 @@ each test paths that have never run outside their own source code. If you're rep
 problem, [Download diagnostics](#diagnostics) plus the Report Log are what make it
 diagnosable — check them for anything you'd rather not share before attaching them.
 
+**If you own a Smart Fan, Numi, Purewash or EvoCycle,** a Report Log of it at work turns
+*untested* into tested: turn the Report Log on, use the product from the Konnect app for a
+minute — start and stop it, change a setting — turn the log off, and open an issue with that
+file and the diagnostics. If you try one of its untested controls, say what happened. For an
+Ice Bath, the diagnostics alone help.
+
 ## Licence and trademarks
 
 MIT — see [LICENSE](../LICENSE).
 
-Kohler, Anthem, Anthem+, Sensate and Konnect are trademarks of Kohler Co. This project is not
-affiliated with, authorised by, or endorsed by Kohler Co., and is not a supported product.
+Kohler, Anthem, Anthem+, Sensate, Numi, Purewash, EvoCycle, PerfectFill and Konnect are
+trademarks of Kohler Co. This project is not affiliated with, authorised by, or endorsed by
+Kohler Co., and is not a supported product.

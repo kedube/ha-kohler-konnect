@@ -1,8 +1,9 @@
 """Service actions for Kohler Konnect.
 
-The faucets' ``dispense`` lives in `faucet/services.py` and is registered from here. The two
-valve actions write through ``solowritesystem`` and are registered only when the account has
-an Anthem valve:
+Each product's own actions live with it (a faucet's ``dispense``, in `faucet/services.py`)
+and are registered from here (`products.Product.register_services`). The two valve actions
+write through ``solowritesystem`` and are registered only when the account has an Anthem
+valve:
 
 * ``custom_shower`` — outlets, temperature and optional flow, sent as **one** complete
   command built only from the form (`konnect.valve_hex.encode_shower`). One command
@@ -42,7 +43,7 @@ from .const import (
     ZONE_TEMPERATURE_MIN_F,
 )
 from .coordinator import KohlerKonnectCoordinator, Valve
-from .faucet.services import async_register_faucet_services
+from .ice_bath.services import SERVICE_LOG_SESSION, SERVICE_SET_ROUTINE
 from .konnect.models import ValveModel
 from .konnect.valve_hex import (
     FLOW_BYTE_MAX,
@@ -53,6 +54,8 @@ from .konnect.valve_hex import (
     unit_to_celsius,
 )
 from .number import _celsius_ceiling
+from .products import PRODUCTS
+from .smart_fan.services import SERVICE_SET_FAN_SCHEDULE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,6 +67,8 @@ ATTR_ZONE2_HEX = "zone2_hex"
 ATTR_ZONE1_TEMPERATURE = "zone1_temperature"
 ATTR_ZONE2_TEMPERATURE = "zone2_temperature"
 ATTR_FLOW = "flow"
+# Zone 2's own flow; without it, zone 2 takes `flow` too.
+ATTR_ZONE2_FLOW = "zone2_flow"
 ATTR_KEEP_ON = "keep_on_after_warmup"
 # Flat call-data keys; the form's per-zone sections are display only.
 _ZONE_TEMPERATURE_FIELDS = {1: ATTR_ZONE1_TEMPERATURE, 2: ATTR_ZONE2_TEMPERATURE}
@@ -99,6 +104,9 @@ CUSTOM_SHOWER_SCHEMA = vol.Schema(
         vol.Required(ATTR_ZONE1_TEMPERATURE): vol.Coerce(float),
         vol.Optional(ATTR_ZONE2_TEMPERATURE): vol.Any(None, vol.Coerce(float)),
         vol.Optional(ATTR_FLOW): vol.All(
+            vol.Coerce(float), vol.Range(min=_FLOW_MIN_PERCENT, max=_FLOW_MAX_PERCENT)
+        ),
+        vol.Optional(ATTR_ZONE2_FLOW): vol.All(
             vol.Coerce(float), vol.Range(min=_FLOW_MIN_PERCENT, max=_FLOW_MAX_PERCENT)
         ),
         vol.Optional(ATTR_KEEP_ON, default=False): cv.boolean,
@@ -255,6 +263,15 @@ _FIELD_FLOW = {
         }
     },
 }
+_FIELD_ZONE2_FLOW = {
+    "name": "Zone 2 flow",
+    "required": False,
+    "description": (
+        "Percentage of full flow for zone 2, from 8 to 100. Leave it unset to use Flow."
+    ),
+    "example": 100,
+    "selector": _FIELD_FLOW["selector"],
+}
 _SECTION_NAMES = {
     "zone_1": "Zone 1",
     "zone_2": "Zone 2",
@@ -354,7 +371,10 @@ def _async_describe_custom_shower(
     fields["advanced_fields"] = {
         "name": _SECTION_NAMES["advanced_fields"],
         "collapsed": True,
-        "fields": {ATTR_FLOW: _FIELD_FLOW},
+        "fields": {
+            ATTR_FLOW: _FIELD_FLOW,
+            **({ATTR_ZONE2_FLOW: _FIELD_ZONE2_FLOW} if 2 in zones else {}),
+        },
     }
     try:
         async_set_service_schema(
@@ -441,7 +461,9 @@ async def _async_custom_shower(call: ServiceCall) -> ServiceResponse:
     """Handle `kohler_konnect.custom_shower`: build both words and send them as one write.
 
     Temperatures are checked against `_temperature_bounds`; zone 2's defaults to zone 1's.
-    Flow (default full) is a percent of each zone's own ceiling.
+    Flow (default full) is a percent of each zone's own ceiling; zone 2 takes `zone2_flow`
+    if given, else the same `flow`. The flows written become each zone's Flow, so the
+    next outlet or temperature change keeps them.
     """
     valve = _resolve_valve(call.hass, call.data.get(ATTR_DEVICE_ID))
     unit = valve.temperature_unit
@@ -461,22 +483,24 @@ async def _async_custom_shower(call: ServiceCall) -> ServiceResponse:
     }
     flow = call.data.get(ATTR_FLOW)
     percent = DEFAULT_FLOW_PERCENT if flow is None else float(flow)
+    zone2_flow = call.data.get(ATTR_ZONE2_FLOW)
+    percents = {1: percent, 2: percent if zone2_flow is None else float(zone2_flow)}
     temperatures = {1: unit_to_celsius(zone1, unit), 2: unit_to_celsius(zone2, unit)}
     try:
         # `encode_shower` takes one flow for both words, so zone 2's word comes from a
         # second pass at its own `Valve._wire_flow`.
         word1, word2 = encode_shower(
-            valve.model, temperatures, valve._wire_flow(1, percent), zone_flags
+            valve.model, temperatures, valve._wire_flow(1, percents[1]), zone_flags
         )
         if valve.model.uses_valve2:
             _, word2 = encode_shower(
-                valve.model, temperatures, valve._wire_flow(2, percent), zone_flags
+                valve.model, temperatures, valve._wire_flow(2, percents[2]), zone_flags
             )
     except ValveHexError as err:
         raise ServiceValidationError(str(err)) from err
     keep_on = bool(call.data.get(ATTR_KEEP_ON, False))
     result: dict[str, Any] = await valve.async_custom_shower(
-        word1, word2, keep_on_after_warmup=keep_on
+        word1, word2, keep_on_after_warmup=keep_on, flows=percents
     )
     return {**result, ATTR_KEEP_ON: keep_on}
 
@@ -486,11 +510,12 @@ def async_register_services(
 ) -> None:
     """Register the services this entry's devices can use; idempotent across entries.
 
-    `dispense` needs a faucet and the valve actions a valve, so a controller-only entry
-    registers nothing.
+    Each product registers its own (a faucet's `dispense`), and the valve actions need a
+    valve, so a controller-only entry registers nothing.
     """
-    if coordinator.faucets:
-        async_register_faucet_services(hass)
+    for product in PRODUCTS:
+        if product.register_services and coordinator.products.get(product.key):
+            product.register_services(hass)
     if not coordinator.valves:
         return
     # Every valve loaded so far, across entries (this entry's coordinator is already in
@@ -528,11 +553,15 @@ def async_register_services(
 
 def async_unregister_services(hass: HomeAssistant) -> None:
     """Remove the services when the last entry unloads; safe if never registered."""
-    # ⚠️ Must list every service `async_register_services` can register.
+    # ⚠️ Must list every service `async_register_services` can register, and every one a
+    # product registers (`Product.register_services`).
     for service in (
         SERVICE_SEND_VALVE_HEX,
         SERVICE_CUSTOM_SHOWER,
         SERVICE_DISPENSE,
+        SERVICE_LOG_SESSION,
+        SERVICE_SET_ROUTINE,
+        SERVICE_SET_FAN_SCHEDULE,
     ):
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)

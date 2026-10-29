@@ -161,6 +161,19 @@ custom_shower:
               step: 1
               unit_of_measurement: "%"
               mode: box
+        zone2_flow:
+          name: Zone 2 flow
+          required: false
+          description: >-
+            Percentage of full flow for zone 2, from 8 to 100. Leave it unset to use Flow.
+          example: 100
+          selector:
+            number:
+              min: 8
+              max: 100
+              step: 1
+              unit_of_measurement: "%"
+              mode: box
 
 # A faucet's measured dispense. Its text is translated, in `strings.json` under
 # `services.dispense`. The picker lists faucets only: valves and controllers carry their
@@ -204,3 +217,132 @@ dispense:
       example: A Glass of Water
       selector:
         text:
+
+log_ice_bath_session:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: kohler_konnect
+              model: Ice Bath
+    duration:
+      required: true
+      example: "00:03:05"
+      selector:
+        duration:
+    temperature:
+      required: true
+      example: 39
+      selector:
+        number:
+          min: 1
+          max: 75
+          step: 1
+          mode: box
+    completed:
+      required: false
+      selector:
+        datetime:
+
+set_ice_bath_routine:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: kohler_konnect
+              model: Ice Bath
+    days:
+      required: false
+      example: '["mon", "wed", "fri"]'
+      selector:
+        select:
+          translation_key: weekday
+          multiple: true
+          options:
+            - sun
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+    sessions_per_week:
+      required: false
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 7
+          step: 1
+          mode: box
+    reminders:
+      required: false
+      selector:
+        boolean:
+    reminder_time:
+      required: false
+      example: "07:30"
+      selector:
+        time:
+    follow_ups:
+      required: false
+      selector:
+        boolean:
+
+set_fan_schedule:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: kohler_konnect
+              model: Smart Fan
+    start:
+      required: true
+      example: "19:00"
+      selector:
+        time:
+    end:
+      required: true
+      example: "20:00"
+      selector:
+        time:
+    repeat:
+      required: false
+      default: everyday
+      selector:
+        select:
+          translation_key: schedule_repeat
+          options:
+            - everyday
+            - once
+            - custom
+    days:
+      required: false
+      example: '["mon", "tue", "wed", "thu", "fri"]'
+      selector:
+        select:
+          translation_key: weekday
+          multiple: true
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+    speed:
+      required: false
+      selector:
+        select:
+          translation_key: fan_speed
+          options:
+            - low
+            - medium
+            - high

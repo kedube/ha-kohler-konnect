@@ -2135,6 +2135,47 @@ async def test_custom_shower_with_no_outlets_stops_the_shower(
     assert zone2 is None
 
 
+async def test_custom_shower_flows_carry_on_into_the_next_change(
+    hass: HomeAssistant, config_entry: MockConfigEntry, kohler: ShowerKohler
+) -> None:
+    """Each zone keeps the flow the action wrote, so the next tap doesn't jump it to 100 %."""
+    kohler.valve_outlets = (3, 3)
+    await setup(hass, config_entry)
+    await solo(hass, word(0), word(0, zone=2))
+
+    await custom_shower(
+        hass,
+        zone1_temperature=104,
+        zone1_outlet_1=True,
+        zone2_outlet_1=True,
+        flow=60,
+        zone2_flow=40,
+    )
+    [(zone1, zone2)] = kohler.words()
+    assert zone2 is not None
+    assert (zone1.flow_percent, zone2.flow_percent) == (60.0, 40.0)
+
+    await solo(hass, word(0b001, flow=60), word(0b001, zone=2, flow=40))
+    outlet = ids_by_unique_id(hass, config_entry)[f"{VALVE_ID}_zone_1_outlet_2"]
+    await call(hass, SWITCH_DOMAIN, SERVICE_TURN_ON, outlet)
+    zone1, zone2 = kohler.words()[-1]
+    assert zone2 is not None
+    assert (zone1.flow_percent, zone2.flow_percent) == (60.0, 40.0)
+
+
+async def test_custom_shower_zone_2_takes_flow_when_given_none_of_its_own(
+    hass: HomeAssistant, config_entry: MockConfigEntry, kohler: ShowerKohler
+) -> None:
+    kohler.valve_outlets = (3, 3)
+    await setup(hass, config_entry)
+
+    await custom_shower(hass, zone1_temperature=104, zone2_outlet_1=True, flow=70)
+
+    [(zone1, zone2)] = kohler.words()
+    assert zone2 is not None
+    assert (zone1.flow_percent, zone2.flow_percent) == (70.0, 70.0)
+
+
 @pytest.mark.parametrize(
     ("layout", "outlet"),
     [((3, 0), "zone2_outlet_1"), ((2, 2), "zone1_outlet_3")],
@@ -2346,6 +2387,7 @@ async def test_the_action_forms_show_only_what_this_install_has(
     assert set(form(hass, "send_valve_hex")) == {"zone1_hex"}
     fields = form(hass, "custom_shower")
     assert set(fields) == {"zone_1", "keep_on_after_warmup", "advanced_fields"}
+    assert set(fields["advanced_fields"]["fields"]) == {"flow"}
     zone1 = fields["zone_1"]["fields"]
     assert set(zone1) == {
         "zone1_temperature",
@@ -2376,3 +2418,4 @@ async def test_the_action_forms_grow_with_a_second_zone_and_valve(
         "zone2_outlet_1",
         "zone2_outlet_2",
     }
+    assert set(fields["advanced_fields"]["fields"]) == {"flow", "zone2_flow"}

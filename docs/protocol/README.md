@@ -8,6 +8,12 @@ A developer reference to the cloud protocol behind the Kohler Konnect app. It co
 | [gcs_valve.md](gcs_valve.md) | Anthem digital valve (`GCS`): reads, commands, outlet types and records, presets and experiences, settings ranges, warmup, UI config, MQTT codes, bath fill |
 | [hub_controller.md](hub_controller.md) | Anthem Plus controller (`HUB`): configuration and settings, fitted-but-disconnected rules, commands, the favorite schema, MQTT codes, the local LAN API |
 | [sensate_faucet.md](sensate_faucet.md) | Sensate / Setra faucets (`SEN`/`SET`): endpoints, dispense and presets, MQTT, leaks, freeze mitigation, firmware — plus the gap list against `ha-kohler-sensate`, with what `kohler_konnect` does about each |
+| [smart_fan.md](smart_fan.md) | Smart Fan (`SFC`): state, stored defaults and favorites, the run and stop commands, the whole-document defaults write, `SFC_STS`, firmware. App-side only: not yet seen on hardware |
+| [numi_purewash.md](numi_purewash.md) | Numi 2.0 toilet (`NUM`) and Purewash E930 seat (`BLD`), one protocol: state, sprays and dryer, flush, cover, cleaning, seat heat, auto settings, the Numi's lighting, the `NUMI_*` codes, 913 and 914. App-side only |
+| [evocycle.md](evocycle.md) | EvoCycle (`EVO`): Standard and Cycle shower, Rapid and Deep ozone cleans, defaults and reminders, MQTT `data` blocks with no code, the fault table, water saved, firmware. App-side only |
+| [ice_bath.md](ice_bath.md) | Ice Bath (`IBH`): not a connected device but a journal the app keeps, of the routine and one hand-entered session a day. The routine and record reads, °F on the wire, the "10+" duration, what stays private. App-side only |
+| [perfectfill.md](perfectfill.md) | PerfectFill (believed `PFC`): nothing cloud-reachable in 3.0.6. No endpoint, command, MQTT code or screen; what the app's leftovers say it was, and why the Anthem's bath fill is no substitute |
+| [aquifer.md](aquifer.md) | Aquifer Refine (believed `AQF`): nothing cloud-reachable in 3.0.6. A firmware endpoint the app declares and never calls, unused messages, and a SKU kept only in a legacy-Android list |
 | [../gcs/valve_hex.md](../gcs/valve_hex.md) | The valve's command word, byte by byte |
 
 ## Where it comes from

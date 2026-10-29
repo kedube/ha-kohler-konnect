@@ -452,6 +452,11 @@ async def test_the_downloaded_config_entry_report_carries_no_identity(
         "controller_present": True,
         "controller_count": 1,
         "faucet_count": 2,
+        # Every supported product is counted, those the account has none of too.
+        "smart_fan_count": 0,
+        "toilet_count": 0,
+        "evocycle_count": 0,
+        "ice_bath_count": 0,
     }
 
 

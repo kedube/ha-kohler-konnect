@@ -34,6 +34,19 @@ from .konnect.usage import is_metric, usage_series, usage_volume_gallons
 _MONTH_KEY = re.compile(r"\d{4}-\d{2}")
 
 
+def published(raw: float, figure: str, metric: bool) -> float:
+    """A wire figure as the usage sensors publish it, to one decimal.
+
+    ``figure`` `volume` is litres, shown in the account's unit; `onDuration` is seconds,
+    shown in minutes. Shared with the sidebar panel, so its totals read as the sensors do.
+    """
+    if figure == "volume":
+        value = raw if metric else usage_volume_gallons(raw)
+    else:
+        value = raw / 60
+    return round(value, 1)
+
+
 def _usage_bucket_date(interval: object) -> date | None:
     """Return the calendar date from a usage interval key."""
     if not isinstance(interval, str):
@@ -54,6 +67,18 @@ def _finite(value: Any) -> float | None:
         return None
     number = float(value)
     return number if math.isfinite(number) else None
+
+
+def _switch_ons(entry: dict[str, Any]) -> int | None:
+    """How many times a valve bucket's water was turned on, or None if it doesn't say.
+
+    Sent as a number or a digit string. Finite first: `int()` of a JSON `NaN` raises.
+    """
+    count = entry.get("numberOfTimesValveSwitchedOn")
+    if isinstance(count, str) and count.isdigit():
+        return int(count)
+    number = _finite(count)
+    return None if number is None else int(number)
 
 
 def _month_totals(
@@ -210,13 +235,8 @@ class WaterUsage(SensorEntity):
         return UnitOfVolume.LITERS if self._metric else UnitOfVolume.GALLONS
 
     def _published(self, raw: float) -> float:
-        """A wire figure as published, to one decimal: litres in the account's unit, or
-        seconds in minutes."""
-        if self._figure == "volume":
-            value = raw if self._metric else usage_volume_gallons(raw)
-        else:
-            value = raw / 60
-        return round(value, 1)
+        """A wire figure as published; see `published`."""
+        return published(raw, self._figure, self._metric)
 
     def _figure_value(self, entry: dict[str, Any]) -> float | None:
         """One entry's figure as this sensor publishes it, or None if it is not a number."""
@@ -512,15 +532,9 @@ class DailyWaterUsage(WaterUsage, RestoreEntity):
             if value is None:
                 continue
             figures[bucket] = figures.get(bucket, 0.0) + value
-            count = entry.get("numberOfTimesValveSwitchedOn")
-            # Finite first: `int()` of a JSON `NaN` raises.
-            starts_that_day = (
-                int(count)
-                if isinstance(count, str) and count.isdigit()
-                else _finite(count)
-            )
+            starts_that_day = _switch_ons(entry)
             if starts_that_day is not None:
-                starts[bucket] = starts.get(bucket, 0) + int(starts_that_day)
+                starts[bucket] = starts.get(bucket, 0) + starts_that_day
 
         # Some accounts appear to label daily buckets by UTC date, which in US evenings puts
         # local "today" under tomorrow's date. So when today's own bucket is empty, today

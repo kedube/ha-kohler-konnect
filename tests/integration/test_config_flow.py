@@ -16,6 +16,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.kohler_konnect.const import (
     CONF_MAX_RUN_MINUTES,
     CONF_REFRESH_TOKEN,
+    CONF_SIDEBAR_PANEL,
     CONF_TENANT_ID,
     CONF_VALVE_MODEL,
     CONF_WATER_UNITS,
@@ -161,13 +162,17 @@ async def test_options_for_a_faucet_only_account(
     result = await hass.config_entries.options.async_init(setup_entry.entry_id)
     assert result["type"] is FlowResultType.FORM
     # Only what applies: no zone grouping without a valve or controller.
-    assert [str(key) for key in result["data_schema"].schema] == [CONF_MAX_RUN_MINUTES]
+    assert [str(key) for key in result["data_schema"].schema] == [
+        CONF_MAX_RUN_MINUTES,
+        CONF_SIDEBAR_PANEL,
+    ]
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_MAX_RUN_MINUTES: 15.0}
     )
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert setup_entry.options == {CONF_MAX_RUN_MINUTES: 15}
+    # The panel defaults to on.
+    assert setup_entry.options == {CONF_MAX_RUN_MINUTES: 15, CONF_SIDEBAR_PANEL: True}
 
 
 async def test_options_for_a_mixed_account(
@@ -179,4 +184,5 @@ async def test_options_for_a_mixed_account(
     assert [str(key) for key in result["data_schema"].schema] == [
         CONF_ZONE_GROUPING,
         CONF_MAX_RUN_MINUTES,
+        CONF_SIDEBAR_PANEL,
     ]

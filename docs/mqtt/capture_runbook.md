@@ -16,8 +16,10 @@ than a K-28212.
 ## The Report Log switch
 
 The quickest way to capture live MQTT traffic for a bug report. A **Report Log** switch sits
-on the valve and controller device pages, in the diagnostic section. It records every message
-on the account, faucets' included, so a faucet-only problem is captured from there too:
+in the diagnostic section of every Anthem valve, Anthem+ controller, Smart Fan, toilet and
+EvoCycle device page. Every copy switches the same capture, which records every message on the
+account, faucets' included, so a faucet problem is captured from any of them. A faucet-only
+account has no Report Log yet:
 
 * **Switch on** → a new capture file starts, recording every raw MQTT message as received,
   before any decoding.
@@ -54,7 +56,8 @@ system unlike the reference install.
 
 **Credentials are redacted** before anything is written: the mobile-settings call returns a
 short-lived IoT Hub password, and any key or value that looks like a password, token, key or
-secret is replaced.
+secret is replaced. So are an Ice Bath journal's health notes: each session's note, answers,
+follow-up and sleep quality.
 
 Everything else is logged in full — including device ids and serial numbers, which the
 diagnostics report redacts but a raw debug log does not. **Skim a log before attaching it to

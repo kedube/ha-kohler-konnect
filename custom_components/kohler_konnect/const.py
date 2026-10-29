@@ -57,6 +57,11 @@ ZONE_GROUPING_MODES: tuple[str, ...] = (
 )
 DEFAULT_ZONE_GROUPING = ZONE_GROUPING_NUMBERED
 
+# Whether the Kohler Konnect panel shows in Home Assistant's sidebar. The sidebar applies it
+# as soon as it changes (`sidebar.async_sync_sidebar`), so it is reload-ignored.
+CONF_SIDEBAR_PANEL = "sidebar_panel"
+DEFAULT_SIDEBAR_PANEL = True
+
 # ---------------------------------------------------------------------------
 # Polling — none for showers
 # ---------------------------------------------------------------------------
@@ -198,6 +203,9 @@ RELOAD_IGNORED_DATA_KEYS = frozenset({CONF_REFRESH_TOKEN, CONF_MOBILE_DEVICE_ID}
 # Naming a code renames its switch at the next setup. The unique id is the outlet's
 # position, so it stays the same entity with its original entity id; see
 # `entity.outlet_unique_id`.
+#: The fixture code of a tub filler, which a bath-fill preset runs (`gcs_valve.md` §8).
+OUTLET_TYPE_TUB_FILLER = 21
+
 OUTLET_TYPE_NAMES: dict[int, str] = {
     1: "Handshower",
     11: "Showerhead",
@@ -342,11 +350,14 @@ CONF_LAST_WARMUP_MODE = "last_warmup_mode"
 CONF_WARMUP_RESTORE_PENDING = "warmup_restore_pending"
 
 
-# Options the coordinator reads live from `entry.options` on every access, so saving one
-# needs no reload. Anything not listed reloads, so a new option is safe by default; add one
-# here only once it is known to be read live. `CONF_VALVES` covers the per-valve switch,
-# remembered mode and pending restore, all written while running.
-RELOAD_IGNORED_OPTION_KEYS = frozenset({CONF_REPORT_LOG_FILE, CONF_VALVES})
+# Options read live from `entry.options` on every access, so saving one needs no reload.
+# Anything not listed reloads, so a new option is safe by default; add one here only once
+# it is known to be read live. `CONF_VALVES` covers the per-valve switch, remembered mode
+# and pending restore, all written while running; `CONF_SIDEBAR_PANEL` is applied by the
+# sidebar itself.
+RELOAD_IGNORED_OPTION_KEYS = frozenset(
+    {CONF_REPORT_LOG_FILE, CONF_VALVES, CONF_SIDEBAR_PANEL}
+)
 
 # Long enough for the config re-sync burst around a disable to finish; a restore written
 # into it would be overwritten again.
