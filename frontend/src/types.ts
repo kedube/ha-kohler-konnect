@@ -100,6 +100,8 @@ export interface DeviceDescriptor {
   disabled_roles: Record<string, string>;
   /** Roles whose control has not been confirmed on real hardware. */
   untested: string[];
+  /** Whether one of those is a main control rather than a setting, so the device itself is untested. */
+  untested_device: boolean;
   quick_amounts?: QuickAmount[];
 }
 

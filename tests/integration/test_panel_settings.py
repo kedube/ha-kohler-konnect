@@ -22,6 +22,7 @@ from custom_components.kohler_konnect.const import DOMAIN
 from custom_components.kohler_konnect.diagnostics import (
     async_get_config_entry_diagnostics,
 )
+from custom_components.kohler_konnect.sidebar.roles import resolve_roles
 
 from .conftest import TENANT_ID, USERNAME, panel_record, unload
 from .test_coordinator import (
@@ -66,11 +67,14 @@ async def test_the_touch_panels_read_and_are_written_as_the_control_panel_writes
     assert hass.states.get("select.anthem_valve_panel_units").state == "us"
     assert hass.states.get("select.anthem_valve_wake_screen").state == "outlets"
     haptics = hass.states.get("switch.anthem_valve_haptic_feedback")
-    assert (haptics.state, haptics.attributes["untested"]) == ("on", True)
+    assert (haptics.state, "untested" in haptics.attributes) == ("on", False)
     assert hass.states.get("switch.anthem_valve_accessible_display").state == "off"
     assert hass.states.get("number.anthem_valve_display_brightness").state == "5"
     # Set at setup, and never changed by the app: a reading.
     assert hass.states.get("binary_sensor.anthem_valve_water_saving_mode").state == "on"
+    # Flow Control is unconfirmed, but it's a setting: the valve itself isn't untested.
+    roles = resolve_roles(hass, shower_entry.entry_id, "valve", LEFT)
+    assert (roles.untested, roles.untested_device) == (["flow_control"], False)
 
     reads = kohler.reads(f"/gcsadvancestate/{LEFT}")
     await hass.services.async_call(

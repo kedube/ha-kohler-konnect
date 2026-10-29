@@ -55,7 +55,7 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
   language, units, wake screen, display brightness, haptic feedback and accessible display,
   plus Flow Control (off by default). Each change goes to every touch panel at once, from a
   fresh read, and only when the panels' records read as the app expects. Water-saving mode is
-  shown, not changed, as in the app. Untested on a valve so far.
+  shown, not changed, as in the app. Flow Control is still untested.
 - **Bath-fill presets on an Anthem valve with a tub filler:** the Favorite select lists their
   fill amounts, and a Bath Filling sensor shows one running.
 - **`zone2_flow` on `custom_shower`,** to give zone 2 its own flow. Left unset, it follows

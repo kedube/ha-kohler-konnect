@@ -96,6 +96,7 @@ def _base(
         "roles": roles.enabled,
         "disabled_roles": roles.disabled,
         "untested": roles.untested,
+        "untested_device": roles.untested_device,
     }
 
 

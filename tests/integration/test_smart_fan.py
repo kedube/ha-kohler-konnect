@@ -392,6 +392,7 @@ async def test_the_panel_lists_the_fan_and_its_untested_controls(
     )
     assert fan["roles"]["fan_state"] == "sensor.primary_bath_fan"
     assert {"fan", "light", "stop_all", "default_fan_speed"} <= set(fan["untested"])
+    assert fan["untested_device"] is True
     assert FAN_ID not in json.dumps(event)
 
 

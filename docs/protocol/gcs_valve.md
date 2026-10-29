@@ -238,7 +238,7 @@ The old control screens also have **Flow Control** (`ic0/p.java`), bit 2 (`0x04`
 
 Save is refused while any outlet is open ("Settings cannot be saved while any outlet is running."), and enabled only when something differs from the first record. Switching Accessible Display on asks first. Nothing is re-read afterwards.
 
-⚠️ **Why a careless write is dangerous.** A switch read in any form but `Enabled`/`Disabled` is written as `0`, which for `waterSavingMode` silently turns off a regulatory low-flow mode. A `defaultMemory` written as anything but `1` sends the owner back through setup. And a stale record undoes changes made at the panel since. None of the record shapes above has been captured live.
+⚠️ **Why a careless write is dangerous.** A switch read in any form but `Enabled`/`Disabled` is written as `0`, which for `waterSavingMode` silently turns off a regulatory low-flow mode. A `defaultMemory` written as anything but `1` sends the owner back through setup. And a stale record undoes changes made at the panel since. The record shapes above are the app's; on 2026-10-29 an owner changed the language, units, wake screen, brightness, haptic feedback and accessible display from Home Assistant on an Anthem valve and the panel followed, so the records read and are written as described. Flow Control's `notification` bit has not been tried.
 
 ## 7. MQTT messages
 
@@ -306,6 +306,6 @@ OTA records (`otaReportedProperties`, `firmwareUpdate`) carry `firmwareType`: `A
 | Firmware update entities (read-only) | ✅ |
 | Fault: error flag plus `currentSystemState == error`, and the fault log's active entries (read at setup, on each reconnect and twice a day); the whole log in diagnostics | ✅ |
 | Connection state (`Disconnected`) | ✅ |
-| Touch-panel settings (§6): Panel Language, Panel Units, Wake Screen, Display Brightness, Haptic Feedback, Accessible Display, and Flow Control (off by default, as the new app hides it), written as the Control Panel writes them: every record, whole, from a fresh read; refused while water runs, and when a record reads in a form the app doesn't expect or isn't set up. Water-saving mode is a reading | ✅ app-confirmed only, untested |
+| Touch-panel settings (§6): Panel Language, Panel Units, Wake Screen, Display Brightness, Haptic Feedback, Accessible Display, and Flow Control (off by default, as the new app hides it), written as the Control Panel writes them: every record, whole, from a fresh read; refused while water runs, and when a record reads in a form the app doesn't expect or isn't set up. Water-saving mode is a reading | ✅ live-verified on an Anthem valve (2026-10-29), except Flow Control: app-confirmed only, untested |
 | Bath fill (§8): a preset's fill amount (`bath_fill_litres` on the Favorite select), and Bath Filling while one runs, on a valve with a tub filler. Started like any preset | ✅ app-confirmed only |
 | Creating bath-fill presets (§8's calibration), experience management, factory reset | ❌ documented only |

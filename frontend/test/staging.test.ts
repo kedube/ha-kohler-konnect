@@ -26,6 +26,7 @@ const device = (zones: number[]): DeviceDescriptor => ({
   roles: { "temperature:1": "number.t1", "temperature:2": "number.t2" },
   disabled_roles: {},
   untested: [],
+  untested_device: false,
 });
 
 const fahrenheit = { unit_of_measurement: "°F" };

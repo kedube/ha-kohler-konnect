@@ -81,7 +81,7 @@ unless you turn it off in **Configure**;
   valve as a single command, the reliable way to drive it from an automation.
 * **Raw escape hatch** — a `send_valve_hex` action for anything the normal controls can't do.
 * **The touchscreen's settings** — language, units, wake screen, brightness and the rest of the
-  app's Control Panel, written to every panel as the app writes them (untested so far).
+  app's Control Panel, written to every panel as the app writes them.
 
 **Faucets**
 

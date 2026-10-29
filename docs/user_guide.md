@@ -446,7 +446,8 @@ current app; only an out-of-date one would quietly undo it.
 Configuration entities for the touch panels' settings, as the Konnect app's Settings → Control
 Panel has them: `Panel Language`, `Panel Units`, `Wake Screen`, `Display Brightness` (1–10),
 `Haptic Feedback` and `Accessible Display`, and `Flow Control`, which the app's current screens
-hide, so it starts off. Each is **untested**: nobody has yet seen one written on a valve.
+hide, so it starts off. Each has been seen to work on an Anthem valve except `Flow Control`,
+which is still **untested**: the panel tags its row, not the valve.
 
 The app writes every panel's settings at once, whole, from what it read when the screen opened;
 this does the same, from a read made just before. Two safeguards go further than the app:

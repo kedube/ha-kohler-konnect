@@ -224,6 +224,7 @@ function buildValve(spec: ValveSpec, states: Record<string, HassEntity>): SimVal
     roles,
     disabled_roles: { restart: `button.${slug}_restart`, hex: `sensor.${slug}_hex` },
     untested: [],
+    untested_device: false,
   };
   return {
     kind: "valve",
@@ -298,6 +299,7 @@ function buildFaucet(
       roles,
       disabled_roles: {},
       untested: [],
+      untested_device: false,
       quick_amounts: spec.metric ? METRIC_QUICK : US_QUICK,
     },
   };
@@ -349,6 +351,7 @@ function buildController(
       roles,
       disabled_roles: {},
       untested: [],
+      untested_device: false,
     },
   };
 }
@@ -407,6 +410,8 @@ function buildSmartFan(
       roles,
       disabled_roles: {},
       untested: Object.keys(roles).filter((role) => states[roles[role]].attributes.untested),
+      // The fan and light themselves are among them.
+      untested_device: true,
     },
   };
 }
@@ -457,6 +462,8 @@ function buildProduct(
       roles,
       disabled_roles: disabled,
       untested,
+      // Its untested controls are main ones: the sprays, the shower, the cleans.
+      untested_device: untested.length > 0,
     },
   };
 }

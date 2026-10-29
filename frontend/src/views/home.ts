@@ -262,7 +262,8 @@ export class KkpHome extends LitElement {
 
   private renderTile(device: DeviceDescriptor) {
     const status = deviceStatus(this.hass, device);
-    const untested = device.untested.length > 0;
+    // An untested setting is tagged on its own row; the tile only when a main control is.
+    const untested = device.untested_device;
     // Named by the device alone, with its status as the description: a name that changed
     // with every temperature report would be read out again while the tile has focus.
     return html`<button
@@ -313,7 +314,6 @@ export class KkpHome extends LitElement {
   }
 
   override render() {
-    const name = this.hass.user?.name?.split(" ")[0];
     const tabs = [
       { key: "devices", label: t("nav.devices") },
       { key: "usage", label: t("nav.usage") },
@@ -333,7 +333,7 @@ export class KkpHome extends LitElement {
               </button>`
             : nothing}
           <div>
-            <h1 tabindex="-1">${name ? t("home.welcome", { name }) : t("home.welcome_anonymous")}</h1>
+            <h1 tabindex="-1">Kohler Konnect</h1>
             <div class="summary">${this.renderSummary()}</div>
           </div>
         </div>

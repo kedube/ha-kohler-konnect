@@ -2,9 +2,9 @@
 (`docs/protocol/gcs_valve.md` §6).
 
 Each control changes every panel at once, from a fresh read, as the app's Save does
-(`Valve.async_write_ui_config`); all are untested, since no write has been seen on a valve.
-Flow Control, which the app's current screens hide, starts off. Water-saving mode is a
-reading: the app never changes it.
+(`Valve.async_write_ui_config`). Flow Control, which the app's current screens hide, starts off
+and is still untested: it changes a bit of `notification`, which no other control writes.
+Water-saving mode is a reading: the app never changes it.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ class _PanelEntity(KohlerValveEntity):
         return super().available and bool(self._valve.gcs_state.ui_config)
 
 
-class PanelLanguageSelect(UntestedControl, _PanelEntity, SelectEntity):
+class PanelLanguageSelect(_PanelEntity, SelectEntity):
     """ "Panel Language": a language with the region it is written with."""
 
     def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
@@ -85,7 +85,7 @@ class PanelLanguageSelect(UntestedControl, _PanelEntity, SelectEntity):
         )
 
 
-class PanelUnitsSelect(UntestedControl, _PanelEntity, SelectEntity):
+class PanelUnitsSelect(_PanelEntity, SelectEntity):
     """ "Panel Units": temperature and flow units together."""
 
     def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
@@ -103,7 +103,7 @@ class PanelUnitsSelect(UntestedControl, _PanelEntity, SelectEntity):
         )
 
 
-class WakeScreenSelect(UntestedControl, _PanelEntity, SelectEntity):
+class WakeScreenSelect(_PanelEntity, SelectEntity):
     """ "Wake Screen": what a panel shows when it wakes."""
 
     def __init__(self, coordinator: KohlerKonnectCoordinator, valve: Valve) -> None:
@@ -121,7 +121,7 @@ class WakeScreenSelect(UntestedControl, _PanelEntity, SelectEntity):
         )
 
 
-class PanelSwitch(UntestedControl, _PanelEntity, SwitchEntity):
+class PanelSwitch(_PanelEntity, SwitchEntity):
     """ "Haptic Feedback" or "Accessible Display"."""
 
     def __init__(
@@ -166,7 +166,7 @@ class FlowControlSwitch(UntestedControl, _PanelEntity, SwitchEntity):
         await self._valve.async_write_ui_config({}, flow_control_on=False)
 
 
-class PanelBrightnessNumber(UntestedControl, _PanelEntity, NumberEntity):
+class PanelBrightnessNumber(_PanelEntity, NumberEntity):
     """ "Display Brightness", 1 to 10 as the app's slider sets it."""
 
     _attr_mode = NumberMode.SLIDER

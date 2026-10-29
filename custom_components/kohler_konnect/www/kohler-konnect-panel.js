@@ -1018,9 +1018,7 @@ var Je = {
 	"nav.devices": "Geräte",
 	"nav.usage": "Verbrauch",
 	"nav.account": "Konto",
-	"home.welcome": "Willkommen, {name}",
-	"home.welcome_anonymous": "Willkommen",
-	"home.help": "Brauchst du Hilfe?",
+	"home.help": "Hilfe",
 	"home.summary_quiet": "Alles ruhig",
 	"home.summary_running": "Aktiv: {count}",
 	"home.summary_alert": "Bitte prüfen: {count}",
@@ -1281,9 +1279,7 @@ var Je = {
 	"nav.devices": "Devices",
 	"nav.usage": "Usage",
 	"nav.account": "Account",
-	"home.welcome": "Welcome, {name}",
-	"home.welcome_anonymous": "Welcome",
-	"home.help": "Need help?",
+	"home.help": "Help",
 	"home.summary_quiet": "All quiet",
 	"home.summary_running": "{count} running",
 	"home.summary_alert": "Needs attention: {count}",
@@ -1544,9 +1540,7 @@ var Je = {
 	"nav.devices": "Dispositivos",
 	"nav.usage": "Consumo",
 	"nav.account": "Cuenta",
-	"home.welcome": "Hola, {name}",
-	"home.welcome_anonymous": "Hola",
-	"home.help": "¿Necesitas ayuda?",
+	"home.help": "Ayuda",
 	"home.summary_quiet": "Todo tranquilo",
 	"home.summary_running": "En marcha: {count}",
 	"home.summary_alert": "Requiere atención: {count}",
@@ -1807,9 +1801,7 @@ var Je = {
 	"nav.devices": "Dispositivos",
 	"nav.usage": "Consumo",
 	"nav.account": "Cuenta",
-	"home.welcome": "Hola, {name}",
-	"home.welcome_anonymous": "Hola",
-	"home.help": "¿Necesitas ayuda?",
+	"home.help": "Ayuda",
 	"home.summary_quiet": "Todo en calma",
 	"home.summary_running": "En marcha: {count}",
 	"home.summary_alert": "Requiere atención: {count}",
@@ -2070,9 +2062,7 @@ var Je = {
 	"nav.devices": "Appareils",
 	"nav.usage": "Consommation",
 	"nav.account": "Compte",
-	"home.welcome": "Bienvenue, {name}",
-	"home.welcome_anonymous": "Bienvenue",
-	"home.help": "Besoin d'aide ?",
+	"home.help": "Aide",
 	"home.summary_quiet": "Tout est calme",
 	"home.summary_running": "En marche : {count}",
 	"home.summary_alert": "Attention requise : {count}",
@@ -2333,9 +2323,7 @@ var Je = {
 	"nav.devices": "Dispositivi",
 	"nav.usage": "Consumi",
 	"nav.account": "Account",
-	"home.welcome": "Ciao, {name}",
-	"home.welcome_anonymous": "Ciao",
-	"home.help": "Serve aiuto?",
+	"home.help": "Aiuto",
 	"home.summary_quiet": "Tutto tranquillo",
 	"home.summary_running": "In funzione: {count}",
 	"home.summary_alert": "Da controllare: {count}",
@@ -2596,9 +2584,7 @@ var Je = {
 	"nav.devices": "Apparaten",
 	"nav.usage": "Verbruik",
 	"nav.account": "Account",
-	"home.welcome": "Welkom, {name}",
-	"home.welcome_anonymous": "Welkom",
-	"home.help": "Hulp nodig?",
+	"home.help": "Help",
 	"home.summary_quiet": "Alles rustig",
 	"home.summary_running": "Actief: {count}",
 	"home.summary_alert": "Aandacht nodig: {count}",
@@ -2859,9 +2845,7 @@ var Je = {
 	"nav.devices": "Urządzenia",
 	"nav.usage": "Zużycie",
 	"nav.account": "Konto",
-	"home.welcome": "Witaj, {name}",
-	"home.welcome_anonymous": "Witaj",
-	"home.help": "Potrzebujesz pomocy?",
+	"home.help": "Pomoc",
 	"home.summary_quiet": "Wszystko spokojnie",
 	"home.summary_running": "Aktywne: {count}",
 	"home.summary_alert": "Wymagające uwagi: {count}",
@@ -3122,9 +3106,7 @@ var Je = {
 	"nav.devices": "Dispositivos",
 	"nav.usage": "Consumo",
 	"nav.account": "Conta",
-	"home.welcome": "Olá, {name}",
-	"home.welcome_anonymous": "Olá",
-	"home.help": "Precisa de ajuda?",
+	"home.help": "Ajuda",
 	"home.summary_quiet": "Tudo tranquilo",
 	"home.summary_running": "Em funcionamento: {count}",
 	"home.summary_alert": "Precisa de atenção: {count}",
@@ -3396,9 +3378,7 @@ var Je = {
 		"nav.devices": "Enheter",
 		"nav.usage": "Förbrukning",
 		"nav.account": "Konto",
-		"home.welcome": "Välkommen, {name}",
-		"home.welcome_anonymous": "Välkommen",
-		"home.help": "Behöver du hjälp?",
+		"home.help": "Hjälp",
 		"home.summary_quiet": "Allt lugnt",
 		"home.summary_running": "Igång: {count}",
 		"home.summary_alert": "Kräver åtgärd: {count}",
@@ -7360,7 +7340,7 @@ j("kkp-home", class extends E {
 		this.ctx.navigate(`/d/${e.id}`);
 	}
 	renderTile(e) {
-		let t = jt(this.hass, e), n = e.untested.length > 0;
+		let t = jt(this.hass, e), n = e.untested_device;
 		return b`<button
       class="tile ${t.running ? "running" : ""}"
       aria-label=${n ? `${e.name}, ${P("status.untested")}` : e.name}
@@ -7396,7 +7376,7 @@ j("kkp-home", class extends E {
 		return n ? b`<span class="warn">${P("home.summary_alert", { count: n })}</span>` : t ? b`<span class="live">${P("home.summary_running", { count: t })}</span>` : b`${P("home.summary_quiet")}`;
 	}
 	render() {
-		let e = this.hass.user?.name?.split(" ")[0], t = [
+		let e = [
 			{
 				key: "devices",
 				label: P("nav.devices")
@@ -7424,7 +7404,7 @@ j("kkp-home", class extends E {
                 ${O("menu")}
               </button>` : C}
           <div>
-            <h1 tabindex="-1">${e ? P("home.welcome", { name: e }) : P("home.welcome_anonymous")}</h1>
+            <h1 tabindex="-1">Kohler Konnect</h1>
             <div class="summary">${this.renderSummary()}</div>
           </div>
         </div>
@@ -7433,11 +7413,11 @@ j("kkp-home", class extends E {
         </a>
       </div>
       <kkp-tabs
-        .items=${t}
+        .items=${e}
         .active=${this.tab}
         @kkp-select=${(e) => this.ctx.navigate(e.detail === "devices" ? "/" : `/${e.detail}`)}
       ></kkp-tabs>
-      <div class="tab-body" role="tabpanel" aria-label=${t.find((e) => e.key === this.tab)?.label ?? ""}>
+      <div class="tab-body" role="tabpanel" aria-label=${e.find((e) => e.key === this.tab)?.label ?? ""}>
         ${this.tab === "usage" ? b`<kkp-home-usage .hass=${this.hass} .data=${this.data} .ctx=${this.ctx}></kkp-home-usage>` : this.tab === "account" ? b`<kkp-account .hass=${this.hass} .data=${this.data} .ctx=${this.ctx}></kkp-account>` : this.renderDevices()}
       </div>
     `;

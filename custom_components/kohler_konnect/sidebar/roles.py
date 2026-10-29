@@ -159,6 +159,9 @@ class Roles:
         self.disabled: dict[str, str] = {}
         #: Roles of controls not yet seen to work on hardware (`UntestedControl`), on or off.
         self.untested: list[str] = []
+        #: Whether one of those is a main control rather than a setting: then the device
+        #: itself is untested, not just a setting of it.
+        self.untested_device = False
 
 
 def resolve_roles(
@@ -180,4 +183,6 @@ def resolve_roles(
         target[role] = entity.entity_id
         if (entity.capabilities or {}).get("untested"):
             roles.untested.append(role)
+            if entity.entity_category is None:
+                roles.untested_device = True
     return roles

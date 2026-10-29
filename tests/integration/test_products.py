@@ -367,7 +367,8 @@ async def test_the_panel_knows_an_untested_control_an_owner_turned_off(
     descriptor = next(d for d in event["devices"] if d["kind"] == "toy")
     assert descriptor["roles"] == {"level": "sensor.playroom_level", "report_log": LOG}
     assert descriptor["disabled_roles"] == {"power": POWER}
-    assert descriptor["untested"] == ["power"]
+    # A main control, so the device itself is untested, though turned off.
+    assert (descriptor["untested"], descriptor["untested_device"]) == (["power"], True)
 
 
 async def test_the_panel_shows_it_in_the_generic_view(
