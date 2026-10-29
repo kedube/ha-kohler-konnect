@@ -11,6 +11,8 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+## 2.00 — 2026-10-29
+
 **Added**
 
 - **The Kohler Konnect panel,** a page in Home Assistant's sidebar laid out like the Konnect
