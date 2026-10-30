@@ -18,6 +18,7 @@ from homeassistant.helpers import device_registry as dr
 from ..const import DOMAIN
 from ..konnect.valve_hex import ValveHexError, decode_word
 from ..number import _whole_degrees, zone_temperature_range
+from ..registry import device_entry_ids
 from .roles import resolve_roles
 
 if TYPE_CHECKING:
@@ -47,7 +48,7 @@ def find_device(hass: HomeAssistant, ha_id: str) -> DeviceRef | None:
         return None
     kohler_ids = {ident for domain, ident in device.identifiers if domain == DOMAIN}
     coordinators = hass.data.get(DOMAIN, {})
-    for entry_id in device.config_entries:
+    for entry_id in device_entry_ids(device):
         coordinator = coordinators.get(entry_id)
         if coordinator is None:
             continue

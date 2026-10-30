@@ -7,10 +7,17 @@
     "panel_custom",
     "websocket_api"
   ],
+  "categories": [
+    "water",
+    "climate.fans_ventilation"
+  ],
   "codeowners": [
     "@kedube"
   ],
   "config_flow": true,
+  "connectivity": [
+    "cloud"
+  ],
   "documentation": "https://github.com/kedube/ha-kohler-konnect",
   "integration_type": "hub",
   "iot_class": "cloud_push",

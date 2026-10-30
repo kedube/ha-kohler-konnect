@@ -145,9 +145,18 @@ The only Python dependency is `paho-mqtt`, installed automatically.
 
 ## Install
 
-This integration is **not in HACS's default store.** Add it as a custom repository.
+This integration is **not in the default catalog.** Add it as a custom repository.
 
-**Via HACS**
+**Via the Marketplace (Home Assistant 2026.11 and later)**
+
+From 2026.11, HACS is built into Home Assistant as the Marketplace. An install made through
+HACS carries over and keeps getting updates, so there is nothing to redo. To add it fresh:
+
+1. Open **Settings → Marketplace** and choose **Add from link**
+2. Enter `kedube/ha-kohler-konnect` (or the full GitHub URL) and choose **Add**
+3. Install **Kohler Konnect**, and restart Home Assistant if a repair asks you to
+
+**Via HACS (Home Assistant 2026.10 and earlier)**
 
 [![Open this repository in HACS on your Home Assistant](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=kedube&repository=ha-kohler-konnect&category=integration)
 
@@ -160,7 +169,7 @@ your browser. Otherwise, add it by hand:
 3. Find **Kohler Konnect** in HACS and install it
 4. Restart Home Assistant
 
-HACS installs from **releases**, not from the latest commit.
+Both install from **releases**, not from the latest commit.
 
 **Manually**
 
@@ -193,7 +202,7 @@ removed, a card in **Settings → Repairs** says which are still there.
 1. **Note what refers to the old entities** — automations, scripts, dashboards, the Energy
    dashboard.
 2. **Delete the old entries** in **Settings → Devices & services**, then remove the old
-   integrations in HACS and restart.
+   integrations in the Marketplace (HACS before 2026.11) and restart.
 3. **Install Kohler Konnect and add your account** as above.
 
 Deleting the old entries first matters: entity ids come from the device and entity names, so
@@ -282,9 +291,9 @@ untested controls from Home Assistant, say what happened. An Ice Bath owner can 
 diagnostics alone.
 
 **Want to try a release before it's out?** Betas are published as GitHub pre-releases. In
-**Settings → Devices & services → HACS**, open **Kohler Konnect**, turn on its **Pre-release**
-switch (enable the entity first), and HACS offers the newest beta as an update. Turn it off to
-go back to stable releases as they come.
+**Settings → Devices & services → Marketplace** (**HACS** before 2026.11), open **Kohler
+Konnect**, turn on its **Pre-release** switch (enable the entity first), and the newest beta is
+offered as an update. Turn it off to go back to stable releases as they come.
 
 ## Known limitations
 

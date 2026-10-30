@@ -11,6 +11,22 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Changed**
+
+- **Ready for Home Assistant 2026.11.** The integration already ran on it; this removes its
+  last reliance on what 2026.11 keeps only for compatibility, now that a device's details
+  are a dataclass rather than a dictionary. The install instructions now cover the
+  Marketplace, which replaces HACS from 2026.11; an install made through HACS carries over
+  by itself.
+- **Integration categories,** which the Marketplace browses by: Water first, then Fans &
+  ventilation for the Smart Fan. The manifest also says how the integration reaches its
+  devices: through Kohler's cloud.
+
+**Fixed**
+
+- Opening a device in the panel no longer logs a warning asking for a bug report about
+  `DeviceEntry.config_entries`, on Home Assistant 2026.10 and later.
+
 ## 2.00 — 2026-10-29
 
 **Added**

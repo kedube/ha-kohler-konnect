@@ -10,10 +10,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from homeassistant.const import MAJOR_VERSION, MINOR_VERSION
 
 from custom_components.kohler_konnect import registry
 from custom_components.kohler_konnect.registry import (
     device_by_identifier,
+    device_entry_ids,
     parent_link,
 )
 
@@ -56,6 +58,36 @@ def test_the_lookup_falls_back_to_async_get_device_before_2026_10():
     )
     assert found is DEVICE
     assert calls == [{IDENTIFIER}]
+
+
+class _SingleEntryDevice:
+    """A 2026.10 device: one entry, and the old set a deprecated property."""
+
+    def __init__(self, config_entry_id: str | None) -> None:
+        self.config_entry_id = config_entry_id
+
+    @property
+    def config_entries(self) -> set[str]:
+        raise AssertionError("DeviceEntry.config_entries is deprecated from 2026.10")
+
+
+def test_a_device_names_its_one_entry_where_home_assistant_has_one():
+    assert device_entry_ids(_SingleEntryDevice(ENTRY_ID)) == (ENTRY_ID,)
+
+
+def test_an_orphaned_device_belongs_to_no_entry():
+    assert device_entry_ids(_SingleEntryDevice(None)) == ()
+
+
+def test_a_device_names_its_entries_from_the_set_before_2026_10():
+    device = SimpleNamespace(config_entries={ENTRY_ID})
+    assert device_entry_ids(device) == (ENTRY_ID,)
+
+
+def test_the_version_check_reads_the_installed_device_info():
+    # A TypedDict before 2026.11, a dataclass from it; the check reads either.
+    takes_registry_id = (MAJOR_VERSION, MINOR_VERSION) >= (2026, 10)
+    assert registry.VIA_DEVICE_ID is takes_registry_id
 
 
 def test_a_parent_is_named_by_registry_id_where_home_assistant_takes_one(

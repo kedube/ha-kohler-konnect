@@ -1252,16 +1252,25 @@ The only Python dependency is `paho-mqtt`, installed automatically.
 
 ## Install
 
-This integration is **not in HACS's default store.** Add it as a custom repository.
+This integration is **not in the default catalog.** Add it as a custom repository.
 
-### Via HACS
+### Via the Marketplace (Home Assistant 2026.11 and later)
+
+From 2026.11, HACS is built into Home Assistant as the Marketplace. An install made through
+HACS carries over and keeps getting updates, so there is nothing to redo. To add it fresh:
+
+1. Open **Settings → Marketplace** and choose **Add from link**
+2. Enter `https://github.com/kedube/ha-kohler-konnect` and choose **Add**
+3. Install **Kohler Konnect**, and restart Home Assistant if a repair asks you to
+
+### Via HACS (Home Assistant 2026.10 and earlier)
 
 1. In HACS, open the ⋮ menu and choose **Custom repositories**
 2. Add `https://github.com/kedube/ha-kohler-konnect`, category **Integration**
 3. Find **Kohler Konnect** in HACS and install it
 4. Restart Home Assistant
 
-> HACS installs from **releases**, not from the latest commit.
+> Both install from **releases**, not from the latest commit.
 
 ### Manually
 
@@ -1325,7 +1334,7 @@ keeps a connection of its own to Kohler.
 1. Note what refers to the old entities — automations, scripts, dashboards, the Energy
    dashboard.
 2. Delete the old entries in **Settings → Devices & services**, remove the old integrations
-   in HACS, and restart.
+   in the Marketplace (HACS before 2026.11), and restart.
 3. Install Kohler Konnect and add your account.
 
 Deleting first matters: entity ids come from device and entity names, so on a cleared
