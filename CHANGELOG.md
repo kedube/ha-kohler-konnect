@@ -11,6 +11,8 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+## 2.01 — 2026-10-30
+
 **Changed**
 
 - **Ready for Home Assistant 2026.11.** The integration already ran on it; this removes its
