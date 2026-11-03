@@ -4336,7 +4336,8 @@ async def test_daily_usage_refreshes_monthly_series_on_month_rollover(monkeypatc
         def now():
             return datetime(2026, 10, 1, 8, 0)
 
-    monkeypatch.setattr(f"{WATER}.dt_util", _PinnedNow)
+    # The month check runs in the coordinator, so its clock is the one to pin.
+    monkeypatch.setattr(module, "dt_util", _PinnedNow)
 
     async def _get_usage(_device_id, *, from_date, to_date, interval="MONTH"):
         calls.append(interval)
