@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="#install"><img src="https://img.shields.io/badge/HACS-custom-41BDF5" alt="HACS: custom repository"></a>
+  <a href="#install"><img src="https://img.shields.io/badge/HACS-default-41BDF5" alt="HACS: default repository"></a>
   <img src="https://img.shields.io/badge/Home%20Assistant-2026.3%2B-41BDF5" alt="Home Assistant 2026.3 or later">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT licence">
 </p>
@@ -1252,25 +1252,36 @@ The only Python dependency is `paho-mqtt`, installed automatically.
 
 ## Install
 
-This integration is **not in the default catalog.** Add it as a custom repository.
+Search for **Kohler Konnect** by name in the Marketplace, or in HACS before Home Assistant
+2026.11.
 
 ### Via the Marketplace (Home Assistant 2026.11 and later)
 
 From 2026.11, HACS is built into Home Assistant as the Marketplace. An install made through
 HACS carries over and keeps getting updates, so there is nothing to redo. To add it fresh:
 
-1. Open **Settings → Marketplace** and choose **Add from link**
-2. Enter `https://github.com/kedube/ha-kohler-konnect` and choose **Add**
-3. Install **Kohler Konnect**, and restart Home Assistant if a repair asks you to
+1. Open **Settings → Marketplace** and search for **Kohler Konnect**
+2. Install it, and restart Home Assistant if a repair asks you to
 
 ### Via HACS (Home Assistant 2026.10 and earlier)
 
-1. In HACS, open the ⋮ menu and choose **Custom repositories**
-2. Add `https://github.com/kedube/ha-kohler-konnect`, category **Integration**
-3. Find **Kohler Konnect** in HACS and install it
-4. Restart Home Assistant
+1. Open **HACS** and search for **Kohler Konnect**
+2. Install it
+3. Restart Home Assistant
 
 > Both install from **releases**, not from the latest commit.
+
+### Not listed?
+
+If the search comes up empty, add the repository by link instead, then install **Kohler
+Konnect** as above:
+
+* **Marketplace:** in **Settings → Marketplace**, choose **Add from link**, enter
+  `https://github.com/kedube/ha-kohler-konnect` and choose **Add**
+* **HACS:** open the ⋮ menu, choose **Custom repositories**, and add
+  `https://github.com/kedube/ha-kohler-konnect` with category **Integration**
+
+Already added it as a custom repository? Nothing to change: it keeps updating.
 
 ### Manually
 

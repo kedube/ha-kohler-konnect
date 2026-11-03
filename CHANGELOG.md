@@ -11,6 +11,16 @@ bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, ne
 
 ## Unreleased
 
+**Documentation**
+
+- **`LICENSE` update copyright notice** alongside this project's own, as the
+  MIT licence of [kohler-anthem-plus](https://github.com/frozenmartini/kohler-anthem-plus)
+  requires: much of this project's code comes from it.
+- **The install instructions lead with finding Kohler Konnect by name** in the Marketplace
+  or HACS, now that it is joining the default catalog. Adding it by link or as a custom
+  repository is still there for when the search comes up empty, and an install added that
+  way keeps updating.
+
 ## 2.01 — 2026-10-30
 
 **Changed**
