@@ -1,24 +1,26 @@
-<p align="center">
-<h1 align="center">(Unofficial) Home Assistant Integration for Kohler Konnect</h1>
-</p>
+# Kohler Konnect for Home Assistant
 
-<p align="center">
-  A custom Home Assistant integration for Kohler's connected kitchen and bath: <b>Anthem</b> and <b>Anthem+</b> digital showers and <b>Sensate</b> kitchen faucets, with early support for the <b>Smart Fan</b>, <b>Numi 2.0</b>, <b>Purewash E930</b>, <b>EvoCycle</b> and <b>Ice Bath</b>, and a sidebar panel laid out like the Konnect app.
-</p>
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
+[![GitHub release](https://img.shields.io/github/v/release/kedube/ha-kohler-konnect)](https://github.com/kedube/ha-kohler-konnect/releases)
+[![Test](https://github.com/kedube/ha-kohler-konnect/actions/workflows/test.yml/badge.svg)](https://github.com/kedube/ha-kohler-konnect/actions/workflows/test.yml)
+[![Validate](https://github.com/kedube/ha-kohler-konnect/actions/workflows/validate.yml/badge.svg)](https://github.com/kedube/ha-kohler-konnect/actions/workflows/validate.yml)
+![Home Assistant 2026.3+](https://img.shields.io/badge/Home%20Assistant-2026.3%2B-41BDF5.svg)
+[![License](https://img.shields.io/github/license/kedube/ha-kohler-konnect)](LICENSE)
 
-<p align="center">
-  <a href="https://github.com/kedube/ha-kohler-konnect/actions/workflows/test.yml"><img src="https://github.com/kedube/ha-kohler-konnect/actions/workflows/test.yml/badge.svg" alt="Test"></a>
-  <a href="https://github.com/kedube/ha-kohler-konnect/actions/workflows/validate.yml"><img src="https://github.com/kedube/ha-kohler-konnect/actions/workflows/validate.yml/badge.svg" alt="Validate"></a>
-  <a href="#install"><img src="https://img.shields.io/badge/HACS-default-41BDF5" alt="HACS: default repository"></a>
-  <img src="https://img.shields.io/badge/Home%20Assistant-2026.3%2B-41BDF5" alt="Home Assistant 2026.3 or later">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT licence">
-</p>
+<p align="center"><img src="docs/images/panel_phone.png" width="800" alt="The Kohler Konnect panel on a phone: the devices, a shower warming up, and a month of water use"></p>
 
-> ⚠️ This is an **unofficial** integration. It is not affiliated with or endorsed by Kohler, and the underlying API may change at any time.
+A custom Home Assistant integration for Kohler's connected kitchen and bath: **Anthem** and
+**Anthem+** digital showers and **Sensate** kitchen faucets, with early support for the
+**Smart Fan**, **Numi 2.0**, **Purewash E930**, **EvoCycle** and **Ice Bath**, and a sidebar
+panel laid out like the Konnect app.
 
-<p align="center">
-  <img src="docs/images/panel_phone.png" alt="The Kohler Konnect panel on a phone: the devices, a shower warming up, and a month of water use" width="800">
-</p>
+This integration is unofficial, and isn't affiliated with or endorsed by Kohler. The
+underlying API may change at any time.
+
+[Devices](#one-account-every-device) · [Requirements](#requirements) · [Install](#install) ·
+[Setup](#setup) · [Upgrading](#upgrading-from-kohler-anthem-or-kohler-sensate) ·
+[What works](#what-works-and-what-does-not) · [Contributing](#contributing) ·
+[Limitations](#known-limitations) · [Documentation](#documentation)
 
 ## One account, every device
 
