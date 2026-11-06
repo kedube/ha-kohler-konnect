@@ -100,6 +100,8 @@ class FaucetPreset:
     preset_id: str
     title: str
     liters: float
+    # As saved in the app, (amount, `dispense` unit); None if that doesn't match ``liters``.
+    asked: tuple[float, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,29 +114,48 @@ class FirmwareInfo:
     mandatory: bool
 
 
-# The Konnect app's preset units, in litres per unit; it converts in single precision,
-# hence the cup factor.
+# How near two amounts must be to count as one: an amount may come back rounded, and the
+# closest of the app's amounts (1 cup, 250 mL) are 13 mL apart.
+SAME_DISPENSE_LITERS = 0.006
+
+# The Konnect app's preset units, by the `dispense` action's name for each.
 _DISPLAY_UNITS = {
-    "milliliters": 0.001,
-    "liters": 1.0,
-    "cups": 0.2365880012512207,
-    "quarts": 0.946353,
-    "gallons": 3.785411784,
+    "milliliters": "ml",
+    "liters": "l",
+    "cups": "cup",
+    "quarts": "qt",
+    "gallons": "gal",
+}
+# Litres per unit. The app converts in single precision, hence the cup factor.
+_LITERS_PER_UNIT = {
+    "ml": 0.001,
+    "l": 1.0,
+    "cup": 0.2365880012512207,
+    "qt": 0.946353,
+    "gal": 3.785411784,
 }
 _FRACTIONS = {"¼": 0.25, "½": 0.5, "¾": 0.75}
 _DISPLAY_QUANTITY = re.compile(r"^\s*(\d+(?:\.\d+)?)?\s*([¼½¾])?\s+([A-Za-z]+)\s*$")
 
 
-def parse_display_quantity(text: Any) -> float | None:
-    """Litres from a preset's ``displayQuantity``, such as "1¾ Quarts"."""
+def parse_display_amount(text: Any) -> tuple[float, str] | None:
+    """(amount, unit) from a preset's ``displayQuantity``: "1¾ Quarts" is (1.75, "qt")."""
     if not isinstance(text, str) or not (match := _DISPLAY_QUANTITY.match(text)):
         return None
-    whole, fraction, unit = match.groups()
-    factor = _DISPLAY_UNITS.get(unit.lower())
-    if factor is None or (whole is None and fraction is None):
+    whole, fraction, name = match.groups()
+    unit = _DISPLAY_UNITS.get(name.lower())
+    if unit is None or (whole is None and fraction is None):
         return None
     amount = float(whole or 0) + _FRACTIONS.get(fraction or "", 0.0)
-    return amount * factor if amount > 0 else None
+    return (amount, unit) if amount > 0 else None
+
+
+def parse_display_quantity(text: Any) -> float | None:
+    """Litres from a preset's ``displayQuantity``, such as "1¾ Quarts"."""
+    if (parsed := parse_display_amount(text)) is None:
+        return None
+    amount, unit = parsed
+    return amount * _LITERS_PER_UNIT[unit]
 
 
 def _parse_preset_items(items: list[Any], device_id: str | None) -> list[FaucetPreset]:
@@ -159,7 +180,12 @@ def _parse_preset_items(items: list[Any], device_id: str | None) -> list[FaucetP
             amount = parse_display_quantity(item.get("displayQuantity"))
         if preset_id in (None, "") or not title or amount is None or amount <= 0:
             continue
-        presets.append(FaucetPreset(str(preset_id), str(title), float(amount)))
+        # ``dispenseAmount`` is what pours, so wording that says otherwise is not shown.
+        asked = parse_display_amount(item.get("displayQuantity"))
+        stated = parse_display_quantity(item.get("displayQuantity"))
+        if stated is not None and abs(stated - amount) > SAME_DISPENSE_LITERS:
+            asked = None
+        presets.append(FaucetPreset(str(preset_id), str(title), float(amount), asked))
     return presets
 
 

@@ -1,38 +1,55 @@
 import { css, html, nothing } from "lit";
 import { icon } from "../art/icons";
 import "../components/faucet-ring";
+import "../components/wheel";
 import { define } from "../components/define";
 import { banner, bannerStyles } from "../components/rows";
 import { DeviceView } from "../context";
 import { t } from "../i18n";
 import { shared } from "../theme/shared";
-import type { QuickAmount } from "../types";
+import {
+  DEFAULT_AMOUNT_INDEX,
+  DISPENSE_UNITS,
+  dispenseAmounts,
+  dispenseUnitName,
+  formatAsked,
+  formatDispenseAmount,
+  type DispenseUnit,
+} from "../util/dispense";
 import { formatCountdown, formatNumber } from "../util/format";
 
 interface Preset {
   name: string;
   amount: number;
   unit: string;
+  /** As saved in the app, when known. */
+  asked_amount?: number;
+  asked_unit?: string;
 }
 
 /**
  * A Sensate faucet, laid out as the app's faucet screen: the faucet in a ring, Start, and
- * the Faucet / Dispense Amount modes, with presets under See more. Water goes on only
- * through the Water switch, which arms the integration's safety auto-off.
+ * the Faucet / Dispense Amount modes, the latter with the app's amount and unit wheels, and
+ * presets under See more. Water goes on only through the Water switch, which arms the
+ * integration's safety auto-off.
  */
 export class KkpFaucet extends DeviceView {
   static override properties = {
     ...DeviceView.properties,
     wide: { type: Boolean },
     mode: { state: true },
-    amount: { state: true },
+    pickedUnit: { state: true },
+    pickedAmounts: { state: true },
     sheetOpen: { state: true },
     now: { state: true },
   };
 
   declare wide: boolean;
   declare mode: "faucet" | "dispense";
-  declare amount: number | null;
+  /** The unit wheel's choice; null until there is one. */
+  declare pickedUnit: DispenseUnit | null;
+  /** Each unit wheel's position, once moved. Each unit keeps its own, as in the app. */
+  declare pickedAmounts: Partial<Record<DispenseUnit, number>>;
   declare sheetOpen: boolean;
   declare now: number;
 
@@ -41,7 +58,8 @@ export class KkpFaucet extends DeviceView {
   constructor() {
     super();
     this.mode = "faucet";
-    this.amount = null;
+    this.pickedUnit = null;
+    this.pickedAmounts = {};
     this.sheetOpen = false;
     this.now = Date.now();
   }
@@ -146,49 +164,10 @@ export class KkpFaucet extends DeviceView {
 
       .amounts {
         display: grid;
-        gap: 16px;
+        grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+        gap: 12px;
         width: 100%;
-        padding: 20px;
-      }
-
-      .chips {
-        display: flex;
-        gap: 8px;
-        overflow-x: auto;
-        padding-bottom: 4px;
-        scrollbar-width: none;
-      }
-
-      .chip {
-        flex: none;
-        padding: 10px 16px;
-        border-radius: var(--kk-radius-pill);
-        background: var(--kk-control);
-        font-size: 15px;
-        transition: background 160ms var(--kk-ease);
-      }
-
-      .chip[aria-pressed="true"] {
-        background: var(--kk-accent-fill);
-        color: var(--kk-accent-on);
-      }
-
-      .stepper {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 14px;
-      }
-
-      .stepper strong {
-        font-size: 30px;
-        font-weight: 300;
-        font-variant-numeric: tabular-nums;
-      }
-
-      .stepper .label {
-        font-size: 15px;
-        color: var(--kk-text-2);
+        padding: 12px;
       }
 
       .sheet {
@@ -279,16 +258,13 @@ export class KkpFaucet extends DeviceView {
     return Array.isArray(raw) ? (raw as Preset[]) : [];
   }
 
-  private get quickAmounts(): QuickAmount[] {
-    return this.device.quick_amounts ?? [];
+  /** The app opens on Milliliters on any account; a US one opens on Cups here. */
+  private get unit(): DispenseUnit {
+    return this.pickedUnit ?? (this.device.units.volume === "L" ? "ml" : "cup");
   }
 
-  private get unit(): string {
-    return this.device.units.dispense ?? this.quickAmounts[0]?.unit ?? "mL";
-  }
-
-  private get metric(): boolean {
-    return this.unit.toLowerCase().includes("l");
+  private get amountIndex(): number {
+    return this.pickedAmounts[this.unit] ?? DEFAULT_AMOUNT_INDEX;
   }
 
   private start() {
@@ -297,12 +273,10 @@ export class KkpFaucet extends DeviceView {
       if (entityId) void this.queued("water", "switch", "turn_on", { entity_id: entityId });
       return;
     }
-    const amount = this.amount ?? this.quickAmounts[0]?.amount;
-    if (!amount) return;
     void this.queued("water", "kohler_konnect", "dispense", {
       device_id: this.device.id,
-      amount,
-      unit: this.metric ? "ml" : "fl_oz",
+      amount: dispenseAmounts(this.unit)[this.amountIndex],
+      unit: this.unit,
     });
   }
 
@@ -313,20 +287,6 @@ export class KkpFaucet extends DeviceView {
 
   private pour(preset: Preset) {
     void this.queued("water", "kohler_konnect", "dispense", { device_id: this.device.id, preset: preset.name });
-  }
-
-  private step(direction: 1 | -1) {
-    const step = this.metric ? 50 : 1;
-    const min = this.metric ? 50 : 1;
-    const max = this.metric ? 11360 : 384;
-    const current = this.amount ?? this.quickAmounts[0]?.amount ?? min;
-    this.amount = Math.min(max, Math.max(min, Math.round((current + direction * step) / step) * step));
-  }
-
-  private formatAmount(amount: number): string {
-    const quick = this.quickAmounts.find((q) => Math.abs(q.amount - amount) < 1e-6);
-    if (quick) return quick.label;
-    return `${formatNumber(amount, this.metric ? 0 : 1)} ${this.unit}`;
   }
 
   private renderStatus(running: boolean, dispensing: boolean) {
@@ -344,7 +304,9 @@ export class KkpFaucet extends DeviceView {
     const last = this.entity("last_dispensed");
     return html`<div class="status">
       ${last && last.state !== "unknown" && last.state !== "unavailable"
-        ? t("faucet.last_dispensed", { amount: `${last.state} ${last.attributes.unit_of_measurement ?? ""}`.trim() })
+        ? t("faucet.last_dispensed", {
+            amount: formatAsked(last.attributes) ?? `${last.state} ${last.attributes.unit_of_measurement ?? ""}`.trim(),
+          })
         : nothing}
     </div>`;
   }
@@ -367,31 +329,21 @@ export class KkpFaucet extends DeviceView {
   }
 
   private renderAmounts() {
-    const selected = this.amount ?? this.quickAmounts[0]?.amount ?? null;
-    return html`<div class="card amounts">
-      <div class="chips" role="group" aria-label=${t("faucet.dispense_amount")}>
-        ${this.quickAmounts.map(
-          (q) => html`<button
-            class="chip"
-            aria-pressed=${String(selected === q.amount)}
-            @click=${() => (this.amount = q.amount)}
-          >
-            ${q.label}
-          </button>`,
-        )}
-      </div>
-      <div class="stepper">
-        <button class="round" aria-label=${t("control.decrease", { name: t("faucet.custom") })} @click=${() => this.step(-1)}>
-          ${icon("minus")}
-        </button>
-        <div style="text-align:center">
-          <strong aria-live="polite">${selected === null ? "—" : this.formatAmount(selected)}</strong>
-          <div class="label">${t("faucet.custom")}</div>
-        </div>
-        <button class="round" aria-label=${t("control.increase", { name: t("faucet.custom") })} @click=${() => this.step(1)}>
-          ${icon("plus")}
-        </button>
-      </div>
+    const unit = this.unit;
+    return html`<div class="card amounts" role="group" aria-label=${t("faucet.dispense_amount")}>
+      <kkp-wheel
+        label=${t("faucet.amount")}
+        .options=${dispenseAmounts(unit).map(formatDispenseAmount)}
+        .index=${this.amountIndex}
+        @change=${(event: CustomEvent<number>) =>
+          (this.pickedAmounts = { ...this.pickedAmounts, [unit]: event.detail })}
+      ></kkp-wheel>
+      <kkp-wheel
+        label=${t("faucet.unit")}
+        .options=${DISPENSE_UNITS.map(dispenseUnitName)}
+        .index=${DISPENSE_UNITS.indexOf(unit)}
+        @change=${(event: CustomEvent<number>) => (this.pickedUnit = DISPENSE_UNITS[event.detail])}
+      ></kkp-wheel>
     </div>`;
   }
 
@@ -403,7 +355,9 @@ export class KkpFaucet extends DeviceView {
             (preset, index) => html`<div class="preset">
               <div id="preset-${index}">
                 <span class="preset-name">${preset.name}</span>
-                <span class="preset-amount">${formatNumber(preset.amount, 2)} ${preset.unit}</span>
+                <span class="preset-amount">
+                  ${formatAsked(preset) ?? `${formatNumber(preset.amount, 2)} ${preset.unit}`}
+                </span>
               </div>
               <button class="pill" aria-describedby="preset-${index}" @click=${() => this.pour(preset)}>
                 ${t("faucet.start")}

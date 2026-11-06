@@ -68,13 +68,6 @@ export interface ZoneInfo {
   outlets: OutletInfo[];
 }
 
-export interface QuickAmount {
-  key: string;
-  amount: number;
-  unit: string;
-  label: string;
-}
-
 export interface Units {
   temperature: string;
   volume: string;
@@ -102,7 +95,6 @@ export interface DeviceDescriptor {
   untested: string[];
   /** Whether one of those is a main control rather than a setting, so the device itself is untested. */
   untested_device: boolean;
-  quick_amounts?: QuickAmount[];
 }
 
 export interface EntryInfo {

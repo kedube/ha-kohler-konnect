@@ -49,11 +49,12 @@ class FaucetQuickDispenseButton(KohlerFaucetEntity, ButtonEntity):
     def __init__(self, coordinator: FaucetCoordinator, amount: QuickAmount) -> None:
         super().__init__(coordinator, f"dispense_{amount.key}")
         self._ml = amount.ml
+        self._asked = amount.asked
         self._attr_translation_key = amount.translation_key
         self._attr_translation_placeholders = amount.placeholders
 
     async def async_press(self) -> None:
-        await self.coordinator.async_dispense(self._ml / 1000)
+        await self.coordinator.async_dispense(self._ml / 1000, asked=self._asked)
 
 
 class FaucetDispenseSetAmountButton(KohlerFaucetEntity, ButtonEntity):
@@ -108,4 +109,4 @@ class FaucetDispensePresetButton(KohlerFaucetEntity, ButtonEntity):
                 translation_key="preset_out_of_range",
                 translation_placeholders={"title": preset.title},
             )
-        await self.coordinator.async_dispense(preset.liters, preset.title)
+        await self.coordinator.async_dispense(preset.liters, preset.title, preset.asked)

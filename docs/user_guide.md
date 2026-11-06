@@ -270,9 +270,12 @@ The temperature tops out at the valve's scald limit. **Favorites** and **Experie
 start what is saved in the Konnect app.
 
 **A faucet.** **Faucet** turns the water on, and the panel counts down to your
-[water safety limit](#water-safety-limit). **Dispense Amount** pours one of the quick
-amounts the app offers, or an amount you set, through `dispense`. **See more** lists your
-Konnect presets. A closed handle, a firmware download and a leak (with **Clear**) show as
+[water safety limit](#water-safety-limit). **Dispense Amount** has the app's two wheels, an
+amount and its unit, and **Start** pours what they show through `dispense`. The units are
+Milliliters (250 to 11,000, in steps of 250), Liters (¼ to 11, in steps of ¼), Cups (1 to 48),
+Quarts (¼ to 12, in steps of ¼) and Gallons (¼ to 3, in steps of ¼). A US account opens on
+Cups, any other on Milliliters. **See more** lists your Konnect presets, with their amounts as
+you saved them in the app. A closed handle, a firmware download and a leak (with **Clear**) show as
 banners; the faucet refuses remote water while its handle is closed or it is downloading
 firmware, and the panel says why.
 
@@ -591,7 +594,7 @@ the showers'.
 | `Dispensing` | binary sensor | A measured amount is pouring — from Home Assistant, or a preset run from the Konnect app. `preset` attribute when it is one |
 | `Leak` | binary sensor | Kohler reports a leak that hasn't been cleared — live from the stream's leak alert, and from the faucet's leak history. See [Leak alerts](#leak-alerts) |
 | `Clear leak alert` | button | Marks the current leaks as dealt with, which turns `Leak` off |
-| `Last dispensed` | sensor | The most recent amount dispensed, in mL or fl oz. Every dispense from Home Assistant counts; one started elsewhere counts only when the faucet's reported state carries its amount, which it doesn't always |
+| `Last dispensed` | sensor | The most recent amount dispensed, in mL or fl oz. Every dispense from Home Assistant counts; one started elsewhere counts only when the faucet's reported state carries its amount, which it doesn't always. The `asked_amount` and `asked_unit` attributes hold the amount as requested, such as 3 `cup`, and the panel shows it that way; the set amount, a dispense started elsewhere or a preset whose saved wording can't be read shows the volume instead |
 | `Water used today` | sensor | As the valve's `Water Used Today`, from the faucet's own usage history. For the Energy dashboard, see [The Energy dashboard](#the-energy-dashboard) |
 | `Water used this week` | sensor | The last seven days including today |
 | `Water used this month` | sensor | This calendar month, the larger of Kohler's monthly figure and the daily total |

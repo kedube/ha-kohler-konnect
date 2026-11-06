@@ -50,6 +50,7 @@ from .const import (
     WARMUP_MODES_LEGACY,
 )
 from .faucet import (
+    SAME_DISPENSE_LITERS,
     FaucetDevice,
     FaucetEvent,
     FaucetPreset,
@@ -109,6 +110,7 @@ __all__ = [
     "MSG_GCS_SOLO_STATUS",
     "MSG_GCS_WARMUP_STATUS",
     "OUTLETS_PER_VALVE",
+    "SAME_DISPENSE_LITERS",
     "VALVE_MODELS",
     "WARMUP_DISABLED",
     "WARMUP_MODES",

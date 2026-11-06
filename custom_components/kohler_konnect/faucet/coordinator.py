@@ -302,6 +302,8 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.profile.number_default, self.profile.number_unit
         )
         self.last_dispense_liters: float | None = None
+        # What the last dispense from Home Assistant asked for, as (amount, ML_PER_UNIT key).
+        self.last_dispense_asked: tuple[float, str] | None = None
         # Dispenses: one Home Assistant started (until the faucet reports the water off)
         # and a preset run from the app (until the stream says so).
         self._dispense_started: float | None = None
@@ -927,12 +929,21 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # --- commands -----------------------------------------------------------------
 
-    async def async_dispense(self, liters: float, preset: str | None = None) -> None:
-        """Dispense ``liters`` (for ``preset``, if any) and refresh the state."""
+    async def async_dispense(
+        self,
+        liters: float,
+        preset: str | None = None,
+        asked: tuple[float, str] | None = None,
+    ) -> None:
+        """Dispense ``liters`` (for ``preset``, if any) and refresh the state.
+
+        ``asked`` is the amount as requested, (amount, ML_PER_UNIT key), for showing it so.
+        """
         await self._async_command(
             lambda: self.device.async_dispense(liters), starts_water=True
         )
         self.last_dispense_liters = liters
+        self.last_dispense_asked = asked
         self._dispense_started = time.monotonic()
         self._dispense_limit = dispense_limit(liters)
         self._dispense_seen_on = self._dispense_feed_on = False

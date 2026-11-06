@@ -15,6 +15,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import EntityCategory
 
+from ..konnect import SAME_DISPENSE_LITERS
 from ..water import (
     DailyDurationUsage,
     DailyWaterUsage,
@@ -25,7 +26,7 @@ from ..water import (
 )
 from .coordinator import FaucetCoordinator
 from .entity import KohlerFaucetEntity, as_text
-from .units import HA_UNIT_KEYS, from_ml, to_ml
+from .units import HA_UNIT_KEYS, ML_PER_UNIT, from_ml, to_ml
 
 
 def state_key(value: Any) -> str | None:
@@ -151,6 +152,10 @@ class FaucetLastDispenseSensor(KohlerFaucetEntity, RestoreSensor):
     amounts dispensed from Home Assistant and survives restarts. It deliberately has no
     volume device class: with one, Home Assistant pins the display unit on first
     registration, and a change of the account's units would stop applying after that.
+
+    The ``asked_amount`` and ``asked_unit`` attributes hold the amount as it was requested,
+    such as 3 ``cup``, which the panel shows. A dispense started elsewhere reports only a
+    volume, so they go once that volume differs.
     """
 
     _requires_online = False
@@ -176,6 +181,11 @@ class FaucetLastDispenseSensor(KohlerFaucetEntity, RestoreSensor):
             self.coordinator.last_dispense_liters = (
                 to_ml(float(last.native_value), unit) / 1000
             )
+            if (state := await self.async_get_last_state()) is not None:
+                amount = state.attributes.get("asked_amount")
+                asked_unit = state.attributes.get("asked_unit")
+                if isinstance(amount, (int, float)) and asked_unit in ML_PER_UNIT:
+                    self.coordinator.last_dispense_asked = (float(amount), asked_unit)
 
     @property
     def native_value(self) -> float | None:
@@ -183,6 +193,17 @@ class FaucetLastDispenseSensor(KohlerFaucetEntity, RestoreSensor):
         if liters is None:
             return None
         return round(from_ml(liters * 1000, self._unit), 2)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        liters = self.coordinator.last_dispense_liters
+        asked = self.coordinator.last_dispense_asked
+        if liters is None or asked is None:
+            return None
+        amount, unit = asked
+        if abs(to_ml(amount, unit) / 1000 - liters) > SAME_DISPENSE_LITERS:
+            return None
+        return {"asked_amount": amount, "asked_unit": unit}
 
 
 class FaucetLastUpdateSensor(KohlerFaucetEntity, SensorEntity):

@@ -15,6 +15,8 @@ import { dailyUsage, type Scenario, type SimDevice, type SimFaucet, type SimValv
 
 type Listener = (message: unknown) => void;
 
+const ML_PER_UNIT: Record<string, number> = { ml: 1, l: 1000, fl_oz: 29.57, cup: 236.59, qt: 946.35, gal: 3785.41 };
+
 const iso = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
@@ -527,9 +529,16 @@ export class FakeHass {
 
   private dispense(device: SimFaucet, data: Record<string, unknown>) {
     const id = device.descriptor.id;
-    const presets = (device.descriptor.capabilities.presets ?? []) as { name: string; amount: number; unit: string }[];
+    const presets = (device.descriptor.capabilities.presets ?? []) as {
+      name: string;
+      amount: number;
+      unit: string;
+      asked_amount?: number;
+      asked_unit?: string;
+    }[];
     const preset = data.preset ? presets.find((p) => p.name === data.preset) : undefined;
-    const amount = preset?.amount ?? Number(data.amount ?? 0);
+    const ml = Number(data.amount ?? 0) * (ML_PER_UNIT[String(data.unit)] ?? 1);
+    const amount = preset?.amount ?? Math.round(device.metric ? ml : ml / ML_PER_UNIT.fl_oz);
     const seconds = Math.min(9, Math.max(3, device.metric ? amount / 400 : amount / 3));
     this.cancel(id);
     this.set(this.role(device, "dispensing"), "on", { preset: preset?.name });
@@ -537,7 +546,10 @@ export class FakeHass {
     this.later(id, seconds * 1000, () => {
       this.set(this.role(device, "dispensing"), "off", { preset: undefined });
       this.set(this.role(device, "status"), "off");
-      this.set(this.role(device, "last_dispensed"), String(amount));
+      this.set(this.role(device, "last_dispensed"), String(amount), {
+        asked_amount: preset ? preset.asked_amount : data.amount,
+        asked_unit: preset ? preset.asked_unit : data.unit,
+      });
     });
   }
 

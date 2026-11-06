@@ -5,11 +5,34 @@ Notable changes for each tagged release. Versions correspond to git tags and to 
 **Unreleased** as part of each change; the release workflow rotates that section into a
 version heading and publishes it as the release's Highlights.
 
-Every push to `main` that passes CI is released. To choose the version, set it in
-`manifest.json` and it is released as written; leave it alone and the minor version is
-bumped (1.0 → 1.01). Tags and release names are the bare version — `1.0`, never `v1.0`.
+A push to `main` isn't released by itself. To release what has landed, run the **Release**
+workflow from the Actions tab: it publishes the next minor version (1.0 → 1.01), or the next
+major if you choose `major`. To choose the version instead, set it in `manifest.json` as part
+of a commit, and it is released as written once that commit passes CI. Tags and release names
+are the bare version — `1.0`, never `v1.0`.
 
 ## Unreleased
+
+**Changed**
+
+- **The panel's Dispense Amount has the Konnect app's wheels.** Choose Milliliters, Liters,
+  Cups, Quarts or Gallons, then an amount in that unit's steps: 250 to 11,000 mL, ¼ to 11 L,
+  1 to 48 cups, ¼ to 12 qt or ¼ to 3 gal. They replace the quick-amount chips and the custom
+  amount. A US account opens on Cups, any other on Milliliters. The one-tap dispense buttons
+  on the device page are unchanged.
+- **The panel's "Last dispensed" reads in the unit you poured in,** such as "3 cups" or
+  "¾ gal", from the wheels, a one-tap button or a `dispense` action with a unit. The
+  `Last dispensed` sensor keeps its value in mL or fl oz and gains `asked_amount` and
+  `asked_unit` attributes. The set amount or a dispense started elsewhere still shows the
+  volume.
+- **Konnect presets read as you saved them in the app,** such as "1 cup" or "1¾ qt", in the
+  panel's list and in "Last dispensed" after pouring one.
+
+**Fixed**
+
+- **The panel poured the wrong amount on a US account.** It took fl oz for a metric unit, so
+  whatever it showed went to the faucet as that many millilitres: **1 gallon** poured 128 mL,
+  **¼ cup** was refused as too small, and the custom amount moved 50 at a time.
 
 ## 2.02 — 2026-11-03
 

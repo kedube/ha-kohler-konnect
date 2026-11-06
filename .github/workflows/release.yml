@@ -1,16 +1,19 @@
 name: Release
 
-# Auto-releases on a green main: once BOTH the Test and Validate workflows have completed
-# successfully for the same commit, this settles the version, rotates CHANGELOG.md's
-# Unreleased section into a version heading, and publishes a GitHub release whose notes are
-# that section plus the commits since the last release — no draft, no manual step.
-# workflow_dispatch is the manual escape hatch (release the current manifest version, or
-# force a bump) for when the Validate check below needs a nudge.
+# A push to main is not released by itself. A release happens one of two ways, each of which
+# settles the version, rotates CHANGELOG.md's Unreleased section into a version heading, and
+# publishes a GitHub release whose notes are that section plus the commits since the last
+# release:
 #
-# Which version: if manifest.json holds a version with no git tag yet, somebody set it by
-# hand, and it is released exactly as written. Otherwise — the manifest still says the last
-# release — the minor version after the newest tag is used. Until 2026-10-08 it always
-# bumped, so setting 0.23 by hand published 0.24.
+# - A commit sets a new version in manifest.json. A version with no git tag yet was set by
+#   hand, and it is released exactly as written once BOTH the Test and Validate workflows
+#   have completed successfully for the commit. A push that leaves the version alone stops
+#   at once.
+# - Someone runs this workflow from the Actions tab. `auto` releases a hand-set version as
+#   written, otherwise the minor version after the newest tag, and stops if main is already
+#   released. `minor` and `major` always bump, and `none` publishes the manifest version as
+#   it stands. Test and Validate must have succeeded for main here too, unless
+#   `ignore_checks` is ticked, for when one of them needs a nudge.
 #
 # Tags and release names are the bare version — `1.0`, never `v1.0`. A leading `v` set in
 # the manifest by hand is removed and the manifest committed without it.
@@ -27,14 +30,20 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "Version bump (none = re-release current manifest version)"
+        description: "Version (auto = the manifest's if it is new, otherwise the next minor; none = publish the manifest's as it stands)"
         required: true
-        default: "none"
+        default: "auto"
         type: choice
         options:
-          - none
+          - auto
           - minor
           - major
+          - none
+      ignore_checks:
+        description: "Release even if Test or Validate has not succeeded for this commit"
+        required: false
+        default: false
+        type: boolean
   workflow_run:
     workflows:
       - Test
@@ -74,45 +83,78 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      # Test's success is the trigger, so only Validate is left to check. It almost always
-      # finished minutes ago; when it hasn't, wait for it rather than skip the release.
-      - name: Check Validate succeeded for this commit
-        id: validate_green
+      # Every green push on main comes through here, and only one that set a new version goes
+      # any further. Checked first, so the others don't wait on Validate for nothing.
+      - name: Look for a version set by hand
+        id: hand_set
         if: github.event_name == 'workflow_run'
+        run: |
+          hand_set="$(python3 .github/scripts/bump_manifest_version.py --hand-set)"
+          echo "hand_set=$hand_set" >> "$GITHUB_OUTPUT"
+
+      # Only a commit that passed both is released. They almost always finished minutes ago;
+      # when they haven't, wait for them rather than give up on the release.
+      - name: Check Test and Validate succeeded for this commit
+        id: checks
+        if: >-
+          steps.hand_set.outputs.hand_set == 'true' ||
+          (github.event_name == 'workflow_dispatch' && !inputs.ignore_checks)
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          validate_green=false
-          # Every 20 seconds for up to 15 minutes.
-          for _ in $(seq 45); do
-            read -r status conclusion < <(
-              gh api "repos/${{ github.repository }}/actions/workflows/validate.yml/runs?head_sha=${HEAD_SHA}&per_page=1" \
-                --jq '(.workflow_runs[0] // {}) | "\(.status // "missing") \(.conclusion // "none")"'
-            )
-            if [ "$status" = "completed" ]; then
-              echo "Validate concluded $conclusion for $HEAD_SHA."
-              [ "$conclusion" = "success" ] && validate_green=true
+          sha="$HEAD_SHA"
+          if [ -z "$sha" ]; then
+            sha="$(git rev-parse origin/main)"
+            # A release commit carries [skip ci], so the commit before it is the one checked.
+            if [[ "$(git log -1 --format=%s "$sha")" == chore\(release\):*\ \[skip\ ci\] ]]; then
+              sha="$(git rev-parse "$sha^")"
+            fi
+          fi
+          green=true
+          for workflow in test.yml validate.yml; do
+            # Every 20 seconds for up to 15 minutes.
+            for _ in $(seq 45); do
+              read -r status conclusion < <(
+                gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?head_sha=${sha}&per_page=1" \
+                  --jq '(.workflow_runs[0] // {}) | "\(.status // "missing") \(.conclusion // "none")"'
+              )
+              if [ "$status" = "completed" ]; then
+                break
+              fi
+              echo "$workflow is $status for $sha; checking again in 20 seconds."
+              sleep 20
+            done
+            echo "$workflow is $status, $conclusion, for $sha."
+            if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
+              green=false
               break
             fi
-            echo "Validate is $status for $HEAD_SHA; checking again in 20 seconds."
-            sleep 20
           done
-          if [ "$status" != "completed" ]; then
-            echo "Validate did not finish for $HEAD_SHA within 15 minutes."
-          fi
-          echo "validate_green=$validate_green" >> "$GITHUB_OUTPUT"
+          echo "green=$green" >> "$GITHUB_OUTPUT"
 
-      - name: Skip stale or partial workflow runs
+      - name: Decide what to release
         id: head_check
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
           EVENT_NAME: ${{ github.event_name }}
-          BUMP_INPUT: ${{ inputs.bump || 'none' }}
-          VALIDATE_GREEN: ${{ steps.validate_green.outputs.validate_green }}
+          BUMP_INPUT: ${{ inputs.bump }}
+          IGNORE_CHECKS: ${{ inputs.ignore_checks }}
+          HAND_SET: ${{ steps.hand_set.outputs.hand_set }}
+          CHECKS_GREEN: ${{ steps.checks.outputs.green }}
         run: |
           current_sha="$(git rev-parse origin/main)"
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$CHECKS_GREEN" != "true" ] && [ "$IGNORE_CHECKS" != "true" ]; then
+              echo "::error::Test and Validate have not both succeeded for main, so it is not released. Fix them, or run this again with ignore_checks."
+              exit 1
+            fi
+            # Nothing has landed since the last release, so a new version would be an empty one.
+            if [ "$BUMP_INPUT" = "auto" ] && git tag --points-at "$current_sha" | grep -Eq '^[0-9]+(\.[0-9]+)+$'; then
+              echo "::notice::$current_sha is already released, so there is nothing new to release."
+              echo "release_action=skip" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             if [ "$BUMP_INPUT" = "none" ]; then
               echo "release_action=existing" >> "$GITHUB_OUTPUT"
             else
@@ -122,30 +164,24 @@ jobs:
             exit 0
           fi
 
-          if [ "$VALIDATE_GREEN" != "true" ]; then
-            echo "Validate has not succeeded for $EXPECTED_SHA, so it is not released."
+          if [ "$HAND_SET" != "true" ]; then
+            echo "::notice::Not released: manifest.json holds no new version. Run the Release workflow to release what has landed."
             echo "release_action=skip" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Already released — by an earlier run for this commit, such as Test re-run after
-          # it released. Without this, a hand-set version released with nothing to commit
-          # would be bumped and released a second time.
-          if git tag --points-at "$current_sha" | grep -Eq '^[0-9]+(\.[0-9]+)+$'; then
-            echo "$current_sha is already released."
+          if [ "$CHECKS_GREEN" != "true" ]; then
+            echo "Test and Validate have not both succeeded for $EXPECTED_SHA, so it is not released."
             echo "release_action=skip" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [ "$current_sha" = "$EXPECTED_SHA" ]; then
-            echo "release_action=bump" >> "$GITHUB_OUTPUT"
-            echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
+          # This commit, or the release commit an earlier run made for it and never published.
           previous_sha="$(git rev-parse "$current_sha^")"
           latest_subject="$(git log -1 --format=%s "$current_sha")"
-          if [ "$previous_sha" = "$EXPECTED_SHA" ] && [[ "$latest_subject" == chore\(release\):*\ \[skip\ ci\] ]]; then
+          if [ "$current_sha" = "$EXPECTED_SHA" ] || {
+            [ "$previous_sha" = "$EXPECTED_SHA" ] && [[ "$latest_subject" == chore\(release\):*\ \[skip\ ci\] ]]
+          }; then
             echo "release_action=existing" >> "$GITHUB_OUTPUT"
             echo "release_target=$current_sha" >> "$GITHUB_OUTPUT"
             exit 0
@@ -165,17 +201,13 @@ jobs:
         id: bump
         env:
           RELEASE_ACTION: ${{ steps.head_check.outputs.release_action }}
-          BUMP_INPUT: ${{ inputs.bump || 'none' }}
-          EVENT_NAME: ${{ github.event_name }}
+          BUMP_INPUT: ${{ inputs.bump }}
         run: |
-          # The automatic path keeps a hand-set, not-yet-released version and bumps a
-          # released one — see the header. A manual dispatch that asks for a bump always
-          # bumps; one that asks for none, and the retry of a committed-but-unpublished
-          # release, release the manifest version as it stands.
+          # `existing` is the manifest version as it stands: a hand-set one, a manual `none`,
+          # or the retry of a committed-but-unpublished release. Otherwise it is a manual
+          # run's choice. See the header.
           if [ "$RELEASE_ACTION" = "existing" ]; then
             bump=none
-          elif [ "$EVENT_NAME" = "workflow_run" ]; then
-            bump=auto
           else
             bump="$BUMP_INPUT"
           fi

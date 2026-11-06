@@ -102,8 +102,8 @@ def limit_text(value: float, *, up: bool) -> str:
 
 def _requested(
     call: ServiceCall, coordinator: FaucetCoordinator
-) -> tuple[float, str | None]:
-    """(litres, preset name or None) for one faucet, or raise why not."""
+) -> tuple[float, str | None, tuple[float, str] | None]:
+    """The `async_dispense` arguments for one faucet, or raise why not."""
     if (name := call.data.get(ATTR_PRESET)) is not None:
         if (preset := coordinator.find_preset(name)) is None:
             raise ServiceValidationError(
@@ -121,9 +121,10 @@ def _requested(
                 translation_key="preset_out_of_range",
                 translation_placeholders={"title": preset.title},
             )
-        return preset.liters, preset.title
+        return preset.liters, preset.title, preset.asked
     unit = call.data.get(ATTR_UNIT, coordinator.profile.service_unit)
-    ml = to_ml(call.data[ATTR_AMOUNT], unit)
+    amount = call.data[ATTR_AMOUNT]
+    ml = to_ml(amount, unit)
     if not DISPENSE_MIN_ML <= ml <= DISPENSE_MAX_ML:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
@@ -134,7 +135,7 @@ def _requested(
                 "unit": UNIT_LABELS[unit],
             },
         )
-    return ml / 1000, None
+    return ml / 1000, None, (amount, unit)
 
 
 async def _async_dispense(call: ServiceCall) -> None:
@@ -143,8 +144,8 @@ async def _async_dispense(call: ServiceCall) -> None:
         (faucet, _requested(call, faucet))
         for faucet in _target_faucets(call.hass, call)
     ]
-    for faucet, (liters, preset) in requests:
-        await faucet.async_dispense(liters, preset)
+    for faucet, request in requests:
+        await faucet.async_dispense(*request)
 
 
 def async_register_faucet_services(hass: HomeAssistant) -> None:

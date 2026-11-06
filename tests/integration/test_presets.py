@@ -148,7 +148,7 @@ def test_parse_faucet_experiences() -> None:
             ]
         },
         DEVICE_ID,
-    ) == [FaucetPreset("c", "Two", 2 * 0.2365880012512207)]
+    ) == [FaucetPreset("c", "Two", 2 * 0.2365880012512207, (2.0, "cup"))]
     assert parse_faucet_experiences({"faucetExperienceList": []}, DEVICE_ID) == []
     assert parse_faucet_experiences({"sensateExperiences": []}, DEVICE_ID) is None
     assert (
@@ -353,3 +353,39 @@ async def test_settings_listed_under_configuration(
     # The buttons they set stay under Controls.
     for key in ("dispense_set_amount", "dispense_preset"):
         assert category(BUTTON_DOMAIN, key) is None
+
+
+@pytest.mark.parametrize(
+    ("display", "liters", "asked"),
+    [
+        ("1 Cups", 0.236588, (1.0, "cup")),
+        ("1¾ Quarts", 1.656118, (1.75, "qt")),
+        ("¼ Gallons", 0.946353, (0.25, "gal")),
+        ("750 Milliliters", 0.75, (750.0, "ml")),
+        ("¾ Liters", 0.75, (0.75, "l")),
+        # Kohler rounding the amount is still the same amount.
+        ("1 Cups", 0.24, (1.0, "cup")),
+        # What pours decides: wording that says otherwise isn't shown.
+        ("1 Cups", 0.25, None),
+        ("3 Gallons", 1.0, None),
+        # Wording the integration can't read.
+        ("3 L", 3.0, None),
+        ("a glass", 0.25, None),
+        (None, 0.25, None),
+    ],
+)
+def test_a_preset_keeps_its_saved_wording(display, liters, asked) -> None:
+    payload = {
+        "sensateExperiences": [
+            {
+                "experienceId": "p",
+                "deviceId": DEVICE_ID,
+                "title": "Mine",
+                "dispenseAmount": liters,
+                "displayQuantity": display,
+            }
+        ]
+    }
+    assert parse_presets(payload, DEVICE_ID) == [
+        FaucetPreset("p", "Mine", liters, asked)
+    ]

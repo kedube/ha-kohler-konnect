@@ -382,12 +382,6 @@ async def test_the_panel_hears_about_every_device(
     faucet = devices["faucet"]
     assert faucet["id"] == ha_device_id(hass, DEVICE_ID)
     assert faucet["units"]["dispense"] == "mL"
-    assert faucet["quick_amounts"][0] == {
-        "key": "50ml",
-        "amount": 50,
-        "unit": "mL",
-        "label": "50 mL",
-    }
     assert faucet["capabilities"]["presets"] == [
         {"name": "Pasta pot", "amount": 3000, "unit": "mL"}
     ]

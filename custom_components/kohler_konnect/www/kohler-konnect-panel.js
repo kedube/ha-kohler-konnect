@@ -29,7 +29,7 @@ var e = globalThis, t = e.ShadowRoot && (e.ShadyCSS === void 0 || e.ShadyCSS.nat
 	let t = "";
 	for (let n of e.cssRules) t += n.cssText;
 	return a(t);
-})(e) : e, { is: l, defineProperty: u, getOwnPropertyDescriptor: ee, getOwnPropertyNames: te, getOwnPropertySymbols: ne, getPrototypeOf: re } = Object, d = globalThis, ie = d.trustedTypes, ae = ie ? ie.emptyScript : "", oe = d.reactiveElementPolyfillSupport, f = (e, t) => e, se = {
+})(e) : e, { is: l, defineProperty: u, getOwnPropertyDescriptor: ee, getOwnPropertyNames: te, getOwnPropertySymbols: d, getPrototypeOf: ne } = Object, re = globalThis, ie = re.trustedTypes, ae = ie ? ie.emptyScript : "", oe = re.reactiveElementPolyfillSupport, f = (e, t) => e, se = {
 	toAttribute(e, t) {
 		switch (t) {
 			case Boolean:
@@ -66,7 +66,7 @@ var e = globalThis, t = e.ShadowRoot && (e.ShadyCSS === void 0 || e.ShadyCSS.nat
 	useDefault: !1,
 	hasChanged: ce
 };
-Symbol.metadata ??= Symbol("metadata"), d.litPropertyMetadata ??= /* @__PURE__ */ new WeakMap();
+Symbol.metadata ??= Symbol("metadata"), re.litPropertyMetadata ??= /* @__PURE__ */ new WeakMap();
 var p = class extends HTMLElement {
 	static addInitializer(e) {
 		this._$Ei(), (this.l ??= []).push(e);
@@ -104,13 +104,13 @@ var p = class extends HTMLElement {
 	}
 	static _$Ei() {
 		if (this.hasOwnProperty(f("elementProperties"))) return;
-		let e = re(this);
+		let e = ne(this);
 		e.finalize(), e.l !== void 0 && (this.l = [...e.l]), this.elementProperties = new Map(e.elementProperties);
 	}
 	static finalize() {
 		if (this.hasOwnProperty(f("finalized"))) return;
 		if (this.finalized = !0, this._$Ei(), this.hasOwnProperty(f("properties"))) {
-			let e = this.properties, t = [...te(e), ...ne(e)];
+			let e = this.properties, t = [...te(e), ...d(e)];
 			for (let n of t) this.createProperty(n, e[n]);
 		}
 		let e = this[Symbol.metadata];
@@ -251,88 +251,88 @@ var p = class extends HTMLElement {
 	updated(e) {}
 	firstUpdated(e) {}
 };
-p.elementStyles = [], p.shadowRootOptions = { mode: "open" }, p[f("elementProperties")] = /* @__PURE__ */ new Map(), p[f("finalized")] = /* @__PURE__ */ new Map(), oe?.({ ReactiveElement: p }), (d.reactiveElementVersions ??= []).push("2.1.2");
+p.elementStyles = [], p.shadowRootOptions = { mode: "open" }, p[f("elementProperties")] = /* @__PURE__ */ new Map(), p[f("finalized")] = /* @__PURE__ */ new Map(), oe?.({ ReactiveElement: p }), (re.reactiveElementVersions ??= []).push("2.1.2");
 // node_modules/lit-html/lit-html.js
-var ue = globalThis, de = (e) => e, fe = ue.trustedTypes, pe = fe ? fe.createPolicy("lit-html", { createHTML: (e) => e }) : void 0, me = "$lit$", m = `lit$${Math.random().toFixed(9).slice(2)}$`, he = "?" + m, ge = `<${he}>`, h = document, g = () => h.createComment(""), _ = (e) => e === null || typeof e != "object" && typeof e != "function", _e = Array.isArray, ve = (e) => _e(e) || typeof e?.[Symbol.iterator] == "function", ye = "[ 	\n\f\r]", v = /<(?:(!--|\/[^a-zA-Z])|(\/?[a-zA-Z][^>\s]*)|(\/?$))/g, be = /-->/g, xe = />/g, y = RegExp(`>|${ye}(?:([^\\s"'>=/]+)(${ye}*=${ye}*(?:[^ \t\n\f\r"'\`<>=]|("|')|))|$)`, "g"), Se = /'/g, Ce = /"/g, we = /^(?:script|style|textarea|title)$/i, Te = (e) => (t, ...n) => ({
+var ue = globalThis, de = (e) => e, m = ue.trustedTypes, fe = m ? m.createPolicy("lit-html", { createHTML: (e) => e }) : void 0, pe = "$lit$", h = `lit$${Math.random().toFixed(9).slice(2)}$`, me = "?" + h, he = `<${me}>`, g = document, _ = () => g.createComment(""), v = (e) => e === null || typeof e != "object" && typeof e != "function", ge = Array.isArray, _e = (e) => ge(e) || typeof e?.[Symbol.iterator] == "function", ve = "[ 	\n\f\r]", y = /<(?:(!--|\/[^a-zA-Z])|(\/?[a-zA-Z][^>\s]*)|(\/?$))/g, ye = /-->/g, be = />/g, b = RegExp(`>|${ve}(?:([^\\s"'>=/]+)(${ve}*=${ve}*(?:[^ \t\n\f\r"'\`<>=]|("|')|))|$)`, "g"), xe = /'/g, Se = /"/g, Ce = /^(?:script|style|textarea|title)$/i, we = (e) => (t, ...n) => ({
 	_$litType$: e,
 	strings: t,
 	values: n
-}), b = Te(1), x = Te(2), S = Symbol.for("lit-noChange"), C = Symbol.for("lit-nothing"), Ee = /* @__PURE__ */ new WeakMap(), w = h.createTreeWalker(h, 129);
-function De(e, t) {
-	if (!_e(e) || !e.hasOwnProperty("raw")) throw Error("invalid template strings array");
-	return pe === void 0 ? t : pe.createHTML(t);
+}), x = we(1), S = we(2), C = Symbol.for("lit-noChange"), w = Symbol.for("lit-nothing"), Te = /* @__PURE__ */ new WeakMap(), T = g.createTreeWalker(g, 129);
+function Ee(e, t) {
+	if (!ge(e) || !e.hasOwnProperty("raw")) throw Error("invalid template strings array");
+	return fe === void 0 ? t : fe.createHTML(t);
 }
-var Oe = (e, t) => {
-	let n = e.length - 1, r = [], i, a = t === 2 ? "<svg>" : t === 3 ? "<math>" : "", o = v;
+var De = (e, t) => {
+	let n = e.length - 1, r = [], i, a = t === 2 ? "<svg>" : t === 3 ? "<math>" : "", o = y;
 	for (let t = 0; t < n; t++) {
 		let n = e[t], s, c, l = -1, u = 0;
-		for (; u < n.length && (o.lastIndex = u, c = o.exec(n), c !== null);) u = o.lastIndex, o === v ? c[1] === "!--" ? o = be : c[1] === void 0 ? c[2] === void 0 ? c[3] !== void 0 && (o = y) : (we.test(c[2]) && (i = RegExp("</" + c[2], "g")), o = y) : o = xe : o === y ? c[0] === ">" ? (o = i ?? v, l = -1) : c[1] === void 0 ? l = -2 : (l = o.lastIndex - c[2].length, s = c[1], o = c[3] === void 0 ? y : c[3] === "\"" ? Ce : Se) : o === Ce || o === Se ? o = y : o === be || o === xe ? o = v : (o = y, i = void 0);
-		let ee = o === y && e[t + 1].startsWith("/>") ? " " : "";
-		a += o === v ? n + ge : l >= 0 ? (r.push(s), n.slice(0, l) + me + n.slice(l) + m + ee) : n + m + (l === -2 ? t : ee);
+		for (; u < n.length && (o.lastIndex = u, c = o.exec(n), c !== null);) u = o.lastIndex, o === y ? c[1] === "!--" ? o = ye : c[1] === void 0 ? c[2] === void 0 ? c[3] !== void 0 && (o = b) : (Ce.test(c[2]) && (i = RegExp("</" + c[2], "g")), o = b) : o = be : o === b ? c[0] === ">" ? (o = i ?? y, l = -1) : c[1] === void 0 ? l = -2 : (l = o.lastIndex - c[2].length, s = c[1], o = c[3] === void 0 ? b : c[3] === "\"" ? Se : xe) : o === Se || o === xe ? o = b : o === ye || o === be ? o = y : (o = b, i = void 0);
+		let ee = o === b && e[t + 1].startsWith("/>") ? " " : "";
+		a += o === y ? n + he : l >= 0 ? (r.push(s), n.slice(0, l) + pe + n.slice(l) + h + ee) : n + h + (l === -2 ? t : ee);
 	}
-	return [De(e, a + (e[n] || "<?>") + (t === 2 ? "</svg>" : t === 3 ? "</math>" : "")), r];
-}, ke = class e {
+	return [Ee(e, a + (e[n] || "<?>") + (t === 2 ? "</svg>" : t === 3 ? "</math>" : "")), r];
+}, Oe = class e {
 	constructor({ strings: t, _$litType$: n }, r) {
 		let i;
 		this.parts = [];
-		let a = 0, o = 0, s = t.length - 1, c = this.parts, [l, u] = Oe(t, n);
-		if (this.el = e.createElement(l, r), w.currentNode = this.el.content, n === 2 || n === 3) {
+		let a = 0, o = 0, s = t.length - 1, c = this.parts, [l, u] = De(t, n);
+		if (this.el = e.createElement(l, r), T.currentNode = this.el.content, n === 2 || n === 3) {
 			let e = this.el.content.firstChild;
 			e.replaceWith(...e.childNodes);
 		}
-		for (; (i = w.nextNode()) !== null && c.length < s;) {
+		for (; (i = T.nextNode()) !== null && c.length < s;) {
 			if (i.nodeType === 1) {
-				if (i.hasAttributes()) for (let e of i.getAttributeNames()) if (e.endsWith(me)) {
-					let t = u[o++], n = i.getAttribute(e).split(m), r = /([.?@])?(.*)/.exec(t);
+				if (i.hasAttributes()) for (let e of i.getAttributeNames()) if (e.endsWith(pe)) {
+					let t = u[o++], n = i.getAttribute(e).split(h), r = /([.?@])?(.*)/.exec(t);
 					c.push({
 						type: 1,
 						index: a,
 						name: r[2],
 						strings: n,
-						ctor: r[1] === "." ? Ne : r[1] === "?" ? Pe : r[1] === "@" ? Fe : Me
+						ctor: r[1] === "." ? je : r[1] === "?" ? Me : r[1] === "@" ? Ne : D
 					}), i.removeAttribute(e);
-				} else e.startsWith(m) && (c.push({
+				} else e.startsWith(h) && (c.push({
 					type: 6,
 					index: a
 				}), i.removeAttribute(e));
-				if (we.test(i.tagName)) {
-					let e = i.textContent.split(m), t = e.length - 1;
+				if (Ce.test(i.tagName)) {
+					let e = i.textContent.split(h), t = e.length - 1;
 					if (t > 0) {
-						i.textContent = fe ? fe.emptyScript : "";
-						for (let n = 0; n < t; n++) i.append(e[n], g()), w.nextNode(), c.push({
+						i.textContent = m ? m.emptyScript : "";
+						for (let n = 0; n < t; n++) i.append(e[n], _()), T.nextNode(), c.push({
 							type: 2,
 							index: ++a
 						});
-						i.append(e[t], g());
+						i.append(e[t], _());
 					}
 				}
 			} else if (i.nodeType === 8) {
-				if (i.data === he) c.push({
+				if (i.data === me) c.push({
 					type: 2,
 					index: a
 				});
 				else {
 					let e = -1;
-					for (; (e = i.data.indexOf(m, e + 1)) !== -1;) c.push({
+					for (; (e = i.data.indexOf(h, e + 1)) !== -1;) c.push({
 						type: 7,
 						index: a
-					}), e += m.length - 1;
+					}), e += h.length - 1;
 				}
 			}
 			a++;
 		}
 	}
 	static createElement(e, t) {
-		let n = h.createElement("template");
+		let n = g.createElement("template");
 		return n.innerHTML = e, n;
 	}
 };
-function T(e, t, n = e, r) {
-	if (t === S) return t;
-	let i = r === void 0 ? n._$Cl : n._$Co?.[r], a = _(t) ? void 0 : t._$litDirective$;
-	return i?.constructor !== a && (i?._$AO?.(!1), a === void 0 ? i = void 0 : (i = new a(e), i._$AT(e, n, r)), r === void 0 ? n._$Cl = i : (n._$Co ??= [])[r] = i), i !== void 0 && (t = T(e, i._$AS(e, t.values), i, r)), t;
+function E(e, t, n = e, r) {
+	if (t === C) return t;
+	let i = r === void 0 ? n._$Cl : n._$Co?.[r], a = v(t) ? void 0 : t._$litDirective$;
+	return i?.constructor !== a && (i?._$AO?.(!1), a === void 0 ? i = void 0 : (i = new a(e), i._$AT(e, n, r)), r === void 0 ? n._$Cl = i : (n._$Co ??= [])[r] = i), i !== void 0 && (t = E(e, i._$AS(e, t.values), i, r)), t;
 }
-var Ae = class {
+var ke = class {
 	constructor(e, t) {
 		this._$AV = [], this._$AN = void 0, this._$AD = e, this._$AM = t;
 	}
@@ -343,28 +343,28 @@ var Ae = class {
 		return this._$AM._$AU;
 	}
 	u(e) {
-		let { el: { content: t }, parts: n } = this._$AD, r = (e?.creationScope ?? h).importNode(t, !0);
-		w.currentNode = r;
-		let i = w.nextNode(), a = 0, o = 0, s = n[0];
+		let { el: { content: t }, parts: n } = this._$AD, r = (e?.creationScope ?? g).importNode(t, !0);
+		T.currentNode = r;
+		let i = T.nextNode(), a = 0, o = 0, s = n[0];
 		for (; s !== void 0;) {
 			if (a === s.index) {
 				let t;
-				s.type === 2 ? t = new je(i, i.nextSibling, this, e) : s.type === 1 ? t = new s.ctor(i, s.name, s.strings, this, e) : s.type === 6 && (t = new Ie(i, this, e)), this._$AV.push(t), s = n[++o];
+				s.type === 2 ? t = new Ae(i, i.nextSibling, this, e) : s.type === 1 ? t = new s.ctor(i, s.name, s.strings, this, e) : s.type === 6 && (t = new Pe(i, this, e)), this._$AV.push(t), s = n[++o];
 			}
-			a !== s?.index && (i = w.nextNode(), a++);
+			a !== s?.index && (i = T.nextNode(), a++);
 		}
-		return w.currentNode = h, r;
+		return T.currentNode = g, r;
 	}
 	p(e) {
 		let t = 0;
 		for (let n of this._$AV) n !== void 0 && (n.strings === void 0 ? n._$AI(e[t]) : (n._$AI(e, n, t), t += n.strings.length - 2)), t++;
 	}
-}, je = class e {
+}, Ae = class e {
 	get _$AU() {
 		return this._$AM?._$AU ?? this._$Cv;
 	}
 	constructor(e, t, n, r) {
-		this.type = 2, this._$AH = C, this._$AN = void 0, this._$AA = e, this._$AB = t, this._$AM = n, this.options = r, this._$Cv = r?.isConnected ?? !0;
+		this.type = 2, this._$AH = w, this._$AN = void 0, this._$AA = e, this._$AB = t, this._$AM = n, this.options = r, this._$Cv = r?.isConnected ?? !0;
 	}
 	get parentNode() {
 		let e = this._$AA.parentNode, t = this._$AM;
@@ -377,7 +377,7 @@ var Ae = class {
 		return this._$AB;
 	}
 	_$AI(e, t = this) {
-		e = T(this, e, t), _(e) ? e === C || e == null || e === "" ? (this._$AH !== C && this._$AR(), this._$AH = C) : e !== this._$AH && e !== S && this._(e) : e._$litType$ === void 0 ? e.nodeType === void 0 ? ve(e) ? this.k(e) : this._(e) : this.T(e) : this.$(e);
+		e = E(this, e, t), v(e) ? e === w || e == null || e === "" ? (this._$AH !== w && this._$AR(), this._$AH = w) : e !== this._$AH && e !== C && this._(e) : e._$litType$ === void 0 ? e.nodeType === void 0 ? _e(e) ? this.k(e) : this._(e) : this.T(e) : this.$(e);
 	}
 	O(e) {
 		return this._$AA.parentNode.insertBefore(e, this._$AB);
@@ -386,24 +386,24 @@ var Ae = class {
 		this._$AH !== e && (this._$AR(), this._$AH = this.O(e));
 	}
 	_(e) {
-		this._$AH !== C && _(this._$AH) ? this._$AA.nextSibling.data = e : this.T(h.createTextNode(e)), this._$AH = e;
+		this._$AH !== w && v(this._$AH) ? this._$AA.nextSibling.data = e : this.T(g.createTextNode(e)), this._$AH = e;
 	}
 	$(e) {
-		let { values: t, _$litType$: n } = e, r = typeof n == "number" ? this._$AC(e) : (n.el === void 0 && (n.el = ke.createElement(De(n.h, n.h[0]), this.options)), n);
+		let { values: t, _$litType$: n } = e, r = typeof n == "number" ? this._$AC(e) : (n.el === void 0 && (n.el = Oe.createElement(Ee(n.h, n.h[0]), this.options)), n);
 		if (this._$AH?._$AD === r) this._$AH.p(t);
 		else {
-			let e = new Ae(r, this), n = e.u(this.options);
+			let e = new ke(r, this), n = e.u(this.options);
 			e.p(t), this.T(n), this._$AH = e;
 		}
 	}
 	_$AC(e) {
-		let t = Ee.get(e.strings);
-		return t === void 0 && Ee.set(e.strings, t = new ke(e)), t;
+		let t = Te.get(e.strings);
+		return t === void 0 && Te.set(e.strings, t = new Oe(e)), t;
 	}
 	k(t) {
-		_e(this._$AH) || (this._$AH = [], this._$AR());
+		ge(this._$AH) || (this._$AH = [], this._$AR());
 		let n = this._$AH, r, i = 0;
-		for (let a of t) i === n.length ? n.push(r = new e(this.O(g()), this.O(g()), this, this.options)) : r = n[i], r._$AI(a), i++;
+		for (let a of t) i === n.length ? n.push(r = new e(this.O(_()), this.O(_()), this, this.options)) : r = n[i], r._$AI(a), i++;
 		i < n.length && (this._$AR(r && r._$AB.nextSibling, i), n.length = i);
 	}
 	_$AR(e = this._$AA.nextSibling, t) {
@@ -415,7 +415,7 @@ var Ae = class {
 	setConnected(e) {
 		this._$AM === void 0 && (this._$Cv = e, this._$AP?.(e));
 	}
-}, Me = class {
+}, D = class {
 	get tagName() {
 		return this.element.tagName;
 	}
@@ -423,47 +423,47 @@ var Ae = class {
 		return this._$AM._$AU;
 	}
 	constructor(e, t, n, r, i) {
-		this.type = 1, this._$AH = C, this._$AN = void 0, this.element = e, this.name = t, this._$AM = r, this.options = i, n.length > 2 || n[0] !== "" || n[1] !== "" ? (this._$AH = Array(n.length - 1).fill(/* @__PURE__ */ new String()), this.strings = n) : this._$AH = C;
+		this.type = 1, this._$AH = w, this._$AN = void 0, this.element = e, this.name = t, this._$AM = r, this.options = i, n.length > 2 || n[0] !== "" || n[1] !== "" ? (this._$AH = Array(n.length - 1).fill(/* @__PURE__ */ new String()), this.strings = n) : this._$AH = w;
 	}
 	_$AI(e, t = this, n, r) {
 		let i = this.strings, a = !1;
-		if (i === void 0) e = T(this, e, t, 0), a = !_(e) || e !== this._$AH && e !== S, a && (this._$AH = e);
+		if (i === void 0) e = E(this, e, t, 0), a = !v(e) || e !== this._$AH && e !== C, a && (this._$AH = e);
 		else {
 			let r = e, o, s;
-			for (e = i[0], o = 0; o < i.length - 1; o++) s = T(this, r[n + o], t, o), s === S && (s = this._$AH[o]), a ||= !_(s) || s !== this._$AH[o], s === C ? e = C : e !== C && (e += (s ?? "") + i[o + 1]), this._$AH[o] = s;
+			for (e = i[0], o = 0; o < i.length - 1; o++) s = E(this, r[n + o], t, o), s === C && (s = this._$AH[o]), a ||= !v(s) || s !== this._$AH[o], s === w ? e = w : e !== w && (e += (s ?? "") + i[o + 1]), this._$AH[o] = s;
 		}
 		a && !r && this.j(e);
 	}
 	j(e) {
-		e === C ? this.element.removeAttribute(this.name) : this.element.setAttribute(this.name, e ?? "");
+		e === w ? this.element.removeAttribute(this.name) : this.element.setAttribute(this.name, e ?? "");
 	}
-}, Ne = class extends Me {
+}, je = class extends D {
 	constructor() {
 		super(...arguments), this.type = 3;
 	}
 	j(e) {
-		this.element[this.name] = e === C ? void 0 : e;
+		this.element[this.name] = e === w ? void 0 : e;
 	}
-}, Pe = class extends Me {
+}, Me = class extends D {
 	constructor() {
 		super(...arguments), this.type = 4;
 	}
 	j(e) {
-		this.element.toggleAttribute(this.name, !!e && e !== C);
+		this.element.toggleAttribute(this.name, !!e && e !== w);
 	}
-}, Fe = class extends Me {
+}, Ne = class extends D {
 	constructor(e, t, n, r, i) {
 		super(e, t, n, r, i), this.type = 5;
 	}
 	_$AI(e, t = this) {
-		if ((e = T(this, e, t, 0) ?? C) === S) return;
-		let n = this._$AH, r = e === C && n !== C || e.capture !== n.capture || e.once !== n.once || e.passive !== n.passive, i = e !== C && (n === C || r);
+		if ((e = E(this, e, t, 0) ?? w) === C) return;
+		let n = this._$AH, r = e === w && n !== w || e.capture !== n.capture || e.once !== n.once || e.passive !== n.passive, i = e !== w && (n === w || r);
 		r && this.element.removeEventListener(this.name, this, n), i && this.element.addEventListener(this.name, this, e), this._$AH = e;
 	}
 	handleEvent(e) {
 		typeof this._$AH == "function" ? this._$AH.call(this.options?.host ?? this.element, e) : this._$AH.handleEvent(e);
 	}
-}, Ie = class {
+}, Pe = class {
 	constructor(e, t, n) {
 		this.element = e, this.type = 6, this._$AN = void 0, this._$AM = t, this.options = n;
 	}
@@ -471,18 +471,18 @@ var Ae = class {
 		return this._$AM._$AU;
 	}
 	_$AI(e) {
-		T(this, e);
+		E(this, e);
 	}
-}, Le = ue.litHtmlPolyfillSupport;
-Le?.(ke, je), (ue.litHtmlVersions ??= []).push("3.3.3");
-var Re = (e, t, n) => {
+}, Fe = ue.litHtmlPolyfillSupport;
+Fe?.(Oe, Ae), (ue.litHtmlVersions ??= []).push("3.3.3");
+var Ie = (e, t, n) => {
 	let r = n?.renderBefore ?? t, i = r._$litPart$;
 	if (i === void 0) {
 		let e = n?.renderBefore ?? null;
-		r._$litPart$ = i = new je(t.insertBefore(g(), e), e, void 0, n ?? {});
+		r._$litPart$ = i = new Ae(t.insertBefore(_(), e), e, void 0, n ?? {});
 	}
 	return i._$AI(e), i;
-}, ze = globalThis, E = class extends p {
+}, Le = globalThis, O = class extends p {
 	constructor() {
 		super(...arguments), this.renderOptions = { host: this }, this._$Do = void 0;
 	}
@@ -492,7 +492,7 @@ var Re = (e, t, n) => {
 	}
 	update(e) {
 		let t = this.render();
-		this.hasUpdated || (this.renderOptions.isConnected = this.isConnected), super.update(e), this._$Do = Re(t, this.renderRoot, this.renderOptions);
+		this.hasUpdated || (this.renderOptions.isConnected = this.isConnected), super.update(e), this._$Do = Ie(t, this.renderRoot, this.renderOptions);
 	}
 	connectedCallback() {
 		super.connectedCallback(), this._$Do?.setConnected(!0);
@@ -501,18 +501,18 @@ var Re = (e, t, n) => {
 		super.disconnectedCallback(), this._$Do?.setConnected(!1);
 	}
 	render() {
-		return S;
+		return C;
 	}
 };
-E._$litElement$ = !0, E.finalized = !0, ze.litElementHydrateSupport?.({ LitElement: E });
-var Be = ze.litElementPolyfillSupport;
-Be?.({ LitElement: E }), (ze.litElementVersions ??= []).push("4.2.2");
+O._$litElement$ = !0, O.finalized = !0, Le.litElementHydrateSupport?.({ LitElement: O });
+var Re = Le.litElementPolyfillSupport;
+Re?.({ LitElement: O }), (Le.litElementVersions ??= []).push("4.2.2");
 // src/util/queue.ts
-var Ve = class extends Error {
+var ze = class extends Error {
 	constructor() {
 		super("superseded"), this.name = "Superseded";
 	}
-}, He = class {
+}, Be = class {
 	constructor() {
 		this.order = [], this.waiting = /* @__PURE__ */ new Map(), this.busy = !1;
 	}
@@ -527,7 +527,7 @@ var Ve = class extends Error {
 		});
 	}
 	stop(e) {
-		for (let e of this.waiting.values()) for (let t of e) t.reject(new Ve());
+		for (let e of this.waiting.values()) for (let t of e) t.reject(new ze());
 		return this.waiting.clear(), this.order.length = 0, e();
 	}
 	get pending() {
@@ -541,7 +541,7 @@ var Ve = class extends Error {
 					let e = this.order.shift(), t = this.waiting.get(e);
 					if (this.waiting.delete(e), !t?.length) continue;
 					let n = t[t.length - 1];
-					for (let e of t.slice(0, -1)) e.reject(new Ve());
+					for (let e of t.slice(0, -1)) e.reject(new ze());
 					try {
 						n.resolve(await n.run());
 					} catch (e) {
@@ -553,22 +553,22 @@ var Ve = class extends Error {
 			}
 		}
 	}
-}, D = "kohler_konnect", Ue = class {
+}, k = "kohler_konnect", Ve = class {
 	constructor(e) {
 		this.hass = e, this.queues = /* @__PURE__ */ new Map();
 	}
 	subscribeDevices(e) {
-		return this.hass().connection.subscribeMessage(e, { type: `${D}/subscribe_devices` });
+		return this.hass().connection.subscribeMessage(e, { type: `${k}/subscribe_devices` });
 	}
 	subscribeDevice(e, t) {
 		return this.hass().connection.subscribeMessage(t, {
-			type: `${D}/subscribe_device`,
+			type: `${k}/subscribe_device`,
 			device_id: e
 		});
 	}
 	usageHistory(e, t, n, r) {
 		return this.hass().callWS({
-			type: `${D}/usage_history`,
+			type: `${k}/usage_history`,
 			device_id: e,
 			period: t,
 			week_start: n,
@@ -577,32 +577,32 @@ var Ve = class extends Error {
 	}
 	deviceDetails(e) {
 		return this.hass().callWS({
-			type: `${D}/device_details`,
+			type: `${k}/device_details`,
 			device_id: e
 		});
 	}
 	restartValve(e) {
 		return this.hass().callWS({
-			type: `${D}/restart_valve`,
+			type: `${k}/restart_valve`,
 			device_id: e
 		});
 	}
 	setWarmupAutoRestore(e, t) {
 		return this.hass().callWS({
-			type: `${D}/set_warmup_auto_restore`,
+			type: `${k}/set_warmup_auto_restore`,
 			device_id: e,
 			enabled: t
 		});
 	}
 	getOptions(e) {
 		return this.hass().callWS({
-			type: `${D}/get_options`,
+			type: `${k}/get_options`,
 			entry_id: e
 		});
 	}
 	updateOptions(e, t) {
 		return this.hass().callWS({
-			type: `${D}/update_options`,
+			type: `${k}/update_options`,
 			entry_id: e,
 			changes: t
 		});
@@ -618,9 +618,9 @@ var Ve = class extends Error {
 	}
 	queue(e) {
 		let t = this.queues.get(e);
-		return t || (t = new He(), this.queues.set(e, t)), t;
+		return t || (t = new Be(), this.queues.set(e, t)), t;
 	}
-}, We = {
+}, He = {
 	account: "M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M7.07,18.28C7.5,17.38 10.12,16.5 12,16.5C13.88,16.5 16.5,17.38 16.93,18.28C15.57,19.36 13.86,20 12,20C10.14,20 8.43,19.36 7.07,18.28M18.36,16.83C16.93,15.09 13.46,14.5 12,14.5C10.54,14.5 7.07,15.09 5.64,16.83C4.62,15.5 4,13.82 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,13.82 19.38,15.5 18.36,16.83M12,6C10.06,6 8.5,7.56 8.5,9.5C8.5,11.44 10.06,13 12,13C13.94,13 15.5,11.44 15.5,9.5C15.5,7.56 13.94,6 12,6M12,11A1.5,1.5 0 0,1 10.5,9.5A1.5,1.5 0 0,1 12,8A1.5,1.5 0 0,1 13.5,9.5A1.5,1.5 0 0,1 12,11Z",
 	alert: "M11,15H13V17H11V15M11,7H13V13H11V7M12,2C6.47,2 2,6.5 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20Z",
 	back: "M15.41,16.58L10.83,12L15.41,7.41L14,6L8,12L14,18L15.41,16.58Z",
@@ -659,10 +659,10 @@ var Ve = class extends Error {
 	waterOutline: "M12,3.77L11.25,4.61C11.25,4.61 9.97,6.06 8.68,7.94C7.39,9.82 6,12.07 6,14.23A6,6 0 0,0 12,20.23A6,6 0 0,0 18,14.23C18,12.07 16.61,9.82 15.32,7.94C14.03,6.06 12.75,4.61 12.75,4.61L12,3.77M12,6.9C12.44,7.42 12.84,7.85 13.68,9.07C14.89,10.83 16,13.07 16,14.23C16,16.45 14.22,18.23 12,18.23C9.78,18.23 8,16.45 8,14.23C8,13.07 9.11,10.83 10.32,9.07C11.16,7.85 11.56,7.42 12,6.9Z",
 	wifi: "M12,21L15.6,16.2C14.6,15.45 13.35,15 12,15C10.65,15 9.4,15.45 8.4,16.2L12,21M12,3C7.95,3 4.21,4.34 1.2,6.6L3,9C5.5,7.12 8.62,6 12,6C15.38,6 18.5,7.12 21,9L22.8,6.6C19.79,4.34 16.05,3 12,3M12,9C9.3,9 6.81,9.89 4.8,11.4L6.6,13.8C8.1,12.67 9.97,12 12,12C14.03,12 15.9,12.67 17.4,13.8L19.2,11.4C17.19,9.89 14.7,9 12,9Z"
 };
-function O(e, t) {
-	return x`<svg viewBox="0 0 24 24" aria-hidden=${t ? "false" : "true"} role=${t ? "img" : "presentation"}>${t ? x`<title>${t}</title>` : null}<path fill="currentColor" d=${We[e]}></path></svg>`;
+function A(e, t) {
+	return S`<svg viewBox="0 0 24 24" aria-hidden=${t ? "false" : "true"} role=${t ? "img" : "presentation"}>${t ? S`<title>${t}</title>` : null}<path fill="currentColor" d=${He[e]}></path></svg>`;
 }
-function Ge(e, t = "") {
+function Ue(e, t = "") {
 	if (e !== null) {
 		if (e === 1) return "handshower";
 		if (e === 11) return "showerhead";
@@ -676,11 +676,11 @@ function Ge(e, t = "") {
 	let n = t.toLowerCase();
 	return n.includes("rain") ? "rainhead" : n.includes("hand") ? "handshower" : n.includes("body") ? "bodyspray" : n.includes("foot") ? "footspray" : n.includes("tub") || n.includes("bath") ? "tubfiller" : n.includes("shower") ? "showerhead" : "outlet";
 }
-var k = "1.6 4.4", Ke = {
-	rainhead: x`
+var j = "1.6 4.4", We = {
+	rainhead: S`
     <line x1="24" y1="4" x2="24" y2="11" />
     <rect x="7" y="11" width="34" height="5" rx="2.5" />
-    <g class="spray" stroke-dasharray=${k}>
+    <g class="spray" stroke-dasharray=${j}>
       <line x1="11" y1="21" x2="11" y2="44" />
       <line x1="16.2" y1="21" x2="16.2" y2="44" />
       <line x1="21.4" y1="21" x2="21.4" y2="44" />
@@ -688,23 +688,23 @@ var k = "1.6 4.4", Ke = {
       <line x1="31.8" y1="21" x2="31.8" y2="44" />
       <line x1="37" y1="21" x2="37" y2="44" />
     </g>`,
-	showerhead: x`
+	showerhead: S`
     <line x1="7" y1="4" x2="7" y2="12" />
     <path d="M7 8 H29 V11" />
     <path d="M25 11 H33 L39 21 H19 Z" />
-    <g class="spray" stroke-dasharray=${k}>
+    <g class="spray" stroke-dasharray=${j}>
       <line x1="21" y1="25" x2="17" y2="44" />
       <line x1="25" y1="25" x2="23" y2="44" />
       <line x1="29" y1="25" x2="29" y2="44" />
       <line x1="33" y1="25" x2="35" y2="44" />
       <line x1="37" y1="25" x2="41" y2="44" />
     </g>`,
-	showerheads: x`
+	showerheads: S`
     <line x1="6" y1="6" x2="6" y2="10" />
     <path d="M3 10 H9 L12 16 H0 Z" transform="translate(4 0)" />
     <line x1="34" y1="6" x2="34" y2="10" />
     <path d="M31 10 H37 L40 16 H28 Z" transform="translate(4 0)" />
-    <g class="spray" stroke-dasharray=${k}>
+    <g class="spray" stroke-dasharray=${j}>
       <line x1="7" y1="20" x2="5" y2="42" />
       <line x1="10" y1="20" x2="10" y2="42" />
       <line x1="13" y1="20" x2="15" y2="42" />
@@ -712,47 +712,47 @@ var k = "1.6 4.4", Ke = {
       <line x1="38" y1="20" x2="38" y2="42" />
       <line x1="41" y1="20" x2="43" y2="42" />
     </g>`,
-	handshower: x`
+	handshower: S`
     <circle cx="16" cy="14" r="6.5" />
     <line x1="20.5" y1="18.5" x2="31" y2="35" />
     <path d="M31 35 C34 41 38 43.5 44 43.5" />
-    <g class="spray" stroke-dasharray=${k}>
+    <g class="spray" stroke-dasharray=${j}>
       <line x1="11" y1="21" x2="5" y2="34" />
       <line x1="15" y1="22" x2="11" y2="38" />
       <line x1="19" y1="23" x2="17" y2="42" />
     </g>`,
-	bodyspray: x`
+	bodyspray: S`
     <rect x="5" y="8" width="8" height="32" rx="4" />
-    <g class="spray" stroke-dasharray=${k}>
+    <g class="spray" stroke-dasharray=${j}>
       <line x1="18" y1="16" x2="44" y2="16" />
       <line x1="18" y1="24" x2="44" y2="24" />
       <line x1="18" y1="32" x2="44" y2="32" />
     </g>`,
-	footspray: x`
+	footspray: S`
     <rect x="5" y="28" width="8" height="14" rx="4" />
-    <g class="spray" stroke-dasharray=${k}>
+    <g class="spray" stroke-dasharray=${j}>
       <line x1="18" y1="31" x2="44" y2="34" />
       <line x1="18" y1="38" x2="44" y2="43" />
     </g>
     <line x1="5" y1="45" x2="44" y2="45" opacity="0.5" />`,
-	tubfiller: x`
+	tubfiller: S`
     <path d="M5 12 H26 A6 6 0 0 1 32 18 V22" />
-    <g class="spray" stroke-dasharray=${k}>
+    <g class="spray" stroke-dasharray=${j}>
       <line x1="32" y1="26" x2="32" y2="40" />
     </g>
     <path d="M12 40 H44 V42 A4 4 0 0 1 40 46 H16 A4 4 0 0 1 12 42 Z" />`,
-	notplumbed: x`
+	notplumbed: S`
     <circle cx="24" cy="24" r="15" stroke-dasharray="3 4" />
     <line x1="14" y1="34" x2="34" y2="14" />`,
-	outlet: x`
+	outlet: S`
     <path d="M24 6 C24 6 12 20 12 29 A12 12 0 0 0 36 29 C36 20 24 6 24 6 Z" />`
 };
-function qe(e) {
-	return x`<svg class="fixture" viewBox="0 0 48 48" fill="none" stroke="currentColor"
-    stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${Ke[e]}</svg>`;
+function Ge(e) {
+	return S`<svg class="fixture" viewBox="0 0 48 48" fill="none" stroke="currentColor"
+    stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${We[e]}</svg>`;
 }
 // src/theme/shared.ts
-var A = o`
+var M = o`
   :host {
     font-family: var(--kk-font);
     color: var(--kk-text);
@@ -924,10 +924,10 @@ var A = o`
   }
 `;
 // src/components/define.ts
-function j(e, t) {
+function N(e, t) {
 	customElements.get(e) || customElements.define(e, t);
 }
-j("kkp-capsule", class extends E {
+N("kkp-capsule", class extends O {
 	static {
 		this.properties = {
 			items: { attribute: !1 },
@@ -935,7 +935,7 @@ j("kkp-capsule", class extends E {
 		};
 	}
 	static {
-		this.styles = [A, o`
+		this.styles = [M, o`
       :host {
         display: flex;
         justify-content: center;
@@ -990,18 +990,18 @@ j("kkp-capsule", class extends E {
     `];
 	}
 	render() {
-		return b`<nav>
-      ${this.items.map((e) => b`<button
+		return x`<nav>
+      ${this.items.map((e) => x`<button
           aria-current=${e.key === this.active ? "page" : "false"}
           @click=${() => this.dispatchEvent(new CustomEvent("kkp-select", { detail: e.key }))}
         >
-          ${O(e.icon)}<span>${e.label}</span>
+          ${A(e.icon)}<span>${e.label}</span>
         </button>`)}
     </nav>`;
 	}
 });
 // src/i18n/de.json
-var Je = {
+var Ke = {
 	"app.title": "Kohler Konnect",
 	"app.loading": "Verbindung zu Kohler Konnect wird hergestellt …",
 	"app.no_devices": "Noch keine Kohler-Geräte",
@@ -1083,7 +1083,15 @@ var Je = {
 	"faucet.see_less": "Weniger anzeigen",
 	"faucet.presets": "Voreinstellungen",
 	"faucet.no_presets": "Voreinstellungen, die du in der Konnect-App erstellst, erscheinen hier.",
-	"faucet.custom": "Eigene Menge",
+	"faucet.amount": "Menge",
+	"faucet.unit": "Einheit",
+	"faucet.unit_ml": "Milliliter",
+	"faucet.unit_l": "Liter",
+	"faucet.unit_cup": "Tassen",
+	"faucet.unit_qt": "Quarts",
+	"faucet.unit_gal": "Gallonen",
+	"faucet.cup": "Tasse",
+	"faucet.cups": "Tassen",
 	"faucet.auto_off": "Schaltet sich in {time} automatisch ab",
 	"faucet.handle_closed": "Öffne den Hebel, um das Wasser aus der Ferne laufen zu lassen.",
 	"faucet.firmware_downloading": "Die Armatur lädt Firmware herunter. Wasser lässt sich erst danach einschalten.",
@@ -1262,7 +1270,7 @@ var Je = {
 	"toilet.occupied": "Besetzt",
 	"ice_bath.week_of": "Diese Woche: {done} von {target}",
 	"ice_bath.week": "Diese Woche: {done}"
-}, Ye = {
+}, qe = {
 	"app.title": "Kohler Konnect",
 	"app.loading": "Connecting to Kohler Konnect…",
 	"app.no_devices": "No Kohler devices yet",
@@ -1344,7 +1352,15 @@ var Je = {
 	"faucet.see_less": "See less",
 	"faucet.presets": "Presets",
 	"faucet.no_presets": "Presets made in the Konnect app appear here.",
-	"faucet.custom": "Custom amount",
+	"faucet.amount": "Amount",
+	"faucet.unit": "Unit",
+	"faucet.unit_ml": "Milliliters",
+	"faucet.unit_l": "Liters",
+	"faucet.unit_cup": "Cups",
+	"faucet.unit_qt": "Quarts",
+	"faucet.unit_gal": "Gallons",
+	"faucet.cup": "cup",
+	"faucet.cups": "cups",
 	"faucet.auto_off": "Turns off automatically in {time}",
 	"faucet.handle_closed": "Open the handle to run water remotely.",
 	"faucet.firmware_downloading": "The faucet is downloading firmware. Water can't be started until it finishes.",
@@ -1523,7 +1539,7 @@ var Je = {
 	"toilet.occupied": "In use",
 	"ice_bath.week_of": "This week: {done} of {target}",
 	"ice_bath.week": "This week: {done}"
-}, Xe = {
+}, Je = {
 	"app.title": "Kohler Konnect",
 	"app.loading": "Conectando con Kohler Konnect…",
 	"app.no_devices": "Todavía no hay dispositivos Kohler",
@@ -1605,7 +1621,15 @@ var Je = {
 	"faucet.see_less": "Ver menos",
 	"faucet.presets": "Preajustes",
 	"faucet.no_presets": "Los preajustes creados en la app Konnect aparecen aquí.",
-	"faucet.custom": "Cantidad personalizada",
+	"faucet.amount": "Cantidad",
+	"faucet.unit": "Unidad",
+	"faucet.unit_ml": "Mililitros",
+	"faucet.unit_l": "Litros",
+	"faucet.unit_cup": "Tazas",
+	"faucet.unit_qt": "Cuartos de galón",
+	"faucet.unit_gal": "Galones",
+	"faucet.cup": "taza",
+	"faucet.cups": "tazas",
 	"faucet.auto_off": "Se cierra automáticamente en {time}",
 	"faucet.handle_closed": "Abre la manija para usar el agua a distancia.",
 	"faucet.firmware_downloading": "La llave está descargando el firmware. No se puede abrir el agua hasta que termine.",
@@ -1784,7 +1808,7 @@ var Je = {
 	"toilet.occupied": "En uso",
 	"ice_bath.week_of": "Esta semana: {done} de {target}",
 	"ice_bath.week": "Esta semana: {done}"
-}, Ze = {
+}, Ye = {
 	"app.title": "Kohler Konnect",
 	"app.loading": "Conectando con Kohler Konnect…",
 	"app.no_devices": "Aún no hay dispositivos Kohler",
@@ -1866,7 +1890,15 @@ var Je = {
 	"faucet.see_less": "Ver menos",
 	"faucet.presets": "Preajustes",
 	"faucet.no_presets": "Los preajustes creados en la app Konnect aparecen aquí.",
-	"faucet.custom": "Cantidad personalizada",
+	"faucet.amount": "Cantidad",
+	"faucet.unit": "Unidad",
+	"faucet.unit_ml": "Mililitros",
+	"faucet.unit_l": "Litros",
+	"faucet.unit_cup": "Tazas",
+	"faucet.unit_qt": "Cuartos de galón",
+	"faucet.unit_gal": "Galones",
+	"faucet.cup": "taza",
+	"faucet.cups": "tazas",
 	"faucet.auto_off": "Se cierra automáticamente en {time}",
 	"faucet.handle_closed": "Abre la maneta para usar el agua a distancia.",
 	"faucet.firmware_downloading": "El grifo está descargando el firmware. No se puede abrir el agua hasta que termine.",
@@ -2045,7 +2077,7 @@ var Je = {
 	"toilet.occupied": "En uso",
 	"ice_bath.week_of": "Esta semana: {done} de {target}",
 	"ice_bath.week": "Esta semana: {done}"
-}, Qe = {
+}, Xe = {
 	"app.title": "Kohler Konnect",
 	"app.loading": "Connexion à Kohler Konnect…",
 	"app.no_devices": "Aucun appareil Kohler pour l'instant",
@@ -2127,7 +2159,15 @@ var Je = {
 	"faucet.see_less": "Voir moins",
 	"faucet.presets": "Préréglages",
 	"faucet.no_presets": "Les préréglages créés dans l'app Konnect apparaissent ici.",
-	"faucet.custom": "Quantité personnalisée",
+	"faucet.amount": "Quantité",
+	"faucet.unit": "Unité",
+	"faucet.unit_ml": "Millilitres",
+	"faucet.unit_l": "Litres",
+	"faucet.unit_cup": "Tasses",
+	"faucet.unit_qt": "Quarts",
+	"faucet.unit_gal": "Gallons",
+	"faucet.cup": "tasse",
+	"faucet.cups": "tasses",
 	"faucet.auto_off": "Coupure automatique dans {time}",
 	"faucet.handle_closed": "Ouvrez la manette pour faire couler l'eau à distance.",
 	"faucet.firmware_downloading": "Le robinet télécharge un firmware. L'eau ne peut pas être ouverte avant la fin du téléchargement.",
@@ -2306,7 +2346,7 @@ var Je = {
 	"toilet.occupied": "Occupé",
 	"ice_bath.week_of": "Cette semaine : {done} sur {target}",
 	"ice_bath.week": "Cette semaine : {done}"
-}, $e = {
+}, Ze = {
 	"app.title": "Kohler Konnect",
 	"app.loading": "Connessione a Kohler Konnect…",
 	"app.no_devices": "Ancora nessun dispositivo Kohler",
@@ -2388,7 +2428,15 @@ var Je = {
 	"faucet.see_less": "Mostra di meno",
 	"faucet.presets": "Preimpostazioni",
 	"faucet.no_presets": "Le preimpostazioni create nell'app Konnect compaiono qui.",
-	"faucet.custom": "Quantità personalizzata",
+	"faucet.amount": "Quantità",
+	"faucet.unit": "Unità",
+	"faucet.unit_ml": "Millilitri",
+	"faucet.unit_l": "Litri",
+	"faucet.unit_cup": "Tazze",
+	"faucet.unit_qt": "Quarti di gallone",
+	"faucet.unit_gal": "Galloni",
+	"faucet.cup": "tazza",
+	"faucet.cups": "tazze",
 	"faucet.auto_off": "Chiusura automatica tra {time}",
 	"faucet.handle_closed": "Apri la leva per far scorrere l'acqua da remoto.",
 	"faucet.firmware_downloading": "Il rubinetto sta scaricando il firmware. Non è possibile aprire l'acqua finché il download non termina.",
@@ -2567,7 +2615,7 @@ var Je = {
 	"toilet.occupied": "Occupato",
 	"ice_bath.week_of": "Questa settimana: {done} su {target}",
 	"ice_bath.week": "Questa settimana: {done}"
-}, et = {
+}, Qe = {
 	"app.title": "Kohler Konnect",
 	"app.loading": "Verbinding maken met Kohler Konnect…",
 	"app.no_devices": "Nog geen Kohler-apparaten",
@@ -2649,7 +2697,15 @@ var Je = {
 	"faucet.see_less": "Minder tonen",
 	"faucet.presets": "Voorinstellingen",
 	"faucet.no_presets": "Voorinstellingen die je in de Konnect-app maakt, verschijnen hier.",
-	"faucet.custom": "Eigen hoeveelheid",
+	"faucet.amount": "Hoeveelheid",
+	"faucet.unit": "Eenheid",
+	"faucet.unit_ml": "Milliliter",
+	"faucet.unit_l": "Liter",
+	"faucet.unit_cup": "Kopjes",
+	"faucet.unit_qt": "Quarts",
+	"faucet.unit_gal": "Gallons",
+	"faucet.cup": "kopje",
+	"faucet.cups": "kopjes",
 	"faucet.auto_off": "Gaat over {time} automatisch uit",
 	"faucet.handle_closed": "Open de hendel om het water op afstand te laten lopen.",
 	"faucet.firmware_downloading": "De kraan downloadt firmware. Het water kan pas worden aangezet als dat klaar is.",
@@ -2828,7 +2884,7 @@ var Je = {
 	"toilet.occupied": "Bezet",
 	"ice_bath.week_of": "Deze week: {done} van {target}",
 	"ice_bath.week": "Deze week: {done}"
-}, tt = {
+}, $e = {
 	"app.title": "Kohler Konnect",
 	"app.loading": "Łączenie z Kohler Konnect…",
 	"app.no_devices": "Nie ma jeszcze urządzeń Kohler",
@@ -2910,7 +2966,15 @@ var Je = {
 	"faucet.see_less": "Pokaż mniej",
 	"faucet.presets": "Ustawienia wstępne",
 	"faucet.no_presets": "Tutaj pojawią się ustawienia wstępne utworzone w aplikacji Konnect.",
-	"faucet.custom": "Własna ilość",
+	"faucet.amount": "Ilość",
+	"faucet.unit": "Jednostka",
+	"faucet.unit_ml": "Mililitry",
+	"faucet.unit_l": "Litry",
+	"faucet.unit_cup": "Szklanki",
+	"faucet.unit_qt": "Kwarty",
+	"faucet.unit_gal": "Galony",
+	"faucet.cup": "szkl.",
+	"faucet.cups": "szkl.",
 	"faucet.auto_off": "Automatyczne zakręcenie za {time}",
 	"faucet.handle_closed": "Otwórz dźwignię, aby zdalnie odkręcić wodę.",
 	"faucet.firmware_downloading": "Kran pobiera oprogramowanie układowe. Do zakończenia pobierania nie można odkręcić wody.",
@@ -3089,7 +3153,7 @@ var Je = {
 	"toilet.occupied": "Zajęte",
 	"ice_bath.week_of": "W tym tygodniu: {done} z {target}",
 	"ice_bath.week": "W tym tygodniu: {done}"
-}, nt = {
+}, et = {
 	"app.title": "Kohler Konnect",
 	"app.loading": "Conectando ao Kohler Konnect…",
 	"app.no_devices": "Ainda não há dispositivos Kohler",
@@ -3171,7 +3235,15 @@ var Je = {
 	"faucet.see_less": "Ver menos",
 	"faucet.presets": "Predefinições",
 	"faucet.no_presets": "As predefinições criadas no app Konnect aparecem aqui.",
-	"faucet.custom": "Quantidade personalizada",
+	"faucet.amount": "Quantidade",
+	"faucet.unit": "Unidade",
+	"faucet.unit_ml": "Mililitros",
+	"faucet.unit_l": "Litros",
+	"faucet.unit_cup": "Xícaras",
+	"faucet.unit_qt": "Quartos de galão",
+	"faucet.unit_gal": "Galões",
+	"faucet.cup": "xícara",
+	"faucet.cups": "xícaras",
 	"faucet.auto_off": "Fecha automaticamente em {time}",
 	"faucet.handle_closed": "Abra a alavanca para usar a água remotamente.",
 	"faucet.firmware_downloading": "A torneira está baixando o firmware. Não é possível abrir a água até o download terminar.",
@@ -3350,17 +3422,17 @@ var Je = {
 	"toilet.occupied": "Em uso",
 	"ice_bath.week_of": "Esta semana: {done} de {target}",
 	"ice_bath.week": "Esta semana: {done}"
-}, M = {
-	en: Ye,
-	de: Je,
-	es: Ze,
-	"es-419": Xe,
-	fr: Qe,
-	it: $e,
-	nl: et,
-	pl: tt,
-	"pt-BR": nt,
-	pt: nt,
+}, tt = {
+	en: qe,
+	de: Ke,
+	es: Ye,
+	"es-419": Je,
+	fr: Xe,
+	it: Ze,
+	nl: Qe,
+	pl: $e,
+	"pt-BR": et,
+	pt: et,
 	sv: {
 		"app.title": "Kohler Konnect",
 		"app.loading": "Ansluter till Kohler Konnect…",
@@ -3443,7 +3515,15 @@ var Je = {
 		"faucet.see_less": "Visa mindre",
 		"faucet.presets": "Förinställningar",
 		"faucet.no_presets": "Förinställningar som du skapar i Konnect-appen visas här.",
-		"faucet.custom": "Egen mängd",
+		"faucet.amount": "Mängd",
+		"faucet.unit": "Enhet",
+		"faucet.unit_ml": "Milliliter",
+		"faucet.unit_l": "Liter",
+		"faucet.unit_cup": "Koppar",
+		"faucet.unit_qt": "Quarts",
+		"faucet.unit_gal": "Gallon",
+		"faucet.cup": "kopp",
+		"faucet.cups": "koppar",
 		"faucet.auto_off": "Stängs av automatiskt om {time}",
 		"faucet.handle_closed": "Öppna handtaget för att kunna sätta på vattnet på distans.",
 		"faucet.firmware_downloading": "Kranen laddar ned firmware. Vattnet kan inte sättas på förrän det är klart.",
@@ -3623,22 +3703,22 @@ var Je = {
 		"ice_bath.week_of": "Denna vecka: {done} av {target}",
 		"ice_bath.week": "Denna vecka: {done}"
 	}
-}, rt = Ye, it = "en", at = "en";
-function ot(e) {
+}, nt = qe, rt = "en", it = "en";
+function at(e) {
 	let t = e || "en", n = t.split("-")[0];
-	at = M[t] ? t : M[n] ? n : "en", rt = M[at], it = t;
+	it = tt[t] ? t : tt[n] ? n : "en", nt = tt[it], rt = t;
 }
-function N() {
+function P() {
+	return rt;
+}
+function ot() {
 	return it;
 }
-function st() {
-	return at;
-}
-function P(e, t) {
-	let n = rt[e] ?? Ye[e] ?? e;
+function F(e, t) {
+	let n = nt[e] ?? qe[e] ?? e;
 	return t ? n.replace(/\{(\w+)\}/g, (e, n) => n in t ? String(t[n]) : e) : n;
 }
-Object.keys(M), j("kkp-dialog", class extends E {
+Object.keys(tt), N("kkp-dialog", class extends O {
 	static {
 		this.properties = {
 			open: { type: Boolean },
@@ -3649,7 +3729,7 @@ Object.keys(M), j("kkp-dialog", class extends E {
 		};
 	}
 	static {
-		this.styles = [A, o`
+		this.styles = [M, o`
       dialog {
         width: min(440px, calc(100vw - 32px));
         padding: 28px;
@@ -3696,7 +3776,7 @@ Object.keys(M), j("kkp-dialog", class extends E {
 		this.dispatchEvent(new CustomEvent("kkp-answer", { detail: e }));
 	}
 	render() {
-		return b`<dialog
+		return x`<dialog
       aria-labelledby="title"
       aria-describedby="body"
       @cancel=${(e) => {
@@ -3706,14 +3786,14 @@ Object.keys(M), j("kkp-dialog", class extends E {
       <h2 id="title">${this.heading}</h2>
       <p id="body">${this.body}</p>
       <div class="actions">
-        <button class="pill" @click=${() => this.answer(!1)}>${P("dialog.cancel")}</button>
+        <button class="pill" @click=${() => this.answer(!1)}>${F("dialog.cancel")}</button>
         <button class="pill ${this.destructive ? "danger" : "filled"}" @click=${() => this.answer(!0)}>
           ${this.confirmLabel}
         </button>
       </div>
     </dialog>`;
 	}
-}), j("kkp-header", class extends E {
+}), N("kkp-header", class extends O {
 	static {
 		this.properties = {
 			heading: {},
@@ -3724,7 +3804,7 @@ Object.keys(M), j("kkp-dialog", class extends E {
 		};
 	}
 	static {
-		this.styles = [A, o`
+		this.styles = [M, o`
       :host {
         display: block;
       }
@@ -3765,24 +3845,24 @@ Object.keys(M), j("kkp-dialog", class extends E {
 		this.renderRoot.querySelector("h1")?.focus();
 	}
 	render() {
-		return b`<header>
-      ${this.back ? b`<button class="round back" aria-label=${P("nav.back")} @click=${() => this.fire("kkp-back")}>
-          ${O("back")}
-        </button>` : this.menu ? b`<button class="round" aria-label=${P("nav.menu")} @click=${() => this.fire("kkp-menu")}>
-            ${O("menu")}
-          </button>` : b`<span></span>`}
+		return x`<header>
+      ${this.back ? x`<button class="round back" aria-label=${F("nav.back")} @click=${() => this.fire("kkp-back")}>
+          ${A("back")}
+        </button>` : this.menu ? x`<button class="round" aria-label=${F("nav.menu")} @click=${() => this.fire("kkp-menu")}>
+            ${A("menu")}
+          </button>` : x`<span></span>`}
       <h1 tabindex="-1">${this.heading}</h1>
-      ${this.more ? b`<button
+      ${this.more ? x`<button
             class="round end"
-            aria-label=${this.moreLabel || P("nav.more")}
+            aria-label=${this.moreLabel || F("nav.more")}
             @click=${() => this.fire("kkp-more")}
           >
-            ${O("more")}
-          </button>` : C}
+            ${A("more")}
+          </button>` : w}
     </header>`;
 	}
 });
-var ct = o`
+var st = o`
   :host {
     --kk-font: "Helvetica Now Text", "Helvetica Neue", Helvetica, Roboto, Arial,
       sans-serif;
@@ -3874,34 +3954,34 @@ var ct = o`
   }
 `;
 // src/components/rows.ts
-function F(e) {
-	let t = b`
+function I(e) {
+	let t = x`
     <span class="text">
-      <span class="label">${e.label}${e.tag ? b`<span class="tag">${e.tag}</span>` : C}</span>
-      ${e.description ? b`<span class="sub">${e.description}</span>` : C}
+      <span class="label">${e.label}${e.tag ? x`<span class="tag">${e.tag}</span>` : w}</span>
+      ${e.description ? x`<span class="sub">${e.description}</span>` : w}
     </span>
-    ${e.value !== void 0 && e.value !== null ? b`<span class="value">${e.value}</span>` : C}
-    ${e.trailing ?? C}
-    ${e.chevron ? b`<span class="chev ${e.expanded ? "open" : ""}">${O("chevronRight")}</span>` : C}
+    ${e.value !== void 0 && e.value !== null ? x`<span class="value">${e.value}</span>` : w}
+    ${e.trailing ?? w}
+    ${e.chevron ? x`<span class="chev ${e.expanded ? "open" : ""}">${A("chevronRight")}</span>` : w}
   `;
-	return e.onClick ? b`<button
+	return e.onClick ? x`<button
     class="row ${e.destructive ? "destructive" : ""}"
-    data-key=${e.key ?? C}
+    data-key=${e.key ?? w}
     ?disabled=${e.disabled}
-    aria-expanded=${e.expanded === void 0 ? C : String(e.expanded)}
+    aria-expanded=${e.expanded === void 0 ? w : String(e.expanded)}
     @click=${e.onClick}
   >
     ${t}
-  </button>` : b`<div class="row">${t}</div>`;
+  </button>` : x`<div class="row">${t}</div>`;
 }
-function I(e, t, n) {
-	return b`<section class="group">
-    ${e ? b`<h2 tabindex="-1">${e}</h2>` : C}
-    ${n ? b`<p class="desc">${n}</p>` : C}
+function L(e, t, n) {
+	return x`<section class="group">
+    ${e ? x`<h2 tabindex="-1">${e}</h2>` : w}
+    ${n ? x`<p class="desc">${n}</p>` : w}
     <div class="rows">${t}</div>
   </section>`;
 }
-function lt(e) {
+function ct(e) {
 	let t = [...e.currentTarget.querySelectorAll("[role=\"radio\"]")], n = t.indexOf(e.target), r = t.length - 1, i = {
 		ArrowDown: n === r ? 0 : n + 1,
 		ArrowRight: n === r ? 0 : n + 1,
@@ -3912,17 +3992,17 @@ function lt(e) {
 	};
 	n < 0 || !(e.key in i) || (e.preventDefault(), t.forEach((t, n) => t.tabIndex = n === i[e.key] ? 0 : -1), t[i[e.key]].focus());
 }
-function ut(e, t, n) {
+function lt(e, t, n) {
 	return e || !n && t === 0 ? 0 : -1;
 }
-function L(e, t, n) {
-	return b`<div class="banner ${e}" role=${e === "danger" ? "alert" : "status"}>
-    ${O(e === "info" ? "info" : "alert")}
+function R(e, t, n) {
+	return x`<div class="banner ${e}" role=${e === "danger" ? "alert" : "status"}>
+    ${A(e === "info" ? "info" : "alert")}
     <span>${t}</span>
-    ${n ? b`<button class="banner-action" @click=${n.onClick}>${n.label}</button>` : C}
+    ${n ? x`<button class="banner-action" @click=${n.onClick}>${n.label}</button>` : w}
   </div>`;
 }
-var R = o`
+var z = o`
   .group {
     margin: 0 0 8px;
   }
@@ -4122,7 +4202,7 @@ var R = o`
   .dot.bad {
     background: var(--kk-danger);
   }
-`, z = o`
+`, B = o`
   .banner {
     display: flex;
     align-items: center;
@@ -4168,30 +4248,30 @@ var R = o`
   }
 `;
 // src/util/entity.ts
-function B(e, t, n) {
+function V(e, t, n) {
 	let r = t?.roles[n];
 	return r ? e?.states[r] : void 0;
 }
-function V(e) {
+function H(e) {
 	return !!e && e.state !== "unavailable";
 }
-function H(e) {
+function U(e) {
 	return e?.state === "on";
 }
-function U(e) {
-	if (!V(e) || e.state === "unknown") return null;
+function W(e) {
+	if (!H(e) || e.state === "unknown") return null;
 	let t = Number(e.state);
 	return Number.isFinite(t) ? t : null;
 }
-function W(e, t, n = t.state) {
+function G(e, t, n = t.state) {
 	if (e?.formatEntityState) return e.formatEntityState(t, n);
 	let r = t.attributes.unit_of_measurement;
 	return r && n === t.state ? `${n} ${r}` : n;
 }
-function dt(e, t, n, r = t.attributes[n]) {
+function ut(e, t, n, r = t.attributes[n]) {
 	return e?.formatEntityAttributeValue?.(t, n, r) ?? String(r ?? "");
 }
-function G(e, t) {
+function dt(e, t) {
 	return e.untested.includes(t);
 }
 function ft(e) {
@@ -4202,7 +4282,7 @@ function ft(e) {
 function K(e) {
 	return e && typeof e == "object" && "message" in e ? String(e.message) : String(e);
 }
-var q = class extends E {
+var q = class extends O {
 	constructor(...e) {
 		super(...e), this.hadFocus = !1;
 	}
@@ -4224,19 +4304,19 @@ var q = class extends E {
 		return null;
 	}
 	statusRegion(e) {
-		return b`<div class="visually-hidden" role="status">${e}</div>`;
+		return x`<div class="visually-hidden" role="status">${e}</div>`;
 	}
 	entity(e) {
-		return B(this.hass, this.device, e);
+		return V(this.hass, this.device, e);
 	}
 	has(e) {
 		return !!this.entity(e);
 	}
 	isOn(e) {
-		return H(this.entity(e));
+		return U(this.entity(e));
 	}
 	number(e) {
-		return U(this.entity(e));
+		return W(this.entity(e));
 	}
 	entityId(e) {
 		return this.device.roles[e];
@@ -4252,7 +4332,7 @@ var q = class extends E {
 		try {
 			return await this.ctx.api.queue(this.device.id).enqueue(e, () => this.ctx.api.service(t, n, r)), !0;
 		} catch (e) {
-			return e instanceof Ve || this.ctx.toast(K(e), "error"), !1;
+			return e instanceof ze || this.ctx.toast(K(e), "error"), !1;
 		}
 	}
 	async stopNow(e, t, n) {
@@ -4272,7 +4352,7 @@ var q = class extends E {
 };
 // src/util/format.ts
 function pt(e) {
-	return new Intl.NumberFormat(N(), e);
+	return new Intl.NumberFormat(P(), e);
 }
 function J(e, t = 0) {
 	return pt({
@@ -4289,7 +4369,7 @@ function mt(e, t) {
 function ht(e) {
 	if (e == null || Number.isNaN(e)) return "—";
 	let t = Math.round(e);
-	return t < 60 ? P("unit.minutes_short", { count: t }) : P("unit.hours_minutes", {
+	return t < 60 ? F("unit.minutes_short", { count: t }) : F("unit.hours_minutes", {
 		hours: Math.floor(t / 60),
 		minutes: t % 60
 	});
@@ -4306,12 +4386,12 @@ function _t(e) {
 function vt(e) {
 	if (!e) return "—";
 	let t = _t(e);
-	return Number.isNaN(t.getTime()) ? e : new Intl.DateTimeFormat(N(), { dateStyle: "medium" }).format(t);
+	return Number.isNaN(t.getTime()) ? e : new Intl.DateTimeFormat(P(), { dateStyle: "medium" }).format(t);
 }
 function yt(e) {
 	if (!e) return "—";
 	let t = new Date(e);
-	return Number.isNaN(t.getTime()) ? e : new Intl.DateTimeFormat(N(), {
+	return Number.isNaN(t.getTime()) ? e : new Intl.DateTimeFormat(P(), {
 		dateStyle: "medium",
 		timeStyle: "short"
 	}).format(t);
@@ -4320,12 +4400,12 @@ function bt(e, t = Date.now()) {
 	if (!e) return "—";
 	let n = new Date(e).getTime();
 	if (Number.isNaN(n)) return "—";
-	let r = Math.round((n - t) / 1e3), i = new Intl.RelativeTimeFormat(N(), { numeric: "auto" }), a = Math.abs(r);
+	let r = Math.round((n - t) / 1e3), i = new Intl.RelativeTimeFormat(P(), { numeric: "auto" }), a = Math.abs(r);
 	return a < 60 ? i.format(r, "second") : a < 3600 ? i.format(Math.round(r / 60), "minute") : a < 86400 ? i.format(Math.round(r / 3600), "hour") : i.format(Math.round(r / 86400), "day");
 }
 function xt(e) {
 	let [t, n] = e.split(":").map(Number);
-	return !Number.isInteger(t) || !Number.isInteger(n) ? e : new Intl.DateTimeFormat(N(), { timeStyle: "short" }).format(new Date(2024, 0, 1, t, n));
+	return !Number.isInteger(t) || !Number.isInteger(n) ? e : new Intl.DateTimeFormat(P(), { timeStyle: "short" }).format(new Date(2024, 0, 1, t, n));
 }
 var St = [
 	"mon",
@@ -4337,7 +4417,7 @@ var St = [
 	"sun"
 ];
 function Ct(e) {
-	let t = new Intl.DateTimeFormat(N(), { weekday: "short" });
+	let t = new Intl.DateTimeFormat(P(), { weekday: "short" });
 	return St.flatMap((n, r) => e.includes(n) ? [t.format(new Date(2024, 0, 1 + r))] : []).join(", ");
 }
 // src/views/about.ts
@@ -4357,7 +4437,7 @@ var wt = {
 	certificate: "about.firmware.certificate",
 	service_pack: "about.firmware.service_pack"
 };
-j("kkp-about", class extends q {
+N("kkp-about", class extends q {
 	static {
 		this.properties = {
 			...q.properties,
@@ -4370,8 +4450,8 @@ j("kkp-about", class extends q {
 	}
 	static {
 		this.styles = [
-			A,
-			R,
+			M,
+			z,
 			o`
       :host {
         display: block;
@@ -4430,7 +4510,7 @@ j("kkp-about", class extends q {
 	}
 	firmwareValue() {
 		let e = this.entity("firmware");
-		return e ? e.state === "on" ? b`<span class="dot warn"></span>${P("about.update_available", { version: e.attributes.latest_version ?? "" })}` : b`<span class="dot good"></span>${P("about.up_to_date")}` : this.details?.firmware[0]?.version ?? "—";
+		return e ? e.state === "on" ? x`<span class="dot warn"></span>${F("about.update_available", { version: e.attributes.latest_version ?? "" })}` : x`<span class="dot good"></span>${F("about.up_to_date")}` : this.details?.firmware[0]?.version ?? "—";
 	}
 	renderPart(e) {
 		let t = [
@@ -4440,68 +4520,68 @@ j("kkp-about", class extends q {
 			["about.install_date", e.install_date ? vt(e.install_date) : null],
 			["about.status", e.status]
 		];
-		return b`<div class="part">
-      ${e.name ? b`<h3>${e.name}</h3>` : C}
+		return x`<div class="part">
+      ${e.name ? x`<h3>${e.name}</h3>` : w}
       <dl>
-        ${t.filter(([, e]) => e).map(([e, t]) => b`<dt>${P(e)}</dt><dd>${t}</dd>`)}
+        ${t.filter(([, e]) => e).map(([e, t]) => x`<dt>${F(e)}</dt><dd>${t}</dd>`)}
       </dl>
     </div>`;
 	}
 	renderParts() {
 		let e = this.details?.parts ?? [], t = [...new Set(e.map((e) => e.kind))];
-		return t.length ? I(P("about.technical"), t.map((t) => {
+		return t.length ? L(F("about.technical"), t.map((t) => {
 			let n = this.open === t;
-			return b`${F({
-				label: P(wt[t] ?? "about.technical"),
+			return x`${I({
+				label: F(wt[t] ?? "about.technical"),
 				chevron: !0,
 				expanded: n,
 				onClick: () => this.open = n ? null : t
 			})}
-          ${n ? b`<div class="editor">${e.filter((e) => e.kind === t).map((e) => this.renderPart(e))}</div>` : C}`;
-		})) : C;
+          ${n ? x`<div class="editor">${e.filter((e) => e.kind === t).map((e) => this.renderPart(e))}</div>` : w}`;
+		})) : w;
 	}
 	render() {
-		let e = this.details, t = P("about.unknown"), n = [e?.model_name ?? this.device.model_name, e?.model ?? this.device.model].filter(Boolean).join(" · "), r = e?.firmware.filter((e) => e.version) ?? [];
-		return b`
-      ${I(null, b`
-          ${F({ label: this.device.name })}
-          ${F({
-			label: P("about.model"),
+		let e = this.details, t = F("about.unknown"), n = [e?.model_name ?? this.device.model_name, e?.model ?? this.device.model].filter(Boolean).join(" · "), r = e?.firmware.filter((e) => e.version) ?? [];
+		return x`
+      ${L(null, x`
+          ${I({ label: this.device.name })}
+          ${I({
+			label: F("about.model"),
 			value: n || t
 		})}
-          ${F({
-			label: P("about.serial"),
+          ${I({
+			label: F("about.serial"),
 			value: e?.serial ?? t
 		})}
-          ${F({
-			label: P("about.install_date"),
+          ${I({
+			label: F("about.install_date"),
 			value: e?.install_date ? vt(e.install_date) : t
 		})}
-          ${e?.registered ? F({
-			label: P("about.registered"),
+          ${e?.registered ? I({
+			label: F("about.registered"),
 			value: vt(e.registered)
-		}) : C}
-          ${e?.hardware ? F({
-			label: P("about.hardware"),
+		}) : w}
+          ${e?.hardware ? I({
+			label: F("about.hardware"),
 			value: e.hardware
-		}) : C}
-          ${F({
-			label: P("about.firmware"),
+		}) : w}
+          ${I({
+			label: F("about.firmware"),
 			value: this.firmwareValue(),
-			description: this.entity("firmware")?.state === "on" ? P("about.update_in_app") : void 0
+			description: this.entity("firmware")?.state === "on" ? F("about.update_in_app") : void 0
 		})}
-          ${r.map((e) => F({
-			label: Tt[e.key] ? P(Tt[e.key]) : e.key,
+          ${r.map((e) => I({
+			label: Tt[e.key] ? F(Tt[e.key]) : e.key,
 			value: e.version
 		}))}
-          ${F({
-			label: P("settings.diagnostics"),
+          ${I({
+			label: F("settings.diagnostics"),
 			chevron: !0,
 			onClick: () => this.ctx.navigate(`/d/${this.device.id}/diagnostics`)
 		})}
         `)}
       ${this.renderParts()}
-      ${this.device.kind === "faucet" ? I(P("about.leak_history"), e?.leak_history.length ? e.leak_history.map((e) => F({ label: yt(e) })) : F({ label: P("about.no_leaks") })) : C}
+      ${this.device.kind === "faucet" ? L(F("about.leak_history"), e?.leak_history.length ? e.leak_history.map((e) => I({ label: yt(e) })) : I({ label: F("about.no_leaks") })) : w}
     `;
 	}
 });
@@ -4550,10 +4630,10 @@ var kt = Array.from({ length: 16 }, (e, t) => ({
 	delay: -(t * .61 % 4.84),
 	drift: (t % 5 - 2) * 6
 }));
-j("kkp-running", class extends E {
+N("kkp-running", class extends O {
 	static {
 		this.shadowRootOptions = {
-			...E.shadowRootOptions,
+			...O.shadowRootOptions,
 			delegatesFocus: !0
 		};
 	}
@@ -4571,7 +4651,7 @@ j("kkp-running", class extends E {
 		};
 	}
 	static {
-		this.styles = [A, o`
+		this.styles = [M, o`
       :host {
         display: block;
       }
@@ -4824,9 +4904,9 @@ j("kkp-running", class extends E {
 		this.dispatchEvent(new CustomEvent(e));
 	}
 	renderRing() {
-		if (this.secondsRemaining === null || this.secondsRemaining === void 0) return C;
+		if (this.secondsRemaining === null || this.secondsRemaining === void 0) return w;
 		let e = Math.max(this.totalSeconds ?? this.secondsRemaining, this.secondsRemaining, 1), t = 2 * Math.PI * 46;
-		return b`<div class="ring">
+		return x`<div class="ring">
       <svg viewBox="0 0 100 100" aria-hidden="true">
         <circle class="track" cx="50" cy="50" r="46" fill="none" stroke-width="4" />
         <circle
@@ -4843,16 +4923,16 @@ j("kkp-running", class extends E {
       </svg>
       <div class="label">
         <strong>${gt(this.secondsRemaining)}</strong>
-        <span>${P("shower.time_left")}</span>
+        <span>${F("shower.time_left")}</span>
       </div>
     </div>`;
 	}
 	render() {
-		let e = this.phase === "warming" ? P("shower.warming_title") : this.phase === "paused" ? P("shower.paused_title") : P("shower.running_title"), t = this.temperature ?? this.setpoint, n = t == null ? "—" : Y(t, "");
-		return b`<section class="hero ${this.phase}" style="--tint: ${Ot(this.tint ?? .5)}">
+		let e = this.phase === "warming" ? F("shower.warming_title") : this.phase === "paused" ? F("shower.paused_title") : F("shower.running_title"), t = this.temperature ?? this.setpoint, n = t == null ? "—" : Y(t, "");
+		return x`<section class="hero ${this.phase}" style="--tint: ${Ot(this.tint ?? .5)}">
       <div class="glow"></div>
       <div class="bubbles" aria-hidden="true">
-        ${kt.map((e) => b`<span
+        ${kt.map((e) => x`<span
               style="left:${e.left}%;width:${e.size}px;height:${e.size}px;animation-delay:${e.delay}s;--drift:${e.drift}px"
             ></span>`)}
       </div>
@@ -4862,19 +4942,19 @@ j("kkp-running", class extends E {
           <div class="temp">
             <div class="big">${n}<small>${this.unit}</small></div>
             <div class="sub">
-              ${this.atTemperature ? b`<span class="ok">${O("checkCircle")}${P("shower.at_temperature")}</span>` : b`<span>${P("shower.heating")}</span>`}
-              ${this.setpoint !== null && this.setpoint !== void 0 && this.setpoint !== t ? b`<span>${P("shower.set_to", { temperature: Y(this.setpoint, this.unit) })}</span>` : C}
+              ${this.atTemperature ? x`<span class="ok">${A("checkCircle")}${F("shower.at_temperature")}</span>` : x`<span>${F("shower.heating")}</span>`}
+              ${this.setpoint !== null && this.setpoint !== void 0 && this.setpoint !== t ? x`<span>${F("shower.set_to", { temperature: Y(this.setpoint, this.unit) })}</span>` : w}
             </div>
           </div>
           ${this.renderRing()}
         </div>
-        ${this.phase === "paused" ? b`<p class="paused-note">${P("shower.paused_body")}</p>` : C}
+        ${this.phase === "paused" ? x`<p class="paused-note">${F("shower.paused_body")}</p>` : w}
         <div class="actions">
-          ${this.phase === "paused" ? b`<button class="pill filled" @click=${() => this.fire("kkp-resume")}>
-                ${O("play")}${P("shower.resume")}
-              </button>` : C}
+          ${this.phase === "paused" ? x`<button class="pill filled" @click=${() => this.fire("kkp-resume")}>
+                ${A("play")}${F("shower.resume")}
+              </button>` : w}
           <button class="pill" @click=${() => this.fire("kkp-stop")}>
-            ${O("stop")}${P("shower.stop")}
+            ${A("stop")}${F("shower.stop")}
           </button>
         </div>
       </div>
@@ -4882,41 +4962,41 @@ j("kkp-running", class extends E {
 	}
 });
 function X(e, t) {
-	let n = B(e, t, "status");
-	return V(n) ? n.state === "Water Running" ? "running" : n.state === "Warming Up" ? "warming" : n.state === "Paused" ? "paused" : "idle" : "offline";
+	let n = V(e, t, "status");
+	return H(n) ? n.state === "Water Running" ? "running" : n.state === "Warming Up" ? "warming" : n.state === "Paused" ? "paused" : "idle" : "offline";
 }
 function At(e) {
 	switch (e) {
-		case "warming": return `${P("shower.warming_title")}. ${P("shower.locked_warming")}`;
-		case "running": return P("shower.running_title");
-		case "paused": return `${P("shower.paused_title")}. ${P("shower.paused_body")}`;
-		case "offline": return P("status.offline");
-		default: return P("status.idle");
+		case "warming": return `${F("shower.warming_title")}. ${F("shower.locked_warming")}`;
+		case "running": return F("shower.running_title");
+		case "paused": return `${F("shower.paused_title")}. ${F("shower.paused_body")}`;
+		case "offline": return F("status.offline");
+		default: return F("status.idle");
 	}
 }
 function jt(e, t) {
-	let n = H(B(e, t, "problem"));
+	let n = U(V(e, t, "problem"));
 	if (t.kind === "faucet") {
-		if (H(B(e, t, "leak"))) return {
-			text: P("status.leak"),
+		if (U(V(e, t, "leak"))) return {
+			text: F("status.leak"),
 			tone: "alert",
 			running: !1
 		};
-		let n = B(e, t, "water") ?? B(e, t, "status");
-		return V(n) ? H(B(e, t, "dispensing")) ? {
-			text: P("status.dispensing"),
+		let n = V(e, t, "water") ?? V(e, t, "status");
+		return H(n) ? U(V(e, t, "dispensing")) ? {
+			text: F("status.dispensing"),
 			tone: "active",
 			running: !0
-		} : H(B(e, t, "status")) || H(n) ? {
-			text: P("status.water_on"),
+		} : U(V(e, t, "status")) || U(n) ? {
+			text: F("status.water_on"),
 			tone: "active",
 			running: !0
 		} : {
-			text: P("status.off"),
+			text: F("status.off"),
 			tone: "idle",
 			running: !1
 		} : {
-			text: P("status.offline"),
+			text: F("status.offline"),
 			tone: "offline",
 			running: !1
 		};
@@ -4924,137 +5004,137 @@ function jt(e, t) {
 	if (t.kind === "valve" || t.kind === "controller") {
 		let r = X(e, t);
 		if (r === "offline") return {
-			text: P("status.offline"),
+			text: F("status.offline"),
 			tone: "offline",
 			running: !1
 		};
-		let i = B(e, t, "temperature:1"), a = String(i?.attributes.unit_of_measurement ?? t.units.temperature), o = Y(U(i), a), s = B(e, t, "status")?.attributes.seconds_remaining;
+		let i = V(e, t, "temperature:1"), a = String(i?.attributes.unit_of_measurement ?? t.units.temperature), o = Y(W(i), a), s = V(e, t, "status")?.attributes.seconds_remaining;
 		if (r === "running") {
-			let e = [P("status.running"), o];
-			return typeof s == "number" && e.push(P("status.minutes_left", { time: gt(s) })), {
+			let e = [F("status.running"), o];
+			return typeof s == "number" && e.push(F("status.minutes_left", { time: gt(s) })), {
 				text: e.join(" · "),
 				tone: "active",
 				running: !0
 			};
 		}
 		return r === "warming" ? {
-			text: `${P("status.warming")} · ${o}`,
+			text: `${F("status.warming")} · ${o}`,
 			tone: "active",
 			running: !0
 		} : r === "paused" ? {
-			text: P("status.paused"),
+			text: F("status.paused"),
 			tone: "active",
 			running: !1
 		} : n ? {
-			text: P("status.problem"),
+			text: F("status.problem"),
 			tone: "alert",
 			running: !1
-		} : H(B(e, t, "steam_state")) ? {
-			text: P("controller.steam"),
+		} : U(V(e, t, "steam_state")) ? {
+			text: F("controller.steam"),
 			tone: "active",
 			running: !0
 		} : {
-			text: P("status.idle"),
+			text: F("status.idle"),
 			tone: "idle",
 			running: !1
 		};
 	}
 	if (t.kind === "smart_fan") {
-		let n = B(e, t, "fan_state"), r = B(e, t, "connected");
-		if (!V(n) || r?.state === "off") return {
-			text: P("status.offline"),
+		let n = V(e, t, "fan_state"), r = V(e, t, "connected");
+		if (!H(n) || r?.state === "off") return {
+			text: F("status.offline"),
 			tone: "offline",
 			running: !1
 		};
-		let i = n.state !== "off" && n.state !== "unknown", a = i ? [P("smart_fan.fan_on"), W(e, n)] : [];
-		return H(B(e, t, "light_state")) && a.push(P("smart_fan.light_on")), a.length ? {
+		let i = n.state !== "off" && n.state !== "unknown", a = i ? [F("smart_fan.fan_on"), G(e, n)] : [];
+		return U(V(e, t, "light_state")) && a.push(F("smart_fan.light_on")), a.length ? {
 			text: a.join(" · "),
 			tone: "active",
 			running: i
 		} : {
-			text: P("status.off"),
+			text: F("status.off"),
 			tone: "idle",
 			running: !1
 		};
 	}
 	if (t.kind === "toilet") {
-		let n = B(e, t, "activity"), r = B(e, t, "connected");
-		if (!V(n) || r?.state === "off") return {
-			text: P("status.offline"),
+		let n = V(e, t, "activity"), r = V(e, t, "connected");
+		if (!H(n) || r?.state === "off") return {
+			text: F("status.offline"),
 			tone: "offline",
 			running: !1
 		};
-		let i = B(e, t, "last_error")?.state;
+		let i = V(e, t, "last_error")?.state;
 		return i && i !== "unknown" && i !== "unavailable" ? {
-			text: P("status.problem"),
+			text: F("status.problem"),
 			tone: "alert",
 			running: !1
-		} : n.state === "idle" ? H(B(e, t, "cleaning")) ? {
-			text: P("toilet.cleaning"),
+		} : n.state === "idle" ? U(V(e, t, "cleaning")) ? {
+			text: F("toilet.cleaning"),
 			tone: "active",
 			running: !0
-		} : H(B(e, t, "occupied")) ? {
-			text: P("toilet.occupied"),
+		} : U(V(e, t, "occupied")) ? {
+			text: F("toilet.occupied"),
 			tone: "idle",
 			running: !1
 		} : {
-			text: P("status.ready"),
+			text: F("status.ready"),
 			tone: "idle",
 			running: !1
 		} : {
-			text: W(e, n),
+			text: G(e, n),
 			tone: "active",
 			running: !0
 		};
 	}
 	if (t.kind === "evocycle") {
-		let n = B(e, t, "evo_activity");
-		return !V(n) || B(e, t, "connected")?.state === "off" ? {
-			text: P("status.offline"),
+		let n = V(e, t, "evo_activity");
+		return !H(n) || V(e, t, "connected")?.state === "off" ? {
+			text: F("status.offline"),
 			tone: "offline",
 			running: !1
-		} : H(B(e, t, "evo_problem")) ? {
-			text: P("status.problem"),
+		} : U(V(e, t, "evo_problem")) ? {
+			text: F("status.problem"),
 			tone: "alert",
 			running: !1
 		} : n.state === "idle" ? {
-			text: P("status.ready"),
+			text: F("status.ready"),
 			tone: "idle",
 			running: !1
 		} : {
-			text: W(e, n),
+			text: G(e, n),
 			tone: "active",
 			running: !0
 		};
 	}
 	if (t.kind === "ice_bath") {
-		let n = B(e, t, "sessions_this_week");
-		if (!V(n)) return {
-			text: P("status.offline"),
+		let n = V(e, t, "sessions_this_week");
+		if (!H(n)) return {
+			text: F("status.offline"),
 			tone: "offline",
 			running: !1
 		};
-		let r = U(n) ?? 0, i = n.attributes.target;
+		let r = W(n) ?? 0, i = n.attributes.target;
 		return {
-			text: typeof i == "number" ? P("ice_bath.week_of", {
+			text: typeof i == "number" ? F("ice_bath.week_of", {
 				done: r,
 				target: i
-			}) : P("ice_bath.week", { done: r }),
+			}) : F("ice_bath.week", { done: r }),
 			tone: "idle",
 			running: !1
 		};
 	}
 	return n ? {
-		text: P("status.problem"),
+		text: F("status.problem"),
 		tone: "alert",
 		running: !1
 	} : {
-		text: P("status.ready"),
+		text: F("status.ready"),
 		tone: "idle",
 		running: !1
 	};
 }
-j("kkp-scenes", class extends q {
+N("kkp-scenes", class extends q {
 	static {
 		this.properties = {
 			...q.properties,
@@ -5063,7 +5143,7 @@ j("kkp-scenes", class extends q {
 		};
 	}
 	static {
-		this.styles = [A, o`
+		this.styles = [M, o`
       :host {
         display: block;
       }
@@ -5174,26 +5254,26 @@ j("kkp-scenes", class extends q {
 	}
 	render() {
 		let e = this.entity(this.role), t = ft(e), n = this.role === "favorite";
-		return t.length ? b`<div class="grid">
+		return t.length ? x`<div class="grid">
       ${t.map((t) => {
 			let r = e?.state === t;
-			return b`<button
+			return x`<button
           class="scene ${r ? "active" : ""}"
           aria-pressed=${String(r)}
           @click=${() => this.choose(t, r)}
         >
-          <span class="scene-icon">${O(n ? r ? "favoriteFilled" : "favorite" : "experiences")}</span>
+          <span class="scene-icon">${A(n ? r ? "favoriteFilled" : "favorite" : "experiences")}</span>
           <span class="scene-name">${t}</span>
-          <span class="scene-action">${P(r ? "scenes.running" : "scenes.start")}</span>
+          <span class="scene-action">${F(r ? "scenes.running" : "scenes.start")}</span>
         </button>`;
 		})}
-    </div>${C}` : b`<div class="empty">
-        ${O(n ? "favorite" : "experiences")}
-        <strong>${P(n ? "scenes.empty_favorites" : "scenes.empty_experiences")}</strong>
-        <span>${P(n ? "scenes.empty_favorites_body" : "scenes.empty_experiences_body")}</span>
+    </div>${w}` : x`<div class="empty">
+        ${A(n ? "favorite" : "experiences")}
+        <strong>${F(n ? "scenes.empty_favorites" : "scenes.empty_experiences")}</strong>
+        <span>${F(n ? "scenes.empty_favorites_body" : "scenes.empty_experiences_body")}</span>
       </div>`;
 	}
-}), j("kkp-controller", class extends q {
+}), N("kkp-controller", class extends q {
 	static {
 		this.properties = {
 			...q.properties,
@@ -5203,8 +5283,8 @@ j("kkp-scenes", class extends q {
 	}
 	static {
 		this.styles = [
-			A,
-			z,
+			M,
+			B,
 			o`
       :host {
         display: block;
@@ -5354,15 +5434,15 @@ j("kkp-scenes", class extends q {
 	}
 	renderTop() {
 		let e = X(this.hass, this.device);
-		if (e === "idle" || e === "offline") return b`<button
+		if (e === "idle" || e === "offline") return x`<button
         class="simple-start"
         ?disabled=${e === "offline" || !this.has("shower")}
         @click=${() => this.toggle("shower")}
       >
-        ${O("play")}<span>${P("shower.simple_start")}</span>
+        ${A("play")}<span>${F("shower.simple_start")}</span>
       </button>`;
-		let t = this.entity("temperature:1"), n = U(t), r = String(t?.attributes.unit_of_measurement ?? this.device.units.temperature);
-		return b`<kkp-running
+		let t = this.entity("temperature:1"), n = W(t), r = String(t?.attributes.unit_of_measurement ?? this.device.units.temperature);
+		return x`<kkp-running
       .phase=${e === "paused" ? "running" : e}
       .temperature=${n}
       .setpoint=${n}
@@ -5374,17 +5454,17 @@ j("kkp-scenes", class extends q {
     ></kkp-running>`;
 	}
 	renderSteam() {
-		if (!this.has("steam")) return C;
+		if (!this.has("steam")) return w;
 		let e = this.isOn("steam"), t = this.isOn("shower"), n = this.entity("steam_state")?.attributes.temperature;
-		return b`<section class="card panel">
+		return x`<section class="card panel">
       <div class="panel-head">
-        <h2 class="section-label">${P("controller.steam")}</h2>
+        <h2 class="section-label">${F("controller.steam")}</h2>
         <button class="pill ${e ? "" : "filled"}" ?disabled=${!e && t} @click=${() => this.toggle("steam")}>
-          ${P(e ? "controller.steam_stop" : "controller.steam_start")}
+          ${F(e ? "controller.steam_stop" : "controller.steam_start")}
         </button>
       </div>
-      ${e && n !== void 0 ? b`<div class="steam-meta">${Y(Number(n), "°F")}</div>` : C}
-      ${!e && t ? b`<p class="note">${P("controller.steam_blocked")}</p>` : C}
+      ${e && n !== void 0 ? x`<div class="steam-meta">${Y(Number(n), "°F")}</div>` : w}
+      ${!e && t ? x`<p class="note">${F("controller.steam_blocked")}</p>` : w}
     </section>`;
 	}
 	renderStatus() {
@@ -5392,32 +5472,32 @@ j("kkp-scenes", class extends q {
 			[
 				"music",
 				"music",
-				P("controller.music")
+				F("controller.music")
 			],
 			[
 				"light",
 				"light",
-				P("controller.light")
+				F("controller.light")
 			],
 			[
 				"steam_state",
 				"cloud",
-				P("controller.steam")
+				F("controller.steam")
 			]
 		];
-		return b`<section class="card panel">
-      <h2 class="section-label">${P("controller.status")}</h2>
+		return x`<section class="card panel">
+      <h2 class="section-label">${F("controller.status")}</h2>
       <div class="zones">
-        ${this.device.zones.map((e) => b`<div class="zone">
-            <span class="muted">${P("shower.zone", { zone: e.zone })}</span>
+        ${this.device.zones.map((e) => x`<div class="zone">
+            <span class="muted">${F("shower.zone", { zone: e.zone })}</span>
             <strong>${Y(this.number(`temperature:${e.zone}`), String(this.entity(`temperature:${e.zone}`)?.attributes.unit_of_measurement ?? this.device.units.temperature))}</strong>
             <div class="dots">
               ${e.outlets.map((t) => {
 			let n = this.isOn(`outlet:${e.zone}:${t.position}`);
-			return b`<i
+			return x`<i
                   class=${n ? "on" : ""}
                   role="img"
-                  aria-label=${`${t.name}: ${P(n ? "status.on" : "status.off")}`}
+                  aria-label=${`${t.name}: ${F(n ? "status.on" : "status.off")}`}
                   title=${t.name}
                 ></i>`;
 		})}
@@ -5425,16 +5505,16 @@ j("kkp-scenes", class extends q {
           </div>`)}
       </div>
       <div class="accessories">
-        ${e.filter(([e]) => this.has(e)).map(([e, t, n]) => b`<div class="acc ${this.isOn(e) ? "on" : ""}">
-              ${O(t)}<span>${n}</span>
-              <span class="visually-hidden">${this.isOn(e) ? P("status.on") : P("status.off")}</span>
+        ${e.filter(([e]) => this.has(e)).map(([e, t, n]) => x`<div class="acc ${this.isOn(e) ? "on" : ""}">
+              ${A(t)}<span>${n}</span>
+              <span class="visually-hidden">${this.isOn(e) ? F("status.on") : F("status.off")}</span>
             </div>`)}
       </div>
-      <p class="note">${P("controller.read_only")}</p>
+      <p class="note">${F("controller.read_only")}</p>
     </section>`;
 	}
 	scenes(e, t = !1) {
-		return b`<kkp-scenes
+		return x`<kkp-scenes
       .hass=${this.hass}
       .device=${this.device}
       .live=${this.live}
@@ -5444,22 +5524,22 @@ j("kkp-scenes", class extends q {
     ></kkp-scenes>`;
 	}
 	render() {
-		return b`${this.statusRegion(At(X(this.hass, this.device)))}${this.renderTab()}`;
+		return x`${this.statusRegion(At(X(this.hass, this.device)))}${this.renderTab()}`;
 	}
 	renderTab() {
-		let e = b`
-      ${this.isOn("problem") ? L("warning", this.entity("problem")?.attributes.active_errors?.[0]?.title ?? P("status.problem")) : C}
+		let e = x`
+      ${this.isOn("problem") ? R("warning", this.entity("problem")?.attributes.active_errors?.[0]?.title ?? F("status.problem")) : w}
       ${this.renderTop()} ${this.renderSteam()} ${this.renderStatus()}
     `;
-		return this.wide ? b`<div class="layout">
+		return this.wide ? x`<div class="layout">
         <div class="col">${e}</div>
         <div class="col side">
-          <h2>${P("nav.favorites")}</h2>${this.scenes("favorite", !0)}
-          ${this.has("experience") ? b`<h2>${P("nav.experiences")}</h2>${this.scenes("experience", !0)}` : C}
+          <h2>${F("nav.favorites")}</h2>${this.scenes("favorite", !0)}
+          ${this.has("experience") ? x`<h2>${F("nav.experiences")}</h2>${this.scenes("experience", !0)}` : w}
         </div>
-      </div>` : this.tab === "favorites" ? this.scenes("favorite") : this.tab === "experiences" ? this.scenes("experience") : b`<div class="layout"><div class="col">${e}</div></div>`;
+      </div>` : this.tab === "favorites" ? this.scenes("favorite") : this.tab === "experiences" ? this.scenes("experience") : x`<div class="layout"><div class="col">${e}</div></div>`;
 	}
-}), j("kkp-toggle", class extends E {
+}), N("kkp-toggle", class extends O {
 	static {
 		this.properties = {
 			checked: { type: Boolean },
@@ -5468,7 +5548,7 @@ j("kkp-scenes", class extends q {
 		};
 	}
 	static {
-		this.styles = [A, o`
+		this.styles = [M, o`
       :host {
         display: inline-block;
       }
@@ -5512,7 +5592,7 @@ j("kkp-scenes", class extends q {
     `];
 	}
 	render() {
-		return b`<button
+		return x`<button
       role="switch"
       aria-checked=${this.checked ? "true" : "false"}
       aria-label=${this.label ?? ""}
@@ -5522,7 +5602,7 @@ j("kkp-scenes", class extends q {
       <span></span>
     </button>`;
 	}
-}), j("kkp-diagnostics", class extends q {
+}), N("kkp-diagnostics", class extends q {
 	static {
 		this.properties = {
 			...q.properties,
@@ -5534,8 +5614,8 @@ j("kkp-scenes", class extends q {
 	}
 	static {
 		this.styles = [
-			A,
-			R,
+			M,
+			z,
 			o`
       :host {
         display: block;
@@ -5553,7 +5633,7 @@ j("kkp-scenes", class extends q {
 		}
 	}
 	connection(e) {
-		return e == null ? b`<span class="dot"></span>${P("diagnostics.unknown")}` : e ? b`<span class="dot good"></span>${P("diagnostics.connected")}` : b`<span class="dot bad"></span>${P("diagnostics.disconnected")}`;
+		return e == null ? x`<span class="dot"></span>${F("diagnostics.unknown")}` : e ? x`<span class="dot good"></span>${F("diagnostics.connected")}` : x`<span class="dot bad"></span>${F("diagnostics.disconnected")}`;
 	}
 	async download() {
 		let e = this.details?.diagnostics_path;
@@ -5565,61 +5645,61 @@ j("kkp-scenes", class extends q {
 	}
 	render() {
 		let e = this.details?.faults ?? [], t = this.entity("report_log");
-		return b`
-      ${I(null, b`
-          ${F({
-			label: P("diagnostics.stream"),
-			description: P("diagnostics.stream_body"),
+		return x`
+      ${L(null, x`
+          ${I({
+			label: F("diagnostics.stream"),
+			description: F("diagnostics.stream_body"),
 			value: this.connection(this.live?.stream_connected)
 		})}
-          ${F({
-			label: P("diagnostics.cloud"),
-			description: P("diagnostics.cloud_body"),
+          ${I({
+			label: F("diagnostics.cloud"),
+			description: F("diagnostics.cloud_body"),
 			value: this.connection(this.live?.cloud_connected)
 		})}
-          ${F({
-			label: P("diagnostics.last_update"),
+          ${I({
+			label: F("diagnostics.last_update"),
 			value: this.live?.last_update ? bt(this.live.last_update) : "—"
 		})}
         `)}
-      ${I(P("diagnostics.faults"), b`
-          ${e.length ? e.map((e) => F({
+      ${L(F("diagnostics.faults"), x`
+          ${e.length ? e.map((e) => I({
 			label: e.title ?? e.code ?? "—",
 			description: [
 				e.code,
 				e.area,
 				e.time ? yt(e.time) : null
 			].filter(Boolean).join(" · ")
-		})) : F({ label: P("diagnostics.no_faults") })}
-          ${this.has("clear_errors") ? F({
-			label: P("diagnostics.clear_errors"),
-			trailing: O("restart"),
+		})) : I({ label: F("diagnostics.no_faults") })}
+          ${this.has("clear_errors") ? I({
+			label: F("diagnostics.clear_errors"),
+			trailing: A("restart"),
 			onClick: () => void this.roleService("clear_errors", "button", "press")
-		}) : C}
+		}) : w}
         `)}
-      ${I(P("settings.diagnostics"), b`
-          ${t ? F({
-			label: P("diagnostics.report_log"),
-			description: t.attributes.file ?? P("diagnostics.report_log_body"),
-			trailing: b`<kkp-toggle
+      ${L(F("settings.diagnostics"), x`
+          ${t ? I({
+			label: F("diagnostics.report_log"),
+			description: t.attributes.file ?? F("diagnostics.report_log_body"),
+			trailing: x`<kkp-toggle
                   .checked=${t.state === "on"}
-                  label=${P("diagnostics.report_log")}
+                  label=${F("diagnostics.report_log")}
                   @change=${(e) => void this.roleService("report_log", "switch", e.detail ? "turn_on" : "turn_off")}
                 ></kkp-toggle>`
-		}) : C}
-          ${this.details?.diagnostics_path ? F({
-			label: P("diagnostics.download"),
-			description: P("diagnostics.download_body"),
-			trailing: O("download"),
+		}) : w}
+          ${this.details?.diagnostics_path ? I({
+			label: F("diagnostics.download"),
+			description: F("diagnostics.download_body"),
+			trailing: A("download"),
 			onClick: () => this.download()
-		}) : C}
+		}) : w}
         `)}
     `;
 	}
 });
 // src/art/products.ts
 function Mt(e, t = 2.2) {
-	return x`
+	return S`
   <g transform=${e} stroke-width=${t}>
     <line x1="0" y1="-22" x2="0" y2="-78" />
     <rect x="-8" y="-22" width="16" height="13" rx="4" />
@@ -5636,7 +5716,7 @@ function Mt(e, t = 2.2) {
     </g>
   </g>`;
 }
-var Nt = Mt("translate(86 81) rotate(30)"), Pt = x`
+var Nt = Mt("translate(86 81) rotate(30)"), Pt = S`
   <path d="M108 140 V66 A36 36 0 0 0 36 66 V70" />
   <path d="M97 140 V66 A25 25 0 0 0 47 66 V70" />
   <path d="M33.5 70 H49.5 L51 92 A4 4 0 0 1 47 96.5 H37 A4 4 0 0 1 32 92 Z" />
@@ -5645,7 +5725,7 @@ var Nt = Mt("translate(86 81) rotate(30)"), Pt = x`
   <path d="M84 140 H122" />
   <circle cx="113" cy="118" r="6" />
   <path d="M117 113 L127 97" />
-  <line class="stream" x1="41.5" y1="101" x2="41.5" y2="152" />`, Ft = x`
+  <line class="stream" x1="41.5" y1="101" x2="41.5" y2="152" />`, Ft = S`
   <line x1="12" y1="44" x2="148" y2="44" opacity="0.45" />
   <rect x="48" y="26" width="64" height="18" rx="2" opacity="0.45" />
   <rect x="22" y="44" width="116" height="12" rx="2" />
@@ -5665,13 +5745,13 @@ var Nt = Mt("translate(86 81) rotate(30)"), Pt = x`
     <line x1="80" y1="134" x2="80" y2="86" />
     <line x1="98" y1="130" x2="98" y2="86" />
     <line x1="116" y1="118" x2="116" y2="86" />
-  </g>`, It = x`
+  </g>`, It = S`
   <path d="M104 117 V37 A6 6 0 0 1 110 31 H126 A6 6 0 0 1 132 37 V117" />
   <path d="M104 33 H31 A3 3 0 0 0 28 36 V38 A3 3 0 0 0 31 41 H104" />
   <path d="M32 41 L50 117 H132" />
   <line x1="34" y1="46" x2="104" y2="46" opacity="0.45" />
   <path d="M58 117 V123 H124 V117" />
-  <path class="accent" d="M54 129 H128" />`, Lt = x`
+  <path class="accent" d="M54 129 H128" />`, Lt = S`
   <g transform="translate(79 82) rotate(-22) scale(0.84)" stroke-width="2.62">
     <path d="M34 -24 H-22 C-58 -24 -78 -12 -78 0 C-78 12 -58 24 -22 24 H34" />
     <path d="M-78 0 V7 C-78 19 -58 31 -22 31 H34" />
@@ -5685,18 +5765,18 @@ var Nt = Mt("translate(86 81) rotate(30)"), Pt = x`
       <circle cx="51" cy="44" r="1.6" />
       <circle cx="57" cy="44" r="1.6" />
     </g>
-  </g>`, Rt = x`
+  </g>`, Rt = S`
   ${Mt("translate(69 72) rotate(30) scale(0.84)", 2.62)}
   <g class="accent">
     <path d="M105 120 A16 16 0 0 1 133 114 M133 114 L134 106 M133 114 L126 112" />
     <path d="M135 130 A16 16 0 0 1 107 136 M107 136 L106 144 M107 136 L114 138" />
-  </g>`, zt = x`
+  </g>`, zt = S`
   <path d="M20 60 H112 L140 40 H48 Z" />
   <path d="M20 60 V114 A6 6 0 0 0 26 120 H106 A6 6 0 0 0 112 114 V60" />
   <path d="M112 120 L134 104 A6 6 0 0 0 140 98 V40" />
   <path d="M42 56 H98 L114 45 H58 Z" opacity="0.45" />
   <path class="accent" d="M48 52 C54 49 60 55 66 52 S78 49 84 52 S96 55 102 51" />
-  <rect x="104" y="46" width="22" height="9" rx="4.5" transform="rotate(-35 115 50.5)" />`, Bt = x`
+  <rect x="104" y="46" width="22" height="9" rx="4.5" transform="rotate(-35 115 50.5)" />`, Bt = S`
   <circle cx="80" cy="80" r="56" opacity="0.4" />
   <path d="M80 40 C80 40 54 72 54 92 A26 26 0 0 0 106 92 C106 72 80 40 80 40 Z" />
   <path class="accent" d="M68 94 A12 12 0 0 0 80 106" />`, Vt = {
@@ -5709,7 +5789,7 @@ var Nt = Mt("translate(86 81) rotate(30)"), Pt = x`
 	ice_bath: zt
 };
 function Z(e, t) {
-	return x`<svg class="art" viewBox="0 0 160 160" fill="none" stroke="currentColor"
+	return S`<svg class="art" viewBox="0 0 160 160" fill="none" stroke="currentColor"
     stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${e === "toilet" && t?.startsWith("Purewash") ? Lt : Vt[e] ?? Bt}</svg>`;
 }
 // src/theme/art.ts
@@ -5755,7 +5835,7 @@ var Q = o`
     }
   }
 `;
-j("kkp-faucet-ring", class extends E {
+N("kkp-faucet-ring", class extends O {
 	static {
 		this.properties = { flow: {} };
 	}
@@ -5764,7 +5844,7 @@ j("kkp-faucet-ring", class extends E {
 	}
 	static {
 		this.styles = [
-			A,
+			M,
 			Q,
 			o`
       :host {
@@ -5831,25 +5911,236 @@ j("kkp-faucet-ring", class extends E {
 		];
 	}
 	render() {
-		return b`<div class="ring ${this.flow === "off" ? "" : "running"}">
+		return x`<div class="ring ${this.flow === "off" ? "" : "running"}">
       <div class="halo"></div>
-      ${this.flow === "dispensing" ? b`<div class="sweep"></div>` : null}
+      ${this.flow === "dispensing" ? x`<div class="sweep"></div>` : null}
       <div class="art-wrap">${Z("faucet")}</div>
     </div>`;
 	}
-}), j("kkp-faucet", class extends q {
+});
+// src/components/wheel.ts
+var Ht = 44, Ut = 4, Wt = 120;
+N("kkp-wheel", class extends O {
+	static {
+		this.properties = {
+			label: {},
+			options: {
+				attribute: !1,
+				hasChanged: (e, t) => e?.join("\n") !== t?.join("\n")
+			},
+			index: { type: Number }
+		};
+	}
+	constructor() {
+		super(), this.label = "", this.options = [], this.index = 0;
+	}
+	static {
+		this.styles = [M, o`
+      :host {
+        display: block;
+        position: relative;
+        isolation: isolate;
+      }
+
+      .column {
+        height: ${220}px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scroll-snap-type: y mandatory;
+        scrollbar-width: none;
+        outline: none;
+        /* Faint enough to set off the centre, not so faint the outer rows can't be read. */
+        mask-image: linear-gradient(rgb(0 0 0 / 45%), #000 45%, #000 55%, rgb(0 0 0 / 45%));
+      }
+
+      .column::-webkit-scrollbar {
+        display: none;
+      }
+
+      /* Room for the first and last rows to reach the centre. */
+      .column::before,
+      .column::after {
+        content: "";
+        display: block;
+        height: ${88}px;
+      }
+
+      .option {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: ${Ht}px;
+        padding: 0 8px;
+        font-size: 19px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        cursor: pointer;
+        scroll-snap-align: center;
+        user-select: none;
+      }
+
+      .band {
+        position: absolute;
+        z-index: -1;
+        inset: ${88}px 0;
+        border-radius: 12px;
+        background: var(--kk-control);
+        pointer-events: none;
+      }
+
+      /* Here rather than on the column, whose fade would hide most of a ring. */
+      .column:focus-visible + .band {
+        outline: 2px solid var(--kk-accent);
+        outline-offset: 1px;
+      }
+
+      @media (prefers-reduced-motion: no-preference) {
+        .column {
+          scroll-behavior: smooth;
+        }
+      }
+    `];
+	}
+	connectedCallback() {
+		super.connectedCallback(), this.updateComplete.then(() => this.scrollToIndex("instant"));
+	}
+	disconnectedCallback() {
+		super.disconnectedCallback(), window.clearTimeout(this.settleTimer);
+	}
+	updated(e) {
+		e.has("options") ? this.scrollToIndex("instant") : e.has("index") && this.scrollToIndex("auto");
+	}
+	get column() {
+		return this.renderRoot.querySelector(".column");
+	}
+	clamp(e) {
+		return Math.min(this.options.length - 1, Math.max(0, e));
+	}
+	scrollToIndex(e) {
+		let t = this.column;
+		t && this.clamp(Math.round(t.scrollTop / Ht)) !== this.index && t.scrollTo({
+			top: this.index * Ht,
+			behavior: e
+		});
+	}
+	onScroll() {
+		window.clearTimeout(this.settleTimer), this.settleTimer = window.setTimeout(() => this.settle(), Wt);
+	}
+	settle() {
+		let e = this.column;
+		e?.clientHeight && this.pick(this.clamp(Math.round(e.scrollTop / Ht)));
+	}
+	pick(e) {
+		window.clearTimeout(this.settleTimer), e !== this.index && (this.index = e, this.dispatchEvent(new CustomEvent("change", { detail: e })));
+	}
+	onKeydown(e) {
+		let t = {
+			ArrowDown: this.index + 1,
+			ArrowUp: this.index - 1,
+			PageDown: this.index + Ut,
+			PageUp: this.index - Ut,
+			Home: 0,
+			End: this.options.length - 1
+		};
+		e.key in t && (e.preventDefault(), this.pick(this.clamp(t[e.key])));
+	}
+	render() {
+		return x`<div
+        class="column"
+        role="listbox"
+        tabindex="0"
+        aria-label=${this.label}
+        aria-activedescendant="option-${this.index}"
+        @scroll=${this.onScroll}
+        @keydown=${this.onKeydown}
+      >
+        ${this.options.map((e, t) => x`<div
+            class="option"
+            id="option-${t}"
+            role="option"
+            aria-selected=${String(t === this.index)}
+            @click=${() => this.pick(t)}
+          >
+            ${e}
+          </div>`)}
+      </div>
+      <div class="band"></div>`;
+	}
+});
+// src/util/dispense.ts
+var Gt = {
+	ml: {
+		step: 250,
+		max: 11e3,
+		name: "faucet.unit_ml"
+	},
+	l: {
+		step: .25,
+		max: 11,
+		name: "faucet.unit_l"
+	},
+	cup: {
+		step: 1,
+		max: 48,
+		name: "faucet.unit_cup"
+	},
+	qt: {
+		step: .25,
+		max: 12,
+		name: "faucet.unit_qt"
+	},
+	gal: {
+		step: .25,
+		max: 3,
+		name: "faucet.unit_gal"
+	}
+}, Kt = Object.keys(Gt);
+function qt(e) {
+	let { step: t, max: n } = Gt[e];
+	return Array.from({ length: n / t }, (e, n) => (n + 1) * t);
+}
+function Jt(e) {
+	return F(Gt[e].name);
+}
+var Yt = {
+	.25: "¼",
+	.5: "½",
+	.75: "¾"
+};
+function Xt(e) {
+	let t = Math.floor(e), n = e - t;
+	if (!n) return J(t);
+	let r = Yt[n];
+	return r ? `${t ? J(t) : ""}${r}` : J(e, 2);
+}
+var Zt = {
+	ml: "mL",
+	l: "L",
+	qt: "qt",
+	gal: "gal"
+};
+function Qt(e, t) {
+	let n = t === "cup" ? F(e > 1 ? "faucet.cups" : "faucet.cup") : Zt[t];
+	return `${Xt(e)} ${n}`;
+}
+function $t(e) {
+	let { asked_amount: t, asked_unit: n } = e;
+	return typeof t == "number" && Kt.includes(n) ? Qt(t, n) : null;
+}
+N("kkp-faucet", class extends q {
 	static {
 		this.properties = {
 			...q.properties,
 			wide: { type: Boolean },
 			mode: { state: !0 },
-			amount: { state: !0 },
+			pickedUnit: { state: !0 },
+			pickedAmounts: { state: !0 },
 			sheetOpen: { state: !0 },
 			now: { state: !0 }
 		};
 	}
 	constructor() {
-		super(), this.mode = "faucet", this.amount = null, this.sheetOpen = !1, this.now = Date.now();
+		super(), this.mode = "faucet", this.pickedUnit = null, this.pickedAmounts = {}, this.sheetOpen = !1, this.now = Date.now();
 	}
 	connectedCallback() {
 		super.connectedCallback(), this.ticker = window.setInterval(() => this.now = Date.now(), 1e3);
@@ -5859,8 +6150,8 @@ j("kkp-faucet-ring", class extends E {
 	}
 	static {
 		this.styles = [
-			A,
-			z,
+			M,
+			B,
 			o`
       :host {
         display: block;
@@ -5948,49 +6239,10 @@ j("kkp-faucet-ring", class extends E {
 
       .amounts {
         display: grid;
-        gap: 16px;
+        grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+        gap: 12px;
         width: 100%;
-        padding: 20px;
-      }
-
-      .chips {
-        display: flex;
-        gap: 8px;
-        overflow-x: auto;
-        padding-bottom: 4px;
-        scrollbar-width: none;
-      }
-
-      .chip {
-        flex: none;
-        padding: 10px 16px;
-        border-radius: var(--kk-radius-pill);
-        background: var(--kk-control);
-        font-size: 15px;
-        transition: background 160ms var(--kk-ease);
-      }
-
-      .chip[aria-pressed="true"] {
-        background: var(--kk-accent-fill);
-        color: var(--kk-accent-on);
-      }
-
-      .stepper {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 14px;
-      }
-
-      .stepper strong {
-        font-size: 30px;
-        font-weight: 300;
-        font-variant-numeric: tabular-nums;
-      }
-
-      .stepper .label {
-        font-size: 15px;
-        color: var(--kk-text-2);
+        padding: 12px;
       }
 
       .sheet {
@@ -6080,26 +6332,20 @@ j("kkp-faucet-ring", class extends E {
 		let e = this.device.capabilities.presets;
 		return Array.isArray(e) ? e : [];
 	}
-	get quickAmounts() {
-		return this.device.quick_amounts ?? [];
-	}
 	get unit() {
-		return this.device.units.dispense ?? this.quickAmounts[0]?.unit ?? "mL";
+		return this.pickedUnit ?? (this.device.units.volume === "L" ? "ml" : "cup");
 	}
-	get metric() {
-		return this.unit.toLowerCase().includes("l");
+	get amountIndex() {
+		return this.pickedAmounts[this.unit] ?? 2;
 	}
 	start() {
 		if (this.mode === "faucet") {
 			let e = this.entityId("water");
 			e && this.queued("water", "switch", "turn_on", { entity_id: e });
-			return;
-		}
-		let e = this.amount ?? this.quickAmounts[0]?.amount;
-		e && this.queued("water", "kohler_konnect", "dispense", {
+		} else this.queued("water", "kohler_konnect", "dispense", {
 			device_id: this.device.id,
-			amount: e,
-			unit: this.metric ? "ml" : "fl_oz"
+			amount: qt(this.unit)[this.amountIndex],
+			unit: this.unit
 		});
 	}
 	stop() {
@@ -6112,106 +6358,94 @@ j("kkp-faucet-ring", class extends E {
 			preset: e.name
 		});
 	}
-	step(e) {
-		let t = this.metric ? 50 : 1, n = this.metric ? 50 : 1, r = this.metric ? 11360 : 384, i = this.amount ?? this.quickAmounts[0]?.amount ?? n;
-		this.amount = Math.min(r, Math.max(n, Math.round((i + e * t) / t) * t));
-	}
-	formatAmount(e) {
-		let t = this.quickAmounts.find((t) => Math.abs(t.amount - e) < 1e-6);
-		return t ? t.label : `${J(e, +!this.metric)} ${this.unit}`;
-	}
 	renderStatus(e, t) {
-		if (t) return b`<div class="status active">${this.entity("dispensing")?.attributes.preset ?? P("status.dispensing")}</div>`;
+		if (t) return x`<div class="status active">${this.entity("dispensing")?.attributes.preset ?? F("status.dispensing")}</div>`;
 		if (e) {
 			let e = this.live?.auto_off_at ? Date.parse(this.live.auto_off_at) : NaN, t = Number.isFinite(e) ? Math.max(0, (e - this.now) / 1e3) : null;
-			return b`<div class="status active">
-        ${t === null ? P("status.water_on") : P("faucet.auto_off", { time: gt(t) })}
+			return x`<div class="status active">
+        ${t === null ? F("status.water_on") : F("faucet.auto_off", { time: gt(t) })}
       </div>`;
 		}
 		let n = this.entity("last_dispensed");
-		return b`<div class="status">
-      ${n && n.state !== "unknown" && n.state !== "unavailable" ? P("faucet.last_dispensed", { amount: `${n.state} ${n.attributes.unit_of_measurement ?? ""}`.trim() }) : C}
+		return x`<div class="status">
+      ${n && n.state !== "unknown" && n.state !== "unavailable" ? F("faucet.last_dispensed", { amount: $t(n.attributes) ?? `${n.state} ${n.attributes.unit_of_measurement ?? ""}`.trim() }) : w}
     </div>`;
 	}
 	renderBanners() {
 		let e = [];
-		return this.isOn("leak") && e.push(L("danger", P("faucet.leak"), {
-			label: P("faucet.clear_leak"),
+		return this.isOn("leak") && e.push(R("danger", F("faucet.leak"), {
+			label: F("faucet.clear_leak"),
 			onClick: () => void this.roleService("clear_leak", "button", "press")
-		})), this.entity("handle")?.state === "closed" && e.push(L("info", P("faucet.handle_closed"))), this.entity("firmware")?.attributes.in_progress && e.push(L("warning", P("faucet.firmware_downloading"))), e.length ? b`<div class="banners">${e}</div>` : C;
+		})), this.entity("handle")?.state === "closed" && e.push(R("info", F("faucet.handle_closed"))), this.entity("firmware")?.attributes.in_progress && e.push(R("warning", F("faucet.firmware_downloading"))), e.length ? x`<div class="banners">${e}</div>` : w;
 	}
 	renderAmounts() {
-		let e = this.amount ?? this.quickAmounts[0]?.amount ?? null;
-		return b`<div class="card amounts">
-      <div class="chips" role="group" aria-label=${P("faucet.dispense_amount")}>
-        ${this.quickAmounts.map((t) => b`<button
-            class="chip"
-            aria-pressed=${String(e === t.amount)}
-            @click=${() => this.amount = t.amount}
-          >
-            ${t.label}
-          </button>`)}
-      </div>
-      <div class="stepper">
-        <button class="round" aria-label=${P("control.decrease", { name: P("faucet.custom") })} @click=${() => this.step(-1)}>
-          ${O("minus")}
-        </button>
-        <div style="text-align:center">
-          <strong aria-live="polite">${e === null ? "—" : this.formatAmount(e)}</strong>
-          <div class="label">${P("faucet.custom")}</div>
-        </div>
-        <button class="round" aria-label=${P("control.increase", { name: P("faucet.custom") })} @click=${() => this.step(1)}>
-          ${O("plus")}
-        </button>
-      </div>
+		let e = this.unit;
+		return x`<div class="card amounts" role="group" aria-label=${F("faucet.dispense_amount")}>
+      <kkp-wheel
+        label=${F("faucet.amount")}
+        .options=${qt(e).map(Xt)}
+        .index=${this.amountIndex}
+        @change=${(t) => this.pickedAmounts = {
+			...this.pickedAmounts,
+			[e]: t.detail
+		}}
+      ></kkp-wheel>
+      <kkp-wheel
+        label=${F("faucet.unit")}
+        .options=${Kt.map(Jt)}
+        .index=${Kt.indexOf(e)}
+        @change=${(e) => this.pickedUnit = Kt[e.detail]}
+      ></kkp-wheel>
     </div>`;
 	}
 	renderPresets() {
-		return b`
-      <h2 class="presets-head">${P("faucet.presets")}</h2>
-      ${this.presets.length ? this.presets.map((e, t) => b`<div class="preset">
+		return x`
+      <h2 class="presets-head">${F("faucet.presets")}</h2>
+      ${this.presets.length ? this.presets.map((e, t) => x`<div class="preset">
               <div id="preset-${t}">
                 <span class="preset-name">${e.name}</span>
-                <span class="preset-amount">${J(e.amount, 2)} ${e.unit}</span>
+                <span class="preset-amount">
+                  ${$t(e) ?? `${J(e.amount, 2)} ${e.unit}`}
+                </span>
               </div>
               <button class="pill" aria-describedby="preset-${t}" @click=${() => this.pour(e)}>
-                ${P("faucet.start")}
+                ${F("faucet.start")}
               </button>
-            </div>`) : b`<div class="empty">${P("faucet.no_presets")}</div>`}
+            </div>`) : x`<div class="empty">${F("faucet.no_presets")}</div>`}
     `;
 	}
 	render() {
-		let e = this.isOn("dispensing"), t = e || this.isOn("water") || this.isOn("status"), n = !this.has("water"), r = b`<div class="stage">
+		let e = this.isOn("dispensing"), t = e || this.isOn("water") || this.isOn("status"), n = !this.has("water"), r = x`<div class="stage">
       ${this.renderBanners()}
       <kkp-faucet-ring .flow=${e ? "dispensing" : t ? "on" : "off"}></kkp-faucet-ring>
       ${this.renderStatus(t, e)}
       <button class="pill start" ?disabled=${!t && n} @click=${t ? this.stop : this.start}>
-        ${t ? b`${O("stop")}${P("faucet.stop")}` : P("faucet.start")}
+        ${t ? x`${A("stop")}${F("faucet.stop")}` : F("faucet.start")}
       </button>
       <div class="modes">
         <button class="mode" aria-pressed=${String(this.mode === "faucet")} @click=${() => this.mode = "faucet"}>
-          <span class="circle">${O("faucet")}</span>${P("faucet.faucet")}
+          <span class="circle">${A("faucet")}</span>${F("faucet.faucet")}
         </button>
         <button class="mode" aria-pressed=${String(this.mode === "dispense")} @click=${() => this.mode = "dispense"}>
-          <span class="circle">${O("cup")}</span>${P("faucet.dispense_amount")}
+          <span class="circle">${A("cup")}</span>${F("faucet.dispense_amount")}
         </button>
       </div>
-      ${this.mode === "dispense" ? this.renderAmounts() : C}
-    </div>`, i = this.statusRegion(P(e ? "status.dispensing" : t ? "status.water_on" : "status.off"));
-		return this.wide ? b`${i}<div class="layout">${r}<div class="sheet">${this.renderPresets()}</div></div>` : b`${i}<div class="layout">
+      ${this.mode === "dispense" ? this.renderAmounts() : w}
+    </div>`, i = this.statusRegion(F(e ? "status.dispensing" : t ? "status.water_on" : "status.off"));
+		return this.wide ? x`${i}<div class="layout">${r}<div class="sheet">${this.renderPresets()}</div></div>` : x`${i}<div class="layout">
       ${r}
       <div class="sheet">
         <button class="sheet-toggle" aria-expanded=${String(this.sheetOpen)} @click=${() => this.sheetOpen = !this.sheetOpen}>
-          ${O("chevronDown")}${this.sheetOpen ? P("faucet.see_less") : P("faucet.see_more")}
+          ${A("chevronDown")}${this.sheetOpen ? F("faucet.see_less") : F("faucet.see_more")}
         </button>
-        ${this.sheetOpen ? this.renderPresets() : C}
+        ${this.sheetOpen ? this.renderPresets() : w}
       </div>
     </div>`;
 	}
 });
 // src/components/slider.ts
-var Ht = 400, Ut = 5e3;
-j("kkp-slider", class extends E {
+var en = 400, tn = 5e3;
+N("kkp-slider", class extends O {
 	static {
 		this.properties = {
 			label: {},
@@ -6234,7 +6468,7 @@ j("kkp-slider", class extends E {
 		super(), this.dragging = !1, this.value = null, this.min = 0, this.max = 100, this.step = 1, this.unit = "", this.variant = "temperature", this.coldValue = null, this.disabled = !1, this.compact = !1, this.draft = null;
 	}
 	static {
-		this.styles = [A, o`
+		this.styles = [M, o`
       :host {
         display: block;
       }
@@ -6351,7 +6585,7 @@ j("kkp-slider", class extends E {
 		return this.draft ?? this.value;
 	}
 	format(e) {
-		return e === null ? "—" : this.coldValue !== null && e <= this.coldValue ? P("shower.cold") : this.variant === "temperature" ? Y(e, this.unit) : !this.unit || this.unit === "%" ? `${Math.round(e)}%` : `${J(e, +!Number.isInteger(this.step))} ${this.unit}`;
+		return e === null ? "—" : this.coldValue !== null && e <= this.coldValue ? F("shower.cold") : this.variant === "temperature" ? Y(e, this.unit) : !this.unit || this.unit === "%" ? `${Math.round(e)}%` : `${J(e, +!Number.isInteger(this.step))} ${this.unit}`;
 	}
 	fraction(e) {
 		return e === null || this.max <= this.min ? 0 : Math.min(1, Math.max(0, (e - this.min) / (this.max - this.min)));
@@ -6361,12 +6595,12 @@ j("kkp-slider", class extends E {
 		return Math.min(this.max, Math.max(this.min, Number(t.toFixed(4))));
 	}
 	setDraft(e, t) {
-		this.draft = this.snap(e), window.clearTimeout(this.commitTimer), this.commitTimer = void 0, t === "now" && this.commit(), t === "soon" && (this.commitTimer = window.setTimeout(() => this.commit(), Ht));
+		this.draft = this.snap(e), window.clearTimeout(this.commitTimer), this.commitTimer = void 0, t === "now" && this.commit(), t === "soon" && (this.commitTimer = window.setTimeout(() => this.commit(), en));
 	}
 	commit() {
 		window.clearTimeout(this.commitTimer), this.commitTimer = void 0, this.draft === null || this.draft === this.value ? this.draft = null : (this.dispatchEvent(new CustomEvent("change", { detail: this.draft })), window.clearTimeout(this.draftTimer), this.draftTimer = window.setTimeout(() => {
 			this.draft = null;
-		}, Ut));
+		}, tn));
 	}
 	valueAt(e) {
 		let t = e.currentTarget.getBoundingClientRect(), n = t.width - 40, r = Math.min(1, Math.max(0, (e.clientX - t.left - 20) / n));
@@ -6401,7 +6635,7 @@ j("kkp-slider", class extends E {
 	}
 	render() {
 		let e = this.shown, t = `calc(20px + (100% - 40px) * ${this.fraction(e)})`;
-		return b`
+		return x`
       <div class="head">
         <span class="label">${this.label}</span>
         <span class="value">${this.format(e)}</span>
@@ -6409,12 +6643,12 @@ j("kkp-slider", class extends E {
       <div class="row">
         <button
           class="round"
-          aria-label=${P("control.decrease", { name: this.label })}
+          aria-label=${F("control.decrease", { name: this.label })}
           ?disabled=${this.disabled}
           aria-disabled=${String((e ?? this.min) <= this.min)}
           @click=${() => this.nudge(-1)}
         >
-          ${O("minus")}
+          ${A("minus")}
         </button>
         <div
           class="track ${this.variant} ${this.dragging ? "dragging" : ""} ${e === null ? "empty" : ""}"
@@ -6423,7 +6657,7 @@ j("kkp-slider", class extends E {
           aria-label=${this.label}
           aria-valuemin=${this.min}
           aria-valuemax=${this.max}
-          aria-valuenow=${e ?? C}
+          aria-valuenow=${e ?? w}
           aria-valuetext=${this.format(e)}
           aria-disabled=${this.disabled ? "true" : "false"}
           @pointerdown=${this.onPointerDown}
@@ -6433,32 +6667,32 @@ j("kkp-slider", class extends E {
           @keydown=${this.onKey}
         >
           <div class="rail"></div>
-          ${this.variant === "flow" ? b`<div class="fill" style="width: ${t}"></div>` : C}
-          ${e === null ? C : b`<div class="thumb" style="left: ${t}"></div>`}
+          ${this.variant === "flow" ? x`<div class="fill" style="width: ${t}"></div>` : w}
+          ${e === null ? w : x`<div class="thumb" style="left: ${t}"></div>`}
         </div>
         <button
           class="round"
-          aria-label=${P("control.increase", { name: this.label })}
+          aria-label=${F("control.increase", { name: this.label })}
           ?disabled=${this.disabled}
           aria-disabled=${String((e ?? this.max) >= this.max)}
           @click=${() => this.nudge(1)}
         >
-          ${O("plus")}
+          ${A("plus")}
         </button>
       </div>
     `;
 	}
 });
 // src/components/editors.ts
-function Wt(e) {
+function nn(e) {
 	let t = e.choices.includes(e.current);
-	return b`<div class="editor">
-    <div class="choices" role="radiogroup" aria-label=${e.label} @keydown=${lt}>
-      ${e.choices.map((n, r) => b`<button
+	return x`<div class="editor">
+    <div class="choices" role="radiogroup" aria-label=${e.label} @keydown=${ct}>
+      ${e.choices.map((n, r) => x`<button
           class="choice"
           role="radio"
           aria-checked=${String(n === e.current)}
-          tabindex=${ut(n === e.current, r, t)}
+          tabindex=${lt(n === e.current, r, t)}
           @click=${() => e.onPick(n)}
         >
           <span>${e.display(n)}</span><span class="radio"></span>
@@ -6466,9 +6700,9 @@ function Wt(e) {
     </div>
   </div>`;
 }
-function Gt(e) {
+function rn(e) {
 	let t = e.draft;
-	return b`<div class="editor">
+	return x`<div class="editor">
     <kkp-slider
       compact
       label=${e.label}
@@ -6481,27 +6715,27 @@ function Gt(e) {
       @change=${(t) => e.onDraft(t.detail)}
     ></kkp-slider>
     <div class="editor-actions">
-      <button class="pill" @click=${e.onCancel}>${P("settings.cancel")}</button>
+      <button class="pill" @click=${e.onCancel}>${F("settings.cancel")}</button>
       <button
         class="pill filled"
         ?disabled=${t === null || t === e.value}
         @click=${() => t !== null && e.onSave(t)}
       >
-        ${P("settings.save")}
+        ${F("settings.save")}
       </button>
     </div>
   </div>`;
 }
 // src/views/generic.ts
-var Kt = /* @__PURE__ */ new Set([
+var an = /* @__PURE__ */ new Set([
 	"switch",
 	"button",
 	"select",
 	"number",
 	"light",
 	"fan"
-]), qt = /* @__PURE__ */ new Set(["report_log"]), Jt = /* @__PURE__ */ new Set(["calendar"]), Yt = /* @__PURE__ */ new Set(["start_rapid_clean", "start_deep_clean"]);
-j("kkp-generic", class extends q {
+]), on = /* @__PURE__ */ new Set(["report_log"]), sn = /* @__PURE__ */ new Set(["calendar"]), cn = /* @__PURE__ */ new Set(["start_rapid_clean", "start_deep_clean"]);
+N("kkp-generic", class extends q {
 	static {
 		this.properties = {
 			...q.properties,
@@ -6515,9 +6749,9 @@ j("kkp-generic", class extends q {
 	}
 	static {
 		this.styles = [
-			A,
-			R,
+			M,
 			z,
+			B,
 			Q,
 			o`
       :host {
@@ -6561,10 +6795,10 @@ j("kkp-generic", class extends q {
 		});
 	}
 	async press(e) {
-		if (!Yt.has(e) || await this.ctx.confirm({
-			title: P("generic.ozone_title"),
-			body: P("generic.ozone_body"),
-			confirmLabel: P("generic.ozone_confirm")
+		if (!cn.has(e) || await this.ctx.confirm({
+			title: F("generic.ozone_title"),
+			body: F("generic.ozone_body"),
+			confirmLabel: F("generic.ozone_confirm")
 		})) {
 			this.pressing = /* @__PURE__ */ new Set([...this.pressing, e]);
 			try {
@@ -6584,17 +6818,17 @@ j("kkp-generic", class extends q {
 	}
 	lightRows(e, t) {
 		let n = this.name(t), r = t.attributes.supported_color_modes ?? [], i = t.attributes.effect_list ?? [], a = t.attributes.brightness, o = t.state === "on" && typeof a == "number" ? Math.round(a / 255 * 100) : null, s = `${e}:brightness`, c = `${e}:effect`, l = r.some((e) => e !== "onoff"), u = t.state === "on" ? t.attributes.effect : null;
-		return b`
-      ${l ? b`${F({
-			label: P("generic.brightness", { name: n }),
+		return x`
+      ${l ? x`${I({
+			label: F("generic.brightness", { name: n }),
 			value: o === null ? "—" : `${o}%`,
 			chevron: !0,
 			expanded: this.open === s,
 			key: s,
 			onClick: () => this.toggleOpen(s, o)
 		})}
-          ${this.open === s ? Gt({
-			label: P("generic.brightness", { name: n }),
+          ${this.open === s ? rn({
+			label: F("generic.brightness", { name: n }),
 			value: o,
 			draft: this.draft,
 			min: 10,
@@ -6605,59 +6839,59 @@ j("kkp-generic", class extends q {
 			onDraft: (e) => this.draft = e,
 			onCancel: () => void this.closeEditor(s),
 			onSave: (t) => void this.light(e, s, { brightness_pct: t })
-		}) : C}` : C}
-      ${i.length ? b`${F({
-			label: P("generic.effect", { name: n }),
-			value: u ? dt(this.hass, t, "effect", u) : "—",
+		}) : w}` : w}
+      ${i.length ? x`${I({
+			label: F("generic.effect", { name: n }),
+			value: u ? ut(this.hass, t, "effect", u) : "—",
 			chevron: !0,
 			expanded: this.open === c,
 			key: c,
 			onClick: () => this.toggleOpen(c)
 		})}
-          ${this.open === c ? Wt({
-			label: P("generic.effect", { name: n }),
+          ${this.open === c ? nn({
+			label: F("generic.effect", { name: n }),
 			choices: i,
 			current: String(u ?? ""),
-			display: (e) => dt(this.hass, t, "effect", e),
+			display: (e) => ut(this.hass, t, "effect", e),
 			onPick: (t) => void this.light(e, c, { effect: t })
-		}) : C}` : C}
+		}) : w}` : w}
     `;
 	}
 	control(e, t) {
-		let n = t.entity_id.split(".")[0], r = G(this.device, e) ? P("status.untested") : void 0, i = t.state === "unavailable", a = this.open === e && !i;
+		let n = t.entity_id.split(".")[0], r = dt(this.device, e) ? F("status.untested") : void 0, i = t.state === "unavailable", a = this.open === e && !i;
 		if (n === "select") {
 			let n = Array.isArray(t.attributes.options) ? t.attributes.options : [];
-			return b`${F({
+			return x`${I({
 				label: this.name(t),
 				tag: r,
-				value: W(this.hass, t),
+				value: G(this.hass, t),
 				chevron: !0,
 				expanded: a,
 				key: e,
 				disabled: i,
 				onClick: () => this.toggleOpen(e)
 			})}
-        ${a ? Wt({
+        ${a ? nn({
 				label: this.name(t),
 				choices: n,
 				current: t.state,
-				display: (e) => W(this.hass, t, e),
+				display: (e) => G(this.hass, t, e),
 				onPick: (t) => void this.pick(e, t)
-			}) : C}`;
+			}) : w}`;
 		}
 		if (n === "number") {
-			let n = U(t), o = String(t.attributes.unit_of_measurement ?? "");
-			return b`${F({
+			let n = W(t), o = String(t.attributes.unit_of_measurement ?? "");
+			return x`${I({
 				label: this.name(t),
 				tag: r,
-				value: W(this.hass, t),
+				value: G(this.hass, t),
 				chevron: !0,
 				expanded: a,
 				key: e,
 				disabled: i,
 				onClick: () => this.toggleOpen(e, n)
 			})}
-        ${a ? Gt({
+        ${a ? rn({
 				label: this.name(t),
 				value: n,
 				draft: this.draft,
@@ -6669,51 +6903,51 @@ j("kkp-generic", class extends q {
 				onDraft: (e) => this.draft = e,
 				onCancel: () => void this.closeEditor(e),
 				onSave: (t) => void this.save(e, t)
-			}) : C}`;
+			}) : w}`;
 		}
 		if (n === "switch" || n === "light" || n === "fan") {
-			let a = F({
+			let a = I({
 				label: this.name(t),
 				tag: r,
-				trailing: b`<kkp-toggle
+				trailing: x`<kkp-toggle
           .checked=${t.state === "on"}
           ?disabled=${i}
           label=${this.name(t)}
           @change=${(t) => void this.roleService(e, n, t.detail ? "turn_on" : "turn_off")}
         ></kkp-toggle>`
 			});
-			return n === "light" ? b`${a}${this.lightRows(e, t)}` : a;
+			return n === "light" ? x`${a}${this.lightRows(e, t)}` : a;
 		}
-		return F(n === "button" ? {
+		return I(n === "button" ? {
 			label: this.name(t),
 			tag: r,
-			trailing: b`<button
+			trailing: x`<button
           class="pill"
-          aria-label=${P("generic.press_named", { name: this.name(t) })}
+          aria-label=${F("generic.press_named", { name: this.name(t) })}
           ?disabled=${i || this.pressing.has(e)}
           @click=${() => void this.press(e)}
         >
-          ${P("generic.press")}
+          ${F("generic.press")}
         </button>`
 		} : {
 			label: this.name(t),
 			tag: r,
-			value: W(this.hass, t)
+			value: G(this.hass, t)
 		});
 	}
 	render() {
-		let e = Object.entries(this.device.roles).filter(([e]) => !qt.has(e)).map(([e, t]) => [e, this.hass.states[t]]).filter((e) => !!e[1]).filter(([, e]) => !Jt.has(e.entity_id.split(".")[0])).filter(([, e]) => !this.hass.entities?.[e.entity_id]?.hidden), t = e.filter(([, e]) => Kt.has(e.entity_id.split(".")[0])), n = e.filter(([, e]) => !Kt.has(e.entity_id.split(".")[0])), r = this.device.untested.length > 0;
-		return b`
+		let e = Object.entries(this.device.roles).filter(([e]) => !on.has(e)).map(([e, t]) => [e, this.hass.states[t]]).filter((e) => !!e[1]).filter(([, e]) => !sn.has(e.entity_id.split(".")[0])).filter(([, e]) => !this.hass.entities?.[e.entity_id]?.hidden), t = e.filter(([, e]) => an.has(e.entity_id.split(".")[0])), n = e.filter(([, e]) => !an.has(e.entity_id.split(".")[0])), r = this.device.untested.length > 0;
+		return x`
       <div class="art">${Z(this.device.kind, this.device.model)}</div>
-      ${r ? L("info", P("generic.untested_body")) : C}
-      ${t.length ? I(P("generic.controls"), t.map(([e, t]) => this.control(e, t))) : C}
-      ${n.length ? I(P("generic.readings"), n.map(([, e]) => F({
+      ${r ? R("info", F("generic.untested_body")) : w}
+      ${t.length ? L(F("generic.controls"), t.map(([e, t]) => this.control(e, t))) : w}
+      ${n.length ? L(F("generic.readings"), n.map(([, e]) => I({
 			label: this.name(e),
-			value: W(this.hass, e)
-		}))) : C}
+			value: G(this.hass, e)
+		}))) : w}
     `;
 	}
-}), j("kkp-tabs", class extends E {
+}), N("kkp-tabs", class extends O {
 	static {
 		this.properties = {
 			items: { attribute: !1 },
@@ -6721,7 +6955,7 @@ j("kkp-generic", class extends q {
 		};
 	}
 	static {
-		this.styles = [A, o`
+		this.styles = [M, o`
       :host {
         display: block;
         border-bottom: 1px solid var(--kk-divider);
@@ -6773,8 +7007,8 @@ j("kkp-generic", class extends q {
 		n < 0 || !(e.key in i) || (e.preventDefault(), t.forEach((t, n) => t.tabIndex = n === i[e.key] ? 0 : -1), t[i[e.key]].focus());
 	}
 	render() {
-		return b`<div role="tablist" @keydown=${this.onKey}>
-      ${this.items.map((e) => b`<button
+		return x`<div role="tablist" @keydown=${this.onKey}>
+      ${this.items.map((e) => x`<button
           role="tab"
           aria-selected=${e.key === this.active ? "true" : "false"}
           tabindex=${e.key === this.active ? 0 : -1}
@@ -6784,7 +7018,7 @@ j("kkp-generic", class extends q {
         </button>`)}
     </div>`;
 	}
-}), j("kkp-account", class extends E {
+}), N("kkp-account", class extends O {
 	static {
 		this.properties = {
 			hass: { attribute: !1 },
@@ -6800,9 +7034,9 @@ j("kkp-generic", class extends q {
 	}
 	static {
 		this.styles = [
-			A,
-			R,
+			M,
 			z,
+			B,
 			o`
       :host {
         display: block;
@@ -6880,7 +7114,7 @@ j("kkp-generic", class extends q {
 					}
 				};
 				let i = { ...this.drafts };
-				delete i[e.entry_id], this.drafts = i, this.ctx.toast(P("account.saved")), await this.updateComplete;
+				delete i[e.entry_id], this.drafts = i, this.ctx.toast(F("account.saved")), await this.updateComplete;
 				let a = this.data.entries.indexOf(e);
 				this.renderRoot.querySelectorAll(".group h2")[a]?.focus();
 			} catch (e) {
@@ -6900,47 +7134,47 @@ j("kkp-generic", class extends q {
 	}
 	renderField(e, t) {
 		let n = e.entry_id;
-		if (t.kind === "toggle") return F({
-			label: P("account.sidebar_panel"),
-			description: P("account.sidebar_panel_body"),
-			trailing: b`<kkp-toggle
+		if (t.kind === "toggle") return I({
+			label: F("account.sidebar_panel"),
+			description: F("account.sidebar_panel_body"),
+			trailing: x`<kkp-toggle
           .checked=${!!this.value(n, t.key)}
-          label=${P("account.sidebar_panel")}
+          label=${F("account.sidebar_panel")}
           @change=${(e) => this.set(n, t.key, e.detail)}
         ></kkp-toggle>`
 		});
 		if (t.kind === "minutes") {
 			let e = Number(this.value(n, t.key) ?? 0), [r, i] = [t.min ?? 0, t.max ?? 120];
-			return F({
-				label: P("account.safety_limit"),
-				description: P("account.safety_limit_body"),
-				trailing: b`<span class="stepper">
-          <button class="round" aria-label=${P("control.decrease", { name: P("account.safety_limit") })} aria-disabled=${String(e <= r)}
-            @click=${() => e > r && this.set(n, t.key, e - 1)}>${O("minus")}</button>
-          <strong aria-live="polite">${e ? P("account.minutes", { count: e }) : P("account.off")}</strong>
-          <button class="round" aria-label=${P("control.increase", { name: P("account.safety_limit") })} aria-disabled=${String(e >= i)}
-            @click=${() => e < i && this.set(n, t.key, e + 1)}>${O("plus")}</button>
+			return I({
+				label: F("account.safety_limit"),
+				description: F("account.safety_limit_body"),
+				trailing: x`<span class="stepper">
+          <button class="round" aria-label=${F("control.decrease", { name: F("account.safety_limit") })} aria-disabled=${String(e <= r)}
+            @click=${() => e > r && this.set(n, t.key, e - 1)}>${A("minus")}</button>
+          <strong aria-live="polite">${e ? F("account.minutes", { count: e }) : F("account.off")}</strong>
+          <button class="round" aria-label=${F("control.increase", { name: F("account.safety_limit") })} aria-disabled=${String(e >= i)}
+            @click=${() => e < i && this.set(n, t.key, e + 1)}>${A("plus")}</button>
         </span>`
 			});
 		}
 		let r = this.value(n, t.key);
-		return b`<div class="row" style="display:block">
-      <span class="label">${P("account.zone_grouping")}</span>
+		return x`<div class="row" style="display:block">
+      <span class="label">${F("account.zone_grouping")}</span>
       <div
         class="choices"
         role="radiogroup"
-        aria-label=${P("account.zone_grouping")}
+        aria-label=${F("account.zone_grouping")}
         style="margin-top: 8px"
-        @keydown=${lt}
+        @keydown=${ct}
       >
-        ${(t.options ?? []).map((e, i, a) => b`<button
+        ${(t.options ?? []).map((e, i, a) => x`<button
             class="choice"
             role="radio"
             aria-checked=${r === e ? "true" : "false"}
-            tabindex=${ut(r === e, i, a.includes(String(r)))}
+            tabindex=${lt(r === e, i, a.includes(String(r)))}
             @click=${() => this.set(n, t.key, e)}
           >
-            <span>${P(`account.zone_grouping.${e}`)}</span><span class="radio"></span>
+            <span>${F(`account.zone_grouping.${e}`)}</span><span class="radio"></span>
           </button>`)}
       </div>
     </div>`;
@@ -6950,33 +7184,33 @@ j("kkp-generic", class extends q {
 		return t.fields.filter((e) => e.key !== "zone_grouping" || n);
 	}
 	renderEntry(e) {
-		let t = this.options[e.entry_id], n = this.drafts[e.entry_id], r = !!n && !!t?.fields.some((e) => e.reloads && e.key in n), i = e.stream_connected === null ? b`<span class="dot"></span>${P("diagnostics.unknown")}` : e.stream_connected ? b`<span class="dot good"></span>${P("diagnostics.connected")}` : b`<span class="dot bad"></span>${P("diagnostics.disconnected")}`;
-		return b`
-      ${I(e.title ?? P("app.title"), b`
-          ${F({
-			label: P("account.connection"),
+		let t = this.options[e.entry_id], n = this.drafts[e.entry_id], r = !!n && !!t?.fields.some((e) => e.reloads && e.key in n), i = e.stream_connected === null ? x`<span class="dot"></span>${F("diagnostics.unknown")}` : e.stream_connected ? x`<span class="dot good"></span>${F("diagnostics.connected")}` : x`<span class="dot bad"></span>${F("diagnostics.disconnected")}`;
+		return x`
+      ${L(e.title ?? F("app.title"), x`
+          ${I({
+			label: F("account.connection"),
 			value: i
 		})}
-          ${t ? this.shownFields(e, t).map((t) => this.renderField(e, t)) : C}
-          ${F({
-			label: P("diagnostics.download"),
-			description: P("diagnostics.download_body"),
-			trailing: O("download"),
+          ${t ? this.shownFields(e, t).map((t) => this.renderField(e, t)) : w}
+          ${I({
+			label: F("diagnostics.download"),
+			description: F("diagnostics.download_body"),
+			trailing: A("download"),
 			onClick: () => this.download(e)
 		})}
         `)}
-      ${n ? b`<div class="save">
-            ${r ? L("warning", P("account.reload_warning")) : C}
+      ${n ? x`<div class="save">
+            ${r ? R("warning", F("account.reload_warning")) : w}
             <button class="pill filled" aria-disabled=${String(this.saving === e.entry_id)} @click=${() => this.save(e)}>
-              ${P("account.save")}
+              ${F("account.save")}
             </button>
-          </div>` : C}
+          </div>` : w}
     `;
 	}
 	render() {
-		return this.ctx.admin ? this.data.entries.map((e) => this.renderEntry(e)) : L("info", P("account.admin_only"));
+		return this.ctx.admin ? this.data.entries.map((e) => this.renderEntry(e)) : R("info", F("account.admin_only"));
 	}
-}), j("kkp-home-usage", class extends E {
+}), N("kkp-home-usage", class extends O {
 	static {
 		this.properties = {
 			hass: { attribute: !1 },
@@ -6986,7 +7220,7 @@ j("kkp-generic", class extends q {
 	}
 	static {
 		this.styles = [
-			A,
+			M,
 			Q,
 			o`
       :host {
@@ -7074,23 +7308,23 @@ j("kkp-generic", class extends q {
 		];
 	}
 	renderCard(e) {
-		let t = U(B(this.hass, e, "water_month")), n = U(B(this.hass, e, "water_today")), r = B(this.hass, e, "water_week")?.attributes.per_day, i = r ? Object.values(r).slice(-7) : [], a = Math.max(...i, 0), o = e.units.volume;
-		return b`<button class="card" @click=${() => this.ctx.navigate(`/d/${e.id}/usage`)}>
+		let t = W(V(this.hass, e, "water_month")), n = W(V(this.hass, e, "water_today")), r = V(this.hass, e, "water_week")?.attributes.per_day, i = r ? Object.values(r).slice(-7) : [], a = Math.max(...i, 0), o = e.units.volume;
+		return x`<button class="card" @click=${() => this.ctx.navigate(`/d/${e.id}/usage`)}>
       <div class="top">
         <span class="thumb">${Z(e.kind, e.model)}</span>
         <span class="name">${e.name}</span>
-        <span class="chev">${O("chevronRight")}</span>
+        <span class="chev">${A("chevronRight")}</span>
       </div>
       <div class="figures">
-        <div class="figure"><span>${P("home.usage_this_month")}</span><strong>${mt(t, o)}</strong></div>
-        <div class="figure"><span>${P("home.usage_today")}</span><strong>${mt(n, o)}</strong></div>
+        <div class="figure"><span>${F("home.usage_this_month")}</span><strong>${mt(t, o)}</strong></div>
+        <div class="figure"><span>${F("home.usage_today")}</span><strong>${mt(n, o)}</strong></div>
       </div>
-      ${i.length ? b`<div>
+      ${i.length ? x`<div>
             <div class="spark" aria-hidden="true">
-              ${i.map((e) => b`<i class=${e ? "" : "empty"} style="height:${a ? Math.max(6, e / a * 100) : 6}%"></i>`)}
+              ${i.map((e) => x`<i class=${e ? "" : "empty"} style="height:${a ? Math.max(6, e / a * 100) : 6}%"></i>`)}
             </div>
-            <div class="caption" aria-hidden="true">${P("home.usage_last_7_days")}</div>
-          </div>` : C}
+            <div class="caption" aria-hidden="true">${F("home.usage_last_7_days")}</div>
+          </div>` : w}
     </button>`;
 	}
 	render() {
@@ -7098,8 +7332,8 @@ j("kkp-generic", class extends q {
 	}
 });
 // src/views/home.ts
-var Xt = "https://github.com/kedube/ha-kohler-konnect/blob/main/docs/user_guide.md";
-j("kkp-home", class extends E {
+var ln = "https://github.com/kedube/ha-kohler-konnect/blob/main/docs/user_guide.md";
+N("kkp-home", class extends O {
 	static {
 		this.properties = {
 			hass: { attribute: !1 },
@@ -7111,7 +7345,7 @@ j("kkp-home", class extends E {
 	}
 	static {
 		this.styles = [
-			A,
+			M,
 			Q,
 			o`
       :host {
@@ -7341,14 +7575,14 @@ j("kkp-home", class extends E {
 	}
 	renderTile(e) {
 		let t = jt(this.hass, e), n = e.untested_device;
-		return b`<button
+		return x`<button
       class="tile ${t.running ? "running" : ""}"
-      aria-label=${n ? `${e.name}, ${P("status.untested")}` : e.name}
+      aria-label=${n ? `${e.name}, ${F("status.untested")}` : e.name}
       aria-describedby="status-${e.id}"
       @click=${() => this.open(e)}
     >
-      ${t.tone === "alert" ? b`<span class="badge" aria-hidden="true"></span>` : C}
-      ${n ? b`<span class="untested">${P("status.untested")}</span>` : C}
+      ${t.tone === "alert" ? x`<span class="badge" aria-hidden="true"></span>` : w}
+      ${n ? x`<span class="untested">${F("status.untested")}</span>` : w}
       <span class="art-box">${Z(e.kind, e.model)}</span>
       <span class="name">${e.name}</span>
       <span class="status ${t.tone}" id="status-${e.id}">${t.text}</span>
@@ -7356,60 +7590,60 @@ j("kkp-home", class extends E {
 	}
 	renderDevices() {
 		let e = this.data.devices;
-		if (!e.length) return b`<div class="empty">
-        <strong>${P("app.no_devices")}</strong>
-        <span>${P("app.no_devices_body")}</span>
+		if (!e.length) return x`<div class="empty">
+        <strong>${F("app.no_devices")}</strong>
+        <span>${F("app.no_devices_body")}</span>
       </div>`;
 		let t = /* @__PURE__ */ new Map();
 		for (let n of e) {
-			let e = n.area ?? P("home.other_area");
+			let e = n.area ?? F("home.other_area");
 			t.set(e, [...t.get(e) ?? [], n]);
 		}
 		let n = t.size === 1;
-		return [...t.entries()].map(([e, t]) => b`
-        ${n ? b`<div style="height: 8px"></div>` : b`<h2 class="area eyebrow">${e}</h2>`}
+		return [...t.entries()].map(([e, t]) => x`
+        ${n ? x`<div style="height: 8px"></div>` : x`<h2 class="area eyebrow">${e}</h2>`}
         <div class="grid">${t.map((e) => this.renderTile(e))}</div>
       `);
 	}
 	renderSummary() {
 		let e = this.data.devices.map((e) => jt(this.hass, e)), t = e.filter((e) => e.running).length, n = e.filter((e) => e.tone === "alert").length;
-		return n ? b`<span class="warn">${P("home.summary_alert", { count: n })}</span>` : t ? b`<span class="live">${P("home.summary_running", { count: t })}</span>` : b`${P("home.summary_quiet")}`;
+		return n ? x`<span class="warn">${F("home.summary_alert", { count: n })}</span>` : t ? x`<span class="live">${F("home.summary_running", { count: t })}</span>` : x`${F("home.summary_quiet")}`;
 	}
 	render() {
 		let e = [
 			{
 				key: "devices",
-				label: P("nav.devices")
+				label: F("nav.devices")
 			},
 			{
 				key: "usage",
-				label: P("nav.usage")
+				label: F("nav.usage")
 			},
 			...this.ctx.admin ? [{
 				key: "account",
-				label: P("nav.account")
+				label: F("nav.account")
 			}] : []
 		];
-		return b`
+		return x`
       <div class="intro">
         <div style="display: flex; align-items: flex-start;">
-          ${this.narrow ? b`<button
+          ${this.narrow ? x`<button
                 class="round menu"
-                aria-label=${P("nav.menu")}
+                aria-label=${F("nav.menu")}
                 @click=${() => this.dispatchEvent(new CustomEvent("kkp-menu", {
 			bubbles: !0,
 			composed: !0
 		}))}
               >
-                ${O("menu")}
-              </button>` : C}
+                ${A("menu")}
+              </button>` : w}
           <div>
             <h1 tabindex="-1">Kohler Konnect</h1>
             <div class="summary">${this.renderSummary()}</div>
           </div>
         </div>
-        <a class="help" href=${Xt} target="_blank" rel="noreferrer" aria-label=${P("home.help")}>
-          ${O("help")}<span>${P("home.help")}</span>
+        <a class="help" href=${ln} target="_blank" rel="noreferrer" aria-label=${F("home.help")}>
+          ${A("help")}<span>${F("home.help")}</span>
         </a>
       </div>
       <kkp-tabs
@@ -7418,11 +7652,11 @@ j("kkp-home", class extends E {
         @kkp-select=${(e) => this.ctx.navigate(e.detail === "devices" ? "/" : `/${e.detail}`)}
       ></kkp-tabs>
       <div class="tab-body" role="tabpanel" aria-label=${e.find((e) => e.key === this.tab)?.label ?? ""}>
-        ${this.tab === "usage" ? b`<kkp-home-usage .hass=${this.hass} .data=${this.data} .ctx=${this.ctx}></kkp-home-usage>` : this.tab === "account" ? b`<kkp-account .hass=${this.hass} .data=${this.data} .ctx=${this.ctx}></kkp-account>` : this.renderDevices()}
+        ${this.tab === "usage" ? x`<kkp-home-usage .hass=${this.hass} .data=${this.data} .ctx=${this.ctx}></kkp-home-usage>` : this.tab === "account" ? x`<kkp-account .hass=${this.hass} .data=${this.data} .ctx=${this.ctx}></kkp-account>` : this.renderDevices()}
       </div>
     `;
 	}
-}), j("kkp-settings", class extends q {
+}), N("kkp-settings", class extends q {
 	static {
 		this.properties = {
 			...q.properties,
@@ -7435,9 +7669,9 @@ j("kkp-home", class extends E {
 	}
 	static {
 		this.styles = [
-			A,
-			R,
+			M,
 			z,
+			B,
 			o`
       :host {
         display: block;
@@ -7475,9 +7709,9 @@ j("kkp-home", class extends E {
 				if (n === null || t > n) {
 					let n = String(this.entity(e)?.attributes.unit_of_measurement ?? this.device.units.temperature);
 					if (!await this.ctx.confirm({
-						title: P("settings.scald_title"),
-						body: P("settings.scald_body", { temperature: Y(t, n) }),
-						confirmLabel: P("settings.scald_confirm"),
+						title: F("settings.scald_title"),
+						body: F("settings.scald_body", { temperature: Y(t, n) }),
+						confirmLabel: F("settings.scald_confirm"),
 						destructive: !0
 					})) return;
 				}
@@ -7490,12 +7724,12 @@ j("kkp-home", class extends E {
 	}
 	async restart() {
 		if (await this.ctx.confirm({
-			title: P("settings.restart_title", { name: this.device.name }),
-			body: P("settings.restart_body"),
-			confirmLabel: P("settings.restart_confirm"),
+			title: F("settings.restart_title", { name: this.device.name }),
+			body: F("settings.restart_body"),
+			confirmLabel: F("settings.restart_confirm"),
 			destructive: !0
 		})) try {
-			await this.ctx.api.restartValve(this.device.id), this.ctx.toast(P("settings.restart_done"));
+			await this.ctx.api.restartValve(this.device.id), this.ctx.toast(F("settings.restart_done"));
 		} catch (e) {
 			this.ctx.toast(K(e), "error");
 		}
@@ -7509,63 +7743,63 @@ j("kkp-home", class extends E {
 	}
 	selectRow(e, t, n = !1) {
 		let r = this.entity(e);
-		if (!r) return C;
+		if (!r) return w;
 		let i = Array.isArray(r.attributes.options) ? r.attributes.options : [], a = this.open === e;
-		return b`${F({
+		return x`${I({
 			label: t,
-			value: W(this.hass, r),
+			value: G(this.hass, r),
 			chevron: !0,
 			expanded: a,
 			disabled: n,
-			tag: G(this.device, e) ? P("status.untested") : void 0,
+			tag: dt(this.device, e) ? F("status.untested") : void 0,
 			key: e,
 			onClick: () => this.toggleOpen(e)
 		})}
-      ${a ? Wt({
+      ${a ? nn({
 			label: t,
 			choices: i,
 			current: r.state,
-			display: (e) => W(this.hass, r, e),
+			display: (e) => G(this.hass, r, e),
 			onPick: (t) => void this.selectOption(e, t)
-		}) : C}`;
+		}) : w}`;
 	}
 	warmupRows() {
 		let e = this.entity("warmup");
-		if (!e) return C;
+		if (!e) return w;
 		let t = (Array.isArray(e.attributes.options) ? e.attributes.options : []).filter((e) => e !== "Off"), n = e.state !== "Off", r = t.includes("All Outlets") ? "All Outlets" : t[0];
-		return b`${F({
-			label: P("settings.warmup"),
-			description: P("settings.warmup_body"),
-			trailing: b`<kkp-toggle
+		return x`${I({
+			label: F("settings.warmup"),
+			description: F("settings.warmup_body"),
+			trailing: x`<kkp-toggle
         .checked=${n}
         ?disabled=${!r}
-        label=${P("settings.warmup")}
+        label=${F("settings.warmup")}
         @change=${(e) => this.selectOption("warmup", e.detail ? r : "Off")}
       ></kkp-toggle>`
 		})}
-      ${n && t.length > 1 ? Wt({
-			label: P("settings.warmup_outlets"),
+      ${n && t.length > 1 ? nn({
+			label: F("settings.warmup_outlets"),
 			choices: t,
 			current: e.state,
 			display: (e) => e,
 			onPick: (t) => void (t !== e.state && this.selectOption("warmup", t))
-		}) : C}`;
+		}) : w}`;
 	}
 	numberRow(e, t, n, r = !1) {
 		let i = this.entity(e);
-		if (!i) return C;
-		let a = U(i), o = this.open === e, s = e.includes("temperature"), c = String(i.attributes.unit_of_measurement ?? "");
-		return b`${F({
+		if (!i) return w;
+		let a = W(i), o = this.open === e, s = e.includes("temperature"), c = String(i.attributes.unit_of_measurement ?? "");
+		return x`${I({
 			label: t,
 			value: n(a, c),
 			chevron: !0,
 			expanded: o,
 			disabled: r,
-			tag: G(this.device, e) ? P("status.untested") : void 0,
+			tag: dt(this.device, e) ? F("status.untested") : void 0,
 			key: e,
 			onClick: () => this.toggleOpen(e, a)
 		})}
-      ${o ? Gt({
+      ${o ? rn({
 			label: t,
 			value: a,
 			draft: this.draft,
@@ -7577,61 +7811,61 @@ j("kkp-home", class extends E {
 			onDraft: (e) => this.draft = e,
 			onCancel: () => void this.closeEditor(e),
 			onSave: (t) => void this.saveNumber(e, t)
-		}) : C}`;
+		}) : w}`;
 	}
 	generalGroup(e) {
-		return I(P("settings.general"), b`
-        ${this.ctx.admin ? F({
-			label: P("settings.about"),
+		return L(F("settings.general"), x`
+        ${this.ctx.admin ? I({
+			label: F("settings.about"),
 			chevron: !0,
 			onClick: () => this.navigate("about")
-		}) : C}
-        ${this.device.capabilities.usage ? F({
-			label: P("settings.water_usage"),
+		}) : w}
+        ${this.device.capabilities.usage ? I({
+			label: F("settings.water_usage"),
 			chevron: !0,
 			onClick: () => this.navigate("usage")
-		}) : C}
-        ${this.ctx.admin ? F({
-			label: P("settings.diagnostics"),
+		}) : w}
+        ${this.ctx.admin ? I({
+			label: F("settings.diagnostics"),
 			chevron: !0,
 			onClick: () => this.navigate("diagnostics")
-		}) : C}
-        ${e && this.ctx.admin ? F({
-			label: P("settings.restart"),
+		}) : w}
+        ${e && this.ctx.admin ? I({
+			label: F("settings.restart"),
 			destructive: !0,
 			onClick: () => this.restart()
-		}) : C}
+		}) : w}
       `);
 	}
 	renderValve() {
 		let e = X(this.hass, this.device), t = e !== "idle" && e !== "offline", n = (e, t) => Y(e, t || this.device.units.temperature), r = (this.live?.default_shower)?.zones.flatMap((e) => e.outlets.map((t) => this.device.zones.find((t) => t.zone === e.zone)?.outlets.find((e) => e.position === t)?.name)).filter(Boolean).join(", "), i = this.device.capabilities.warmup_auto_restore, a = Object.keys(this.device.roles).filter((e) => e.startsWith("flow:"));
-		return b`
-      ${t ? b`<div class="lock">${L("info", P("settings.locked_running"))}</div>` : C}
-      ${I(P("settings.defaults"), b`
-          ${this.numberRow("default_temperature", P("settings.default_temperature"), n, t)}
-          ${F({
-			label: P("settings.default_outlets"),
+		return x`
+      ${t ? x`<div class="lock">${R("info", F("settings.locked_running"))}</div>` : w}
+      ${L(F("settings.defaults"), x`
+          ${this.numberRow("default_temperature", F("settings.default_temperature"), n, t)}
+          ${I({
+			label: F("settings.default_outlets"),
 			value: r || "—",
 			chevron: !0,
 			expanded: this.open === "default_outlets",
 			onClick: () => this.toggleOpen("default_outlets")
 		})}
-          ${this.open === "default_outlets" ? b`<div class="editor muted">${P("settings.default_outlets_body")}</div>` : C}
-        `, P("settings.defaults_body"))}
-      ${I(P("settings.device_control"), b`
+          ${this.open === "default_outlets" ? x`<div class="editor muted">${F("settings.default_outlets_body")}</div>` : w}
+        `, F("settings.defaults_body"))}
+      ${L(F("settings.device_control"), x`
           ${this.warmupRows()}
-          ${i === void 0 ? C : F({
-			label: P("settings.warmup_auto_restore"),
-			description: P("settings.warmup_auto_restore_body"),
-			trailing: b`<kkp-toggle
+          ${i === void 0 ? w : I({
+			label: F("settings.warmup_auto_restore"),
+			description: F("settings.warmup_auto_restore_body"),
+			trailing: x`<kkp-toggle
                   .checked=${this.has("warmup_auto_restore") ? this.isOn("warmup_auto_restore") : !!i}
-                  label=${P("settings.warmup_auto_restore")}
+                  label=${F("settings.warmup_auto_restore")}
                   @change=${(e) => this.setAutoRestore(e.detail)}
                 ></kkp-toggle>`
 		})}
-          ${this.numberRow("max_temperature", P("settings.max_temperature"), n, t)}
-          ${this.selectRow("max_duration", P("settings.max_duration"), t)}
-          ${a.map((e) => this.numberRow(e, a.length > 1 ? `${P("settings.flow")} ${e.split(":")[1]}` : P("settings.flow"), (e) => e === null ? "—" : `${Math.round(e)}%`))}
+          ${this.numberRow("max_temperature", F("settings.max_temperature"), n, t)}
+          ${this.selectRow("max_duration", F("settings.max_duration"), t)}
+          ${a.map((e) => this.numberRow(e, a.length > 1 ? `${F("settings.flow")} ${e.split(":")[1]}` : F("settings.flow"), (e) => e === null ? "—" : `${Math.round(e)}%`))}
         `)}
       ${this.renderTouchscreen(t)}
       ${this.generalGroup(!0)}
@@ -7647,31 +7881,31 @@ j("kkp-home", class extends E {
 			"accessible_display",
 			"flow_control",
 			"water_saving_mode"
-		].some((e) => this.has(e))) return C;
+		].some((e) => this.has(e))) return w;
 		let t = (e) => e === null ? "—" : `${Math.round(e)}`, n = this.entity("water_saving_mode");
-		return I(P("settings.touchscreen"), b`
-        ${this.selectRow("panel_language", P("settings.panel_language"), e)}
-        ${this.selectRow("panel_units", P("settings.panel_units"), e)}
-        ${this.selectRow("wake_screen", P("settings.wake_screen"), e)}
-        ${this.numberRow("display_brightness", P("settings.display_brightness"), t, e)}
-        ${this.switchRow("haptic_feedback", P("settings.haptic_feedback"), void 0, e)}
-        ${this.switchRow("accessible_display", P("settings.accessible_display"), P("settings.accessible_display_body"), e)}
-        ${this.switchRow("flow_control", P("settings.flow_control"), P("settings.flow_control_body"), e)}
-        ${n ? F({
-			label: P("settings.water_saving_mode"),
-			description: P("settings.water_saving_mode_body"),
-			value: W(this.hass, n)
-		}) : C}
-      `, P("settings.touchscreen_body"));
+		return L(F("settings.touchscreen"), x`
+        ${this.selectRow("panel_language", F("settings.panel_language"), e)}
+        ${this.selectRow("panel_units", F("settings.panel_units"), e)}
+        ${this.selectRow("wake_screen", F("settings.wake_screen"), e)}
+        ${this.numberRow("display_brightness", F("settings.display_brightness"), t, e)}
+        ${this.switchRow("haptic_feedback", F("settings.haptic_feedback"), void 0, e)}
+        ${this.switchRow("accessible_display", F("settings.accessible_display"), F("settings.accessible_display_body"), e)}
+        ${this.switchRow("flow_control", F("settings.flow_control"), F("settings.flow_control_body"), e)}
+        ${n ? I({
+			label: F("settings.water_saving_mode"),
+			description: F("settings.water_saving_mode_body"),
+			value: G(this.hass, n)
+		}) : w}
+      `, F("settings.touchscreen_body"));
 	}
 	renderFaucet() {
-		return b`
-      ${I(P("settings.dispense_defaults"), b`
-          ${this.numberRow("dispense_amount", P("settings.dispense_amount"), (e, t) => e === null ? "—" : `${e} ${t || this.device.units.dispense || ""}`.trim())}
-          ${this.selectRow("preset", P("settings.preset"))}
-          ${F({
-			label: P("settings.safety_limit"),
-			description: P("settings.safety_limit_body"),
+		return x`
+      ${L(F("settings.dispense_defaults"), x`
+          ${this.numberRow("dispense_amount", F("settings.dispense_amount"), (e, t) => e === null ? "—" : `${e} ${t || this.device.units.dispense || ""}`.trim())}
+          ${this.selectRow("preset", F("settings.preset"))}
+          ${I({
+			label: F("settings.safety_limit"),
+			description: F("settings.safety_limit_body"),
 			chevron: !0,
 			onClick: () => this.ctx.navigate("/account")
 		})}
@@ -7681,34 +7915,34 @@ j("kkp-home", class extends E {
 	}
 	renderController() {
 		let e = this.device.capabilities.web_url, t = this.entity("max_duration");
-		return b`
-      ${I(P("settings.device_control"), b`
-          ${t ? F({
-			label: P("settings.max_duration"),
+		return x`
+      ${L(F("settings.device_control"), x`
+          ${t ? I({
+			label: F("settings.max_duration"),
 			value: `${t.state} min`
-		}) : C}
-          ${e ? F({
-			label: P("settings.web_settings"),
-			trailing: O("chevronRight"),
+		}) : w}
+          ${e ? I({
+			label: F("settings.web_settings"),
+			trailing: A("chevronRight"),
 			onClick: () => window.open(e, "_blank", "noreferrer")
-		}) : C}
+		}) : w}
         `)}
       ${this.generalGroup(!1)}
     `;
 	}
 	switchRow(e, t, n, r = !1) {
 		let i = this.entity(e);
-		return i ? F({
+		return i ? I({
 			label: t,
 			description: n,
-			tag: G(this.device, e) ? P("status.untested") : void 0,
-			trailing: b`<kkp-toggle
+			tag: dt(this.device, e) ? F("status.untested") : void 0,
+			trailing: x`<kkp-toggle
         .checked=${i.state === "on"}
         ?disabled=${r || i.state === "unavailable"}
         label=${t}
         @change=${(t) => this.roleService(e, "switch", t.detail ? "turn_on" : "turn_off")}
       ></kkp-toggle>`
-		}) : C;
+		}) : w;
 	}
 	usable(e) {
 		let t = this.entity(e);
@@ -7716,8 +7950,8 @@ j("kkp-home", class extends E {
 	}
 	scheduleSummary() {
 		let { start: e, end: t, repeat: n, days: r, speed: i } = this.entity("fan_schedule")?.attributes ?? {};
-		if (typeof e != "string" || typeof t != "string") return P("smart_fan.schedule_body");
-		let a = n === "custom" && Array.isArray(r) ? Ct(r) : P(n === "once" ? "smart_fan.once" : "smart_fan.every_day"), o = this.entity("default_fan_speed"), s = typeof i == "string" && o ? W(this.hass, o, i) : null;
+		if (typeof e != "string" || typeof t != "string") return F("smart_fan.schedule_body");
+		let a = n === "custom" && Array.isArray(r) ? Ct(r) : F(n === "once" ? "smart_fan.once" : "smart_fan.every_day"), o = this.entity("default_fan_speed"), s = typeof i == "string" && o ? G(this.hass, o, i) : null;
 		return [
 			`${xt(e)}–${xt(t)}`,
 			a,
@@ -7726,8 +7960,8 @@ j("kkp-home", class extends E {
 	}
 	renderSmartFan() {
 		let e = this.entity("fan_state")?.state ?? "off", t = e !== "off" && e !== "unknown" && e !== "unavailable", n = this.isOn("light_state"), r = t || n || this.isOn("night_light");
-		return b`
-      ${r ? L("info", P("smart_fan.locked_running")) : C}
+		return x`
+      ${r ? R("info", F("smart_fan.locked_running")) : w}
       ${[
 			"default_fan_speed",
 			"default_fan_timer",
@@ -7739,27 +7973,27 @@ j("kkp-home", class extends E {
 			"humidity_sensing",
 			"humidity_sensitivity",
 			"fan_schedule"
-		].some((e) => this.has(e)) ? b`${I(P("settings.defaults"), b`
-              ${this.selectRow("default_fan_speed", P("smart_fan.fan_speed"), t)}
-              ${this.switchRow("default_fan_timer", P("smart_fan.fan_timer"), P("smart_fan.fan_timer_body"), t)}
-              ${this.usable("default_fan_run_time") ? this.numberRow("default_fan_run_time", P("smart_fan.fan_run_time"), (e) => e === null ? "—" : P("account.minutes", { count: e }), t) : C}
-              ${this.usable("default_light_color") ? this.selectRow("default_light_color", P("smart_fan.light_color"), n) : C}
-              ${this.numberRow("default_light_brightness", P("smart_fan.light_brightness"), (e) => e === null ? "—" : `${e}%`, n)}
-              ${this.switchRow("circadian_lighting", P("smart_fan.circadian"), P("smart_fan.circadian_body"), n)}
-              ${this.switchRow("audible_feedback", P("smart_fan.audible_feedback"), P("smart_fan.audible_feedback_body"), r)}
-            `, P("smart_fan.defaults_body"))}
-          ${I(P("smart_fan.automation"), b`
-              ${this.switchRow("humidity_sensing", P("smart_fan.humidity"), P("smart_fan.humidity_body"), t)}
-              ${this.usable("humidity_sensitivity") ? this.selectRow("humidity_sensitivity", P("smart_fan.sensitivity"), t) : C}
-              ${this.switchRow("fan_schedule", P("smart_fan.schedule"), this.scheduleSummary(), t)}
-            `)}` : L("info", P("generic.untested_body"))}
+		].some((e) => this.has(e)) ? x`${L(F("settings.defaults"), x`
+              ${this.selectRow("default_fan_speed", F("smart_fan.fan_speed"), t)}
+              ${this.switchRow("default_fan_timer", F("smart_fan.fan_timer"), F("smart_fan.fan_timer_body"), t)}
+              ${this.usable("default_fan_run_time") ? this.numberRow("default_fan_run_time", F("smart_fan.fan_run_time"), (e) => e === null ? "—" : F("account.minutes", { count: e }), t) : w}
+              ${this.usable("default_light_color") ? this.selectRow("default_light_color", F("smart_fan.light_color"), n) : w}
+              ${this.numberRow("default_light_brightness", F("smart_fan.light_brightness"), (e) => e === null ? "—" : `${e}%`, n)}
+              ${this.switchRow("circadian_lighting", F("smart_fan.circadian"), F("smart_fan.circadian_body"), n)}
+              ${this.switchRow("audible_feedback", F("smart_fan.audible_feedback"), F("smart_fan.audible_feedback_body"), r)}
+            `, F("smart_fan.defaults_body"))}
+          ${L(F("smart_fan.automation"), x`
+              ${this.switchRow("humidity_sensing", F("smart_fan.humidity"), F("smart_fan.humidity_body"), t)}
+              ${this.usable("humidity_sensitivity") ? this.selectRow("humidity_sensitivity", F("smart_fan.sensitivity"), t) : w}
+              ${this.switchRow("fan_schedule", F("smart_fan.schedule"), this.scheduleSummary(), t)}
+            `)}` : R("info", F("generic.untested_body"))}
       ${this.generalGroup(!1)}
     `;
 	}
 	render() {
 		return this.device.kind === "valve" ? this.renderValve() : this.device.kind === "faucet" ? this.renderFaucet() : this.device.kind === "controller" ? this.renderController() : this.device.kind === "smart_fan" ? this.renderSmartFan() : this.generalGroup(!1);
 	}
-}), j("kkp-outlet", class extends E {
+}), N("kkp-outlet", class extends O {
 	static {
 		this.properties = {
 			name: {},
@@ -7775,7 +8009,7 @@ j("kkp-home", class extends E {
 	}
 	static {
 		this.styles = [
-			A,
+			M,
 			Q,
 			o`
       :host {
@@ -7895,7 +8129,7 @@ j("kkp-home", class extends E {
 		];
 	}
 	render() {
-		return b`<button
+		return x`<button
       class=${[
 			this.state,
 			this.state === "on" ? "running" : "",
@@ -7906,32 +8140,32 @@ j("kkp-home", class extends E {
       @click=${() => this.dispatchEvent(new CustomEvent("kkp-toggle"))}
     >
       <span class="circle">
-        ${qe(this.kind)}
-        ${this.locked ? b`<span class="badge">${O("lock", P("shower.locked"))}</span>` : C}
+        ${Ge(this.kind)}
+        ${this.locked ? x`<span class="badge">${A("lock", F("shower.locked"))}</span>` : w}
       </span>
       <span class="name">${this.name}</span>
-      ${this.variant ? b`<span class="variant">${this.variant}</span>` : C}
+      ${this.variant ? x`<span class="variant">${this.variant}</span>` : w}
     </button>`;
 	}
 });
 // src/util/staging.ts
-function Zt(e, t) {
+function un(e, t) {
 	return e === null || !t ? e : Math.min(t.max, Math.max(t.min, Math.round(e)));
 }
-function Qt(e, t) {
+function dn(e, t) {
 	return e?.staging_bounds?.find((e) => e.zone === t);
 }
-function $t(e, t, n) {
+function fn(e, t, n) {
 	return e.zones.map(({ zone: r }) => {
-		let i = t?.default_shower?.zones.find((e) => e.zone === r), a = B(n, e, `temperature:${r}`), o = a?.attributes?.unit_of_measurement === e.units.temperature ? U(a) : null;
+		let i = t?.default_shower?.zones.find((e) => e.zone === r), a = V(n, e, `temperature:${r}`), o = a?.attributes?.unit_of_measurement === e.units.temperature ? W(a) : null;
 		return {
 			zone: r,
 			outlets: i ? [...i.outlets] : [],
-			temperature: Zt(i?.temperature ?? o, Qt(t, r))
+			temperature: un(i?.temperature ?? o, dn(t, r))
 		};
 	});
 }
-function en(e, t, n) {
+function pn(e, t, n) {
 	return e.map((e) => {
 		if (e.zone !== t) return e;
 		let r = e.outlets.includes(n) ? e.outlets.filter((e) => e !== n) : [...e.outlets, n].sort((e, t) => e - t);
@@ -7941,20 +8175,20 @@ function en(e, t, n) {
 		};
 	});
 }
-function tn(e, t, n, r) {
+function mn(e, t, n, r) {
 	return e.map((e) => e.zone === t ? {
 		...e,
-		temperature: Zt(n, Qt(r, t))
+		temperature: un(n, dn(r, t))
 	} : e);
 }
-function nn(e) {
+function hn(e) {
 	return e.some((e) => e.outlets.length > 0);
 }
-function rn(e) {
+function gn(e) {
 	let t = e.find((e) => e.zone === 1);
-	return nn(e) && t?.temperature !== null && t !== void 0;
+	return hn(e) && t?.temperature !== null && t !== void 0;
 }
-function an(e, t, n) {
+function _n(e, t, n) {
 	let r = { device_id: e };
 	for (let e of t) {
 		e.temperature !== null && (r[`zone${e.zone}_temperature`] = e.temperature);
@@ -7962,7 +8196,7 @@ function an(e, t, n) {
 	}
 	return n?.zone1 !== void 0 && n.zone1 !== null && (r.flow = Math.round(n.zone1)), n?.zone2 !== void 0 && n.zone2 !== null && t.some((e) => e.zone === 2) && (r.zone2_flow = Math.round(n.zone2)), r;
 }
-j("kkp-shower", class extends q {
+N("kkp-shower", class extends q {
 	static {
 		this.properties = {
 			...q.properties,
@@ -7977,8 +8211,8 @@ j("kkp-shower", class extends q {
 	}
 	static {
 		this.styles = [
-			A,
-			z,
+			M,
+			B,
 			o`
       :host {
         display: block;
@@ -8134,7 +8368,7 @@ j("kkp-shower", class extends q {
 		return X(this.hass, this.device);
 	}
 	willUpdate(e) {
-		super.willUpdate(e), this.phase === "idle" ? this.stage && this.touched || (this.stage = $t(this.device, this.live, this.hass)) : (this.stage = null, this.touched = !1);
+		super.willUpdate(e), this.phase === "idle" ? this.stage && this.touched || (this.stage = fn(this.device, this.live, this.hass)) : (this.stage = null, this.touched = !1);
 	}
 	focusFallback() {
 		return this.renderRoot.querySelector("kkp-running, .simple-start");
@@ -8142,7 +8376,7 @@ j("kkp-shower", class extends q {
 	defaultSummary() {
 		let e = this.live?.default_shower;
 		if (!e) return "";
-		if (e.refused_because) return P("shower.simple_start_unknown");
+		if (e.refused_because) return F("shower.simple_start_unknown");
 		let t = e.zones.flatMap((e) => e.outlets.map((t) => this.device.zones.find((t) => t.zone === e.zone)?.outlets.find((e) => e.position === t)?.name)), n = e.zones[0]?.temperature ?? null;
 		return [t.filter(Boolean).join(", "), Y(n, this.device.units.temperature)].filter((e) => e && e !== "—").join(" · ");
 	}
@@ -8159,19 +8393,19 @@ j("kkp-shower", class extends q {
 			zone1: this.stagedFlow[1] ?? this.number("flow:1"),
 			zone2: this.stagedFlow[2] ?? this.number("flow:2")
 		};
-		this.lastStarted = e, this.queued("shower", "kohler_konnect", "custom_shower", an(this.device.id, e, t));
+		this.lastStarted = e, this.queued("shower", "kohler_konnect", "custom_shower", _n(this.device.id, e, t));
 	}
 	resume() {
 		let e = this.device.zones.map((e) => ({
 			zone: e.zone,
 			outlets: e.outlets.filter((t) => this.isOn(`outlet:${e.zone}:${t.position}`)).map((e) => e.position),
 			temperature: this.number(`temperature:${e.zone}`)
-		})), t = this.lastStarted ?? (nn(e) ? e : $t(this.device, this.live, this.hass));
+		})), t = this.lastStarted ?? (hn(e) ? e : fn(this.device, this.live, this.hass));
 		this.sendShower(t);
 	}
 	toggleOutlet(e, t) {
 		if (this.phase === "idle") {
-			this.touched = !0, this.stage = en(this.stage ?? [], e, t.position);
+			this.touched = !0, this.stage = pn(this.stage ?? [], e, t.position);
 			return;
 		}
 		let n = `outlet:${e}:${t.position}`, r = this.entityId(n);
@@ -8179,7 +8413,7 @@ j("kkp-shower", class extends q {
 	}
 	setTemperature(e, t) {
 		if (this.phase === "idle") {
-			this.touched = !0, this.stage = tn(this.stage ?? [], e, t, this.live);
+			this.touched = !0, this.stage = mn(this.stage ?? [], e, t, this.live);
 			return;
 		}
 		let n = this.entityId(`temperature:${e}`);
@@ -8203,19 +8437,19 @@ j("kkp-shower", class extends q {
 		});
 	}
 	renderZone(e, t) {
-		let n = this.phase, r = n === "idle", i = n === "warming", a = this.stage?.find((t) => t.zone === e.zone), o = this.entity(`temperature:${e.zone}`), s = this.live?.staging_bounds?.find((t) => t.zone === e.zone), c = Number(o?.attributes.min ?? 58), l = Number(o?.attributes.max ?? 118), u = this.entity(`flow:${e.zone}`), ee = !!u && u.attributes.flow_control_available !== !1, te = r ? a?.temperature ?? null : U(o), ne = r ? this.device.units.temperature : String(o?.attributes.unit_of_measurement ?? this.device.units.temperature);
-		return b`<section class="card zone" aria-labelledby="zone-${e.zone}">
+		let n = this.phase, r = n === "idle", i = n === "warming", a = this.stage?.find((t) => t.zone === e.zone), o = this.entity(`temperature:${e.zone}`), s = this.live?.staging_bounds?.find((t) => t.zone === e.zone), c = Number(o?.attributes.min ?? 58), l = Number(o?.attributes.max ?? 118), u = this.entity(`flow:${e.zone}`), ee = !!u && u.attributes.flow_control_available !== !1, te = r ? a?.temperature ?? null : W(o), d = r ? this.device.units.temperature : String(o?.attributes.unit_of_measurement ?? this.device.units.temperature);
+		return x`<section class="card zone" aria-labelledby="zone-${e.zone}">
       <div class="zone-head">
         <h2 class="section-label" id="zone-${e.zone}">
-          ${t ? P("shower.zone", { zone: e.zone }) : P("shower.outlets")}
+          ${t ? F("shower.zone", { zone: e.zone }) : F("shower.outlets")}
         </h2>
       </div>
       <div class="outlets" style="--count: ${Math.max(e.outlets.length, 1)}">
         ${e.outlets.map((t) => {
-			let o = `outlet:${e.zone}:${t.position}`, s = r ? a?.outlets.includes(t.position) ? "staged" : "off" : H(this.entity(o)) ? "on" : "off";
-			return b`<kkp-outlet
+			let o = `outlet:${e.zone}:${t.position}`, s = r ? a?.outlets.includes(t.position) ? "staged" : "off" : U(this.entity(o)) ? "on" : "off";
+			return x`<kkp-outlet
             .name=${t.name}
-            .kind=${Ge(t.code, t.name)}
+            .kind=${Ue(t.code, t.name)}
             .variant=${t.variant}
             .state=${s}
             ?locked=${i}
@@ -8224,50 +8458,50 @@ j("kkp-shower", class extends q {
           ></kkp-outlet>`;
 		})}
       </div>
-      ${i ? b`<p class="lock-note">${O("lock")}${P("shower.locked_warming")}</p>` : r && !a?.outlets.length ? b`<p class="hint">${P("shower.staged_hint")}</p>` : C}
+      ${i ? x`<p class="lock-note">${A("lock")}${F("shower.locked_warming")}</p>` : r && !a?.outlets.length ? x`<p class="hint">${F("shower.staged_hint")}</p>` : w}
       <div class="divider"></div>
-      ${o || r ? b`<kkp-slider
-            label=${P("shower.temperature")}
+      ${o || r ? x`<kkp-slider
+            label=${F("shower.temperature")}
             .value=${te}
-            .min=${r ? s?.min ?? (ne === "°C" ? 15 : 59) : c}
-            .max=${r ? s?.max ?? (ne === "°C" ? 47 : 118) : l}
+            .min=${r ? s?.min ?? (d === "°C" ? 15 : 59) : c}
+            .max=${r ? s?.max ?? (d === "°C" ? 47 : 118) : l}
             .step=${Number(o?.attributes.step ?? 1)}
-            unit=${ne}
+            unit=${d}
             .coldValue=${r ? null : c}
             ?disabled=${i || n === "offline"}
             @change=${(t) => this.setTemperature(e.zone, t.detail)}
-          ></kkp-slider>` : C}
-      ${ee ? b`<kkp-slider
+          ></kkp-slider>` : w}
+      ${ee ? x`<kkp-slider
             compact
             variant="flow"
-            label=${P("shower.flow")}
-            .value=${r ? this.stagedFlow[e.zone] ?? U(u) : U(u)}
+            label=${F("shower.flow")}
+            .value=${r ? this.stagedFlow[e.zone] ?? W(u) : W(u)}
             .min=${Number(u.attributes.min ?? 8)}
             .max=${Number(u.attributes.max ?? 100)}
             .step=${1}
             ?disabled=${i || n === "offline"}
             @change=${(t) => this.setFlow(e.zone, t.detail)}
-          ></kkp-slider>` : C}
+          ></kkp-slider>` : w}
     </section>`;
 	}
 	renderHero() {
 		let e = this.phase;
 		if (e === "idle" || e === "offline") {
 			let t = this.defaultSummary();
-			return b`<button
+			return x`<button
         class="simple-start"
         ?disabled=${e === "offline" || !this.has("shower")}
         @click=${this.simpleStart}
       >
-        <span class="play">${O("play")}</span>
+        <span class="play">${A("play")}</span>
         <span>
-          <span class="ss-title">${P("shower.simple_start")}</span>
-          ${t ? b`<span class="ss-sub">${t}</span>` : C}
+          <span class="ss-title">${F("shower.simple_start")}</span>
+          ${t ? x`<span class="ss-sub">${t}</span>` : w}
         </span>
       </button>`;
 		}
-		let t = this.entity("status"), n = this.entity("temperature:1"), r = U(n), i = String(n?.attributes.unit_of_measurement ?? this.device.units.temperature), a = parseInt(this.entity("max_duration")?.state ?? "", 10), o = t?.attributes.seconds_remaining;
-		return b`<kkp-running
+		let t = this.entity("status"), n = this.entity("temperature:1"), r = W(n), i = String(n?.attributes.unit_of_measurement ?? this.device.units.temperature), a = parseInt(this.entity("max_duration")?.state ?? "", 10), o = t?.attributes.seconds_remaining;
+		return x`<kkp-running
       .phase=${e}
       .temperature=${r}
       .setpoint=${r}
@@ -8282,19 +8516,19 @@ j("kkp-shower", class extends q {
 	}
 	renderControls() {
 		let e = this.device.zones.length > 1, t = this.phase === "idle", n = this.stage ?? [];
-		return b`
-      ${this.phase === "offline" ? L("warning", P("status.offline")) : C}
+		return x`
+      ${this.phase === "offline" ? R("warning", F("status.offline")) : w}
       ${this.renderHero()}
       ${this.device.zones.map((t) => this.renderZone(t, e))}
-      ${t && nn(n) ? b`<div class="start-bar">
-            <button class="pill filled" ?disabled=${!rn(n)} @click=${() => this.sendShower(n)}>
-              ${O("play")}${P("shower.start")}
+      ${t && hn(n) ? x`<div class="start-bar">
+            <button class="pill filled" ?disabled=${!gn(n)} @click=${() => this.sendShower(n)}>
+              ${A("play")}${F("shower.start")}
             </button>
-          </div>` : C}
+          </div>` : w}
     `;
 	}
 	scenes(e, t = !1) {
-		return b`<kkp-scenes
+		return x`<kkp-scenes
       .hass=${this.hass}
       .device=${this.device}
       .live=${this.live}
@@ -8304,36 +8538,36 @@ j("kkp-shower", class extends q {
     ></kkp-scenes>`;
 	}
 	render() {
-		return b`${this.statusRegion(At(this.phase))}${this.renderTab()}`;
+		return x`${this.statusRegion(At(this.phase))}${this.renderTab()}`;
 	}
 	renderTab() {
 		if (this.wide) {
 			let e = this.has("favorite"), t = ft(this.entity("experience")).length > 0;
-			return b`<div class="layout">
+			return x`<div class="layout">
         <div class="main">${this.renderControls()}</div>
         <div class="side">
-          ${e ? b`<h2>${P("nav.favorites")}</h2>${this.scenes("favorite", !0)}` : C}
-          ${t ? b`<h2>${P("nav.experiences")}</h2>${this.scenes("experience", !0)}` : C}
+          ${e ? x`<h2>${F("nav.favorites")}</h2>${this.scenes("favorite", !0)}` : w}
+          ${t ? x`<h2>${F("nav.experiences")}</h2>${this.scenes("experience", !0)}` : w}
         </div>
       </div>`;
 		}
-		return this.tab === "favorites" ? this.scenes("favorite") : this.tab === "experiences" ? this.scenes("experience") : b`<div class="layout"><div class="main">${this.renderControls()}</div></div>`;
+		return this.tab === "favorites" ? this.scenes("favorite") : this.tab === "experiences" ? this.scenes("experience") : x`<div class="layout"><div class="main">${this.renderControls()}</div></div>`;
 	}
 });
 // src/views/smart-fan.ts
-var on = /* @__PURE__ */ new Set([
+var vn = /* @__PURE__ */ new Set([
 	"off",
 	"unavailable",
 	"unknown"
 ]);
-j("kkp-smart-fan", class extends q {
+N("kkp-smart-fan", class extends q {
 	static {
 		this.properties = { ...q.properties };
 	}
 	static {
 		this.styles = [
-			A,
-			z,
+			M,
+			B,
 			Q,
 			o`
       :host {
@@ -8447,34 +8681,34 @@ j("kkp-smart-fan", class extends q {
 		];
 	}
 	get fanRunning() {
-		return !on.has(this.entity("fan_state")?.state ?? "off");
+		return !vn.has(this.entity("fan_state")?.state ?? "off");
 	}
 	get lightOn() {
 		return this.isOn("light_state");
 	}
 	fanDetail() {
 		let e = this.entity("fan_state");
-		if (!e || !V(e)) return "—";
+		if (!e || !H(e)) return "—";
 		let t = e.attributes.favorite;
-		return [W(this.hass, e), t].filter(Boolean).join(" · ");
+		return [G(this.hass, e), t].filter(Boolean).join(" · ");
 	}
 	lightDetail() {
 		let e = this.entity("light_state");
-		if (!e || !V(e)) return "—";
-		if (e.state !== "on") return P("status.off");
+		if (!e || !H(e)) return "—";
+		if (e.state !== "on") return F("status.off");
 		let t = e.attributes.brightness, n = e.attributes.favorite;
-		return [t ? `${t}%` : P("smart_fan.on"), n].filter(Boolean).join(" · ");
+		return [t ? `${t}%` : F("smart_fan.on"), n].filter(Boolean).join(" · ");
 	}
 	now() {
 		let e = [];
-		return this.fanRunning && e.push(P("smart_fan.fan_on")), this.lightOn && e.push(P("smart_fan.light_on")), e.length ? e.join(" · ") : P("status.off");
+		return this.fanRunning && e.push(F("smart_fan.fan_on")), this.lightOn && e.push(F("smart_fan.light_on")), e.length ? e.join(" · ") : F("status.off");
 	}
 	renderPart(e, t, n, r) {
-		let i = this.entity(e), a = O(e === "fan" ? "fan" : "light");
-		return !i || !V(i) ? b`<div class="part">
+		let i = this.entity(e), a = A(e === "fan" ? "fan" : "light");
+		return !i || !H(i) ? x`<div class="part">
         <span class="circle" aria-hidden="true">${a}</span>
         <span class="name">${t}</span><span class="detail">${n}</span>
-      </div>` : b`<button
+      </div>` : x`<button
       class="part"
       aria-pressed=${String(r)}
       @click=${() => this.roleService(e, e, r ? "turn_off" : "turn_on")}
@@ -8484,14 +8718,14 @@ j("kkp-smart-fan", class extends q {
     </button>`;
 	}
 	favorites(e, t) {
-		if (!t || !V(t)) return C;
+		if (!t || !H(t)) return w;
 		let n = e === "fan", r = t.attributes[n ? "preset_modes" : "effect_list"] ?? [];
-		if (!r.length) return C;
+		if (!r.length) return w;
 		let i = t.state === "on" ? t.attributes[n ? "preset_mode" : "effect"] : null;
-		return b`<section class="favorites">
-      <h2>${P(n ? "smart_fan.fan_favorites" : "smart_fan.light_favorites")}</h2>
+		return x`<section class="favorites">
+      <h2>${F(n ? "smart_fan.fan_favorites" : "smart_fan.light_favorites")}</h2>
       <div class="chips">
-        ${r.map((t) => b`<button
+        ${r.map((t) => x`<button
             class="chip"
             aria-pressed=${String(t === i)}
             @click=${() => t === i ? this.roleService(e, e, "turn_off") : n ? this.roleService("fan", "fan", "set_preset_mode", { preset_mode: t }) : this.roleService("light", "light", "turn_on", { effect: t })}
@@ -8510,29 +8744,29 @@ j("kkp-smart-fan", class extends q {
 			"light",
 			"stop_all"
 		].some((e) => this.has(e)), n = this.fanRunning || this.lightOn;
-		return b`
+		return x`
       ${this.statusRegion(this.now())}
       <div class="hero ${this.fanRunning ? "running" : ""}">
         <div class="art-box">${Z("smart_fan")}</div>
         <div class="now">${this.now()}</div>
       </div>
-      ${!t && this.device.untested.length ? L("info", P("generic.untested_body")) : C}
+      ${!t && this.device.untested.length ? R("info", F("generic.untested_body")) : w}
       <div class="parts">
-        ${this.renderPart("fan", P("smart_fan.fan"), this.fanDetail(), this.fanRunning)}
-        ${e ? this.renderPart("light", P("smart_fan.light"), this.lightDetail(), this.lightOn) : C}
+        ${this.renderPart("fan", F("smart_fan.fan"), this.fanDetail(), this.fanRunning)}
+        ${e ? this.renderPart("light", F("smart_fan.light"), this.lightDetail(), this.lightOn) : w}
       </div>
       ${this.favorites("fan", this.entity("fan"))}
-      ${e ? this.favorites("light", this.entity("light")) : C}
-      ${n && this.has("stop_all") ? b`<div class="actions">
+      ${e ? this.favorites("light", this.entity("light")) : w}
+      ${n && this.has("stop_all") ? x`<div class="actions">
             <button class="pill" @click=${() => this.roleService("stop_all", "button", "press")}>
-              ${O("stop")}${P("smart_fan.stop_all")}
+              ${A("stop")}${F("smart_fan.stop_all")}
             </button>
-          </div>` : C}
+          </div>` : w}
     `;
 	}
 });
 // src/components/bar-chart.ts
-var sn = [
+var yn = [
 	1,
 	1.5,
 	2,
@@ -8544,18 +8778,18 @@ var sn = [
 	8,
 	10
 ];
-function cn(e, t = 4) {
+function bn(e, t = 4) {
 	if (!(e > 0)) return {
 		top: t,
 		step: 1
 	};
-	let n = e / t, r = 10 ** Math.floor(Math.log10(n)), i = (sn.find((e) => n / r <= e) ?? 10) * r;
+	let n = e / t, r = 10 ** Math.floor(Math.log10(n)), i = (yn.find((e) => n / r <= e) ?? 10) * r;
 	return {
 		top: i * t,
 		step: i
 	};
 }
-var ln = 0, un = class extends E {
+var xn = 0, Sn = class extends O {
 	static {
 		this.properties = {
 			bars: { attribute: !1 },
@@ -8566,12 +8800,12 @@ var ln = 0, un = class extends E {
 		};
 	}
 	constructor() {
-		super(), this.gradient = `kk-bars-${++ln}`, this.onWindowKey = (e) => {
+		super(), this.gradient = `kk-bars-${++xn}`, this.onWindowKey = (e) => {
 			e.key === "Escape" && (this.selected = null);
 		}, this.bars = [], this.ticks = [], this.width = 0, this.selected = null;
 	}
 	static {
-		this.styles = [A, o`
+		this.styles = [M, o`
       :host {
         display: block;
         position: relative;
@@ -8660,8 +8894,8 @@ var ln = 0, un = class extends E {
 		e.preventDefault();
 	}
 	render() {
-		let e = Math.max(this.width, 240), t = e - 44, n = cn(Math.max(0, ...this.bars.map((e) => e.value ?? 0))), r = t / Math.max(this.bars.length, 1), i = Math.max(3, Math.min(16, r * .42)), a = (e) => 14 + 216 * (1 - e / n.top), o = Array.from({ length: 5 }, (e, t) => t * n.step), s = this.selected, c = s === null ? void 0 : this.bars[s], l = (e) => r * (e + .5);
-		return b`
+		let e = Math.max(this.width, 240), t = e - 44, n = bn(Math.max(0, ...this.bars.map((e) => e.value ?? 0))), r = t / Math.max(this.bars.length, 1), i = Math.max(3, Math.min(16, r * .42)), a = (e) => 14 + 216 * (1 - e / n.top), o = Array.from({ length: 5 }, (e, t) => t * n.step), s = this.selected, c = s === null ? void 0 : this.bars[s], l = (e) => r * (e + .5);
+		return x`
       <svg
         viewBox="0 0 ${e} ${260}"
         tabindex="0"
@@ -8677,86 +8911,86 @@ var ln = 0, un = class extends E {
             <stop offset="1" style="stop-color: var(--kk-bar-bottom)" />
           </linearGradient>
         </defs>
-        ${o.map((e) => x`
+        ${o.map((e) => S`
             <line class="grid" x1="0" x2=${t} y1=${a(e)} y2=${a(e)} />
-            <text x=${t + 10} y=${a(e) + 4}>${dn(e)}</text>`)}
+            <text x=${t + 10} y=${a(e) + 4}>${Cn(e)}</text>`)}
         ${this.bars.map((e, t) => {
 			let a = e.value ? Math.max(2, 216 * (e.value / n.top)) : 0;
-			return x`
+			return S`
             <rect class="track" x=${l(t) - i / 2} y=${14} width=${i} height=${216}
               rx=${i / 2} />
-            ${a ? x`<rect class="bar ${t === s ? "selected" : ""}" x=${l(t) - i / 2}
+            ${a ? S`<rect class="bar ${t === s ? "selected" : ""}" x=${l(t) - i / 2}
                   y=${230 - a} width=${i} height=${a} rx=${Math.min(i / 2, a / 2)}
-                  fill="url(#${this.gradient})" />` : C}
+                  fill="url(#${this.gradient})" />` : w}
             <rect class="hit" x=${r * t} y="0" width=${r} height=${260}
               @pointerenter=${() => this.selected = t} @click=${() => this.selected = t} />`;
 		})}
-        ${this.ticks.map((e) => x`<text x=${l(e.index)} y=${252} text-anchor="middle">${e.label}</text>`)}
+        ${this.ticks.map((e) => S`<text x=${l(e.index)} y=${252} text-anchor="middle">${e.label}</text>`)}
       </svg>
-      ${c ? b`<div
+      ${c ? x`<div
             class="tip"
             style="left: ${l(s) / e * 100}%; top: ${a(c.value ?? 0) / 260 * 260}px"
           >
             ${c.tooltip}
-          </div>` : C}
+          </div>` : w}
       <div class="visually-hidden" aria-live="polite">${c?.tooltip ?? ""}</div>
       <div class="visually-hidden">
         <table>
           <caption>${this.caption}</caption>
-          ${this.bars.map((e) => b`<tr><th scope="row">${e.label}</th><td>${e.tooltip}</td></tr>`)}
+          ${this.bars.map((e) => x`<tr><th scope="row">${e.label}</th><td>${e.tooltip}</td></tr>`)}
         </table>
       </div>
     `;
 	}
 };
-function dn(e) {
+function Cn(e) {
 	return Number.isInteger(e) ? String(e) : e.toFixed(1);
 }
-j("kkp-bar-chart", un);
+N("kkp-bar-chart", Sn);
 // src/util/usage.ts
 function $(e) {
 	let [t, n, r] = e.split("-").map(Number);
 	return new Date(t, (n || 1) - 1, r || 1);
 }
-function fn(e, t) {
+function wn(e, t) {
 	return t === "volume" ? e.volume : e.minutes;
 }
-function pn(e, t, n) {
+function Tn(e, t, n) {
 	return t === "volume" ? mt(e, n) : ht(e);
 }
-function mn(e, t) {
-	let n = e.period === "year", r = new Intl.DateTimeFormat(N(), n ? { month: "long" } : {
+function En(e, t) {
+	let n = e.period === "year", r = new Intl.DateTimeFormat(P(), n ? { month: "long" } : {
 		weekday: "short",
 		month: "short",
 		day: "numeric"
 	});
 	return e.buckets.map((n) => {
-		let i = r.format($(n.key)), a = fn(n, t);
+		let i = r.format($(n.key)), a = wn(n, t);
 		return {
 			key: n.key,
 			label: i,
 			value: a,
-			tooltip: `${i} · ${pn(a ?? 0, t, e.unit)}`
+			tooltip: `${i} · ${Tn(a ?? 0, t, e.unit)}`
 		};
 	});
 }
-function hn(e) {
+function Dn(e) {
 	let t = e.buckets;
 	if (e.period === "week") {
-		let e = new Intl.DateTimeFormat(N(), { weekday: "narrow" });
+		let e = new Intl.DateTimeFormat(P(), { weekday: "narrow" });
 		return t.map((t, n) => ({
 			index: n,
 			label: e.format($(t.key))
 		}));
 	}
 	if (e.period === "year") {
-		let e = new Intl.DateTimeFormat(N(), { month: "narrow" });
+		let e = new Intl.DateTimeFormat(P(), { month: "narrow" });
 		return t.map((t, n) => ({
 			index: n,
 			label: e.format($(t.key))
 		}));
 	}
-	let n = new Intl.DateTimeFormat(N(), {
+	let n = new Intl.DateTimeFormat(P(), {
 		month: "numeric",
 		day: "numeric"
 	}), r = t.length - 1;
@@ -8769,21 +9003,21 @@ function hn(e) {
 		label: n.format($(t[e].key))
 	}));
 }
-function gn(e) {
+function On(e) {
 	let t = $(e.start), n = $(e.end);
 	if (e.period === "year") return String(t.getFullYear());
-	if (e.period === "month") return new Intl.DateTimeFormat(N(), {
+	if (e.period === "month") return new Intl.DateTimeFormat(P(), {
 		month: "short",
 		year: "numeric"
 	}).format(t);
-	let r = new Intl.DateTimeFormat(N(), {
+	let r = new Intl.DateTimeFormat(P(), {
 		month: "short",
 		day: "numeric",
 		year: "numeric"
 	});
 	return r.formatRange ? r.formatRange(t, n) : `${r.format(t)} – ${r.format(n)}`;
 }
-var _n = [
+var kn = [
 	"monday",
 	"tuesday",
 	"wednesday",
@@ -8791,7 +9025,7 @@ var _n = [
 	"friday",
 	"saturday",
 	"sunday"
-], vn = /* @__PURE__ */ new Set([
+], An = /* @__PURE__ */ new Set([
 	"US",
 	"CA",
 	"MX",
@@ -8799,22 +9033,22 @@ var _n = [
 	"JP",
 	"IL"
 ]);
-function yn(e) {
-	let t = _n.indexOf(e?.first_weekday ?? "");
+function jn(e) {
+	let t = kn.indexOf(e?.first_weekday ?? "");
 	if (t >= 0) return t;
 	try {
 		let t = new Intl.Locale(e?.language || "en"), n = t.getWeekInfo?.().firstDay ?? t.weekInfo?.firstDay;
-		return n ? n - 1 : vn.has(t.maximize().region ?? "") ? 6 : 0;
+		return n ? n - 1 : An.has(t.maximize().region ?? "") ? 6 : 0;
 	} catch {
 		return 0;
 	}
 }
-function bn(e, t) {
+function Mn(e, t) {
 	if (!e) return null;
 	let n = e / (t.toLowerCase().startsWith("gal") ? 40 : 150);
 	return n >= 1 ? Math.round(n) : null;
 }
-j("kkp-usage", class extends q {
+N("kkp-usage", class extends q {
 	static {
 		this.properties = {
 			...q.properties,
@@ -8830,7 +9064,7 @@ j("kkp-usage", class extends q {
 		super(), this.request = 0, this.period = "month", this.anchor = void 0, this.metric = "volume", this.history = null, this.loading = !1, this.failed = null;
 	}
 	static {
-		this.styles = [A, o`
+		this.styles = [M, o`
       :host {
         display: block;
         max-width: 860px;
@@ -8966,7 +9200,7 @@ j("kkp-usage", class extends q {
 		let e = ++this.request;
 		this.loading = !0, this.failed = null;
 		try {
-			let t = await this.ctx.api.usageHistory(this.device.id, this.period, yn(this.hass.locale), this.anchor);
+			let t = await this.ctx.api.usageHistory(this.device.id, this.period, jn(this.hass.locale), this.anchor);
 			e === this.request && (this.history = t);
 		} catch (t) {
 			e === this.request && (this.failed = K(t));
@@ -8981,66 +9215,66 @@ j("kkp-usage", class extends q {
 		e && !this.loading && (this.anchor = e, this.load());
 	}
 	render() {
-		let e = this.history, t = e?.unit ?? this.device.units.volume, n = (e) => pn(e ?? null, this.metric, t), r = (e) => e ? this.metric === "volume" ? e.volume : e.minutes : null, i = this.metric === "volume" && this.period !== "week" ? bn(e?.total.volume ?? null, t) : null;
-		return b`
+		let e = this.history, t = e?.unit ?? this.device.units.volume, n = (e) => Tn(e ?? null, this.metric, t), r = (e) => e ? this.metric === "volume" ? e.volume : e.minutes : null, i = this.metric === "volume" && this.period !== "week" ? Mn(e?.total.volume ?? null, t) : null;
+		return x`
       <kkp-tabs
         .items=${[
 			{
 				key: "week",
-				label: P("usage.week")
+				label: F("usage.week")
 			},
 			{
 				key: "month",
-				label: P("usage.month")
+				label: F("usage.month")
 			},
 			{
 				key: "year",
-				label: P("usage.year")
+				label: F("usage.year")
 			}
 		]}
         .active=${this.period}
         @kkp-select=${(e) => this.choosePeriod(e.detail)}
       ></kkp-tabs>
-      <div role="tabpanel" aria-label=${P(`usage.${this.period}`)}>
+      <div role="tabpanel" aria-label=${F(`usage.${this.period}`)}>
       <div class="pager">
-        <button aria-label=${P("usage.previous")} ?disabled=${!e?.previous} @click=${() => this.page(e?.previous ?? null)}>
-          ${O("back")}
+        <button aria-label=${F("usage.previous")} ?disabled=${!e?.previous} @click=${() => this.page(e?.previous ?? null)}>
+          ${A("back")}
         </button>
-        <span aria-live="polite">${e ? gn(e) : "—"}</span>
-        <button aria-label=${P("usage.next")} ?disabled=${!e?.next} @click=${() => this.page(e?.next ?? null)}>
-          ${O("chevronRight")}
+        <span aria-live="polite">${e ? On(e) : "—"}</span>
+        <button aria-label=${F("usage.next")} ?disabled=${!e?.next} @click=${() => this.page(e?.next ?? null)}>
+          ${A("chevronRight")}
         </button>
       </div>
       <div class="stats">
-        <div class="stat"><span>${P("usage.average")}</span><strong>${n(r(e?.average))}</strong><small>${P("usage.per_day")}</small></div>
-        <div class="stat"><span>${P("usage.high")}</span><strong>${n(r(e?.high))}</strong></div>
-        <div class="stat"><span>${P("usage.total")}</span><strong>${n(r(e?.total))}</strong></div>
+        <div class="stat"><span>${F("usage.average")}</span><strong>${n(r(e?.average))}</strong><small>${F("usage.per_day")}</small></div>
+        <div class="stat"><span>${F("usage.high")}</span><strong>${n(r(e?.high))}</strong></div>
+        <div class="stat"><span>${F("usage.total")}</span><strong>${n(r(e?.total))}</strong></div>
       </div>
       <div class="metric">
         <div class="segmented" role="group">
-          <button aria-pressed=${String(this.metric === "volume")} @click=${() => this.metric = "volume"}>${P("usage.water")}</button>
-          <button aria-pressed=${String(this.metric === "minutes")} @click=${() => this.metric = "minutes"}>${P("usage.time")}</button>
+          <button aria-pressed=${String(this.metric === "volume")} @click=${() => this.metric = "volume"}>${F("usage.water")}</button>
+          <button aria-pressed=${String(this.metric === "minutes")} @click=${() => this.metric = "minutes"}>${F("usage.time")}</button>
         </div>
       </div>
-      ${this.failed ? b`<div class="error" role="alert">
-            <span>${P("usage.error")}</span>
-            <button class="pill" @click=${() => this.load()}>${P("usage.retry")}</button>
-          </div>` : b`<div class="chart ${this.loading ? "loading" : ""}" aria-busy=${String(this.loading)}>
+      ${this.failed ? x`<div class="error" role="alert">
+            <span>${F("usage.error")}</span>
+            <button class="pill" @click=${() => this.load()}>${F("usage.retry")}</button>
+          </div>` : x`<div class="chart ${this.loading ? "loading" : ""}" aria-busy=${String(this.loading)}>
             <kkp-bar-chart
-              .bars=${e ? mn(e, this.metric) : []}
-              .ticks=${e ? hn(e) : []}
-              caption=${`${P("usage.title")} · ${e ? gn(e) : ""}`}
+              .bars=${e ? En(e, this.metric) : []}
+              .ticks=${e ? Dn(e) : []}
+              caption=${`${F("usage.title")} · ${e ? On(e) : ""}`}
             ></kkp-bar-chart>
           </div>`}
-      ${i && i >= 2 ? b`<div class="equivalent">${O("water")}${P("usage.equivalent_bath", { count: i })}</div>` : C}
-      ${this.period === "week" ? b`<p class="footnote">${P("usage.calendar_week")}</p>` : C}
+      ${i && i >= 2 ? x`<div class="equivalent">${A("water")}${F("usage.equivalent_bath", { count: i })}</div>` : w}
+      ${this.period === "week" ? x`<p class="footnote">${F("usage.calendar_week")}</p>` : w}
       </div>
     `;
 	}
 });
 // src/kohler-konnect-panel.ts
-var xn = 980;
-function Sn(e) {
+var Nn = 980;
+function Pn(e) {
 	let t = e.split("/").filter(Boolean);
 	if (t[0] === "d" && t[1]) {
 		let e = t[2] ?? "controls";
@@ -9051,7 +9285,7 @@ function Sn(e) {
 	}
 	return t[0] === "usage" || t[0] === "account" ? { home: t[0] } : { home: "devices" };
 }
-var Cn = class extends E {
+var Fn = class extends O {
 	static {
 		this.properties = {
 			hass: { attribute: !1 },
@@ -9067,7 +9301,7 @@ var Cn = class extends E {
 		};
 	}
 	constructor() {
-		super(), this.api = new Ue(() => this.hass), this.navigate = (e) => {
+		super(), this.api = new Ve(() => this.hass), this.navigate = (e) => {
 			if (this.navigateImpl) {
 				this.navigateImpl(e);
 				return;
@@ -9092,8 +9326,8 @@ var Cn = class extends E {
 	}
 	static {
 		this.styles = [
-			ct,
-			A,
+			st,
+			M,
 			o`
       :host {
         display: block;
@@ -9222,7 +9456,7 @@ var Cn = class extends E {
 	}
 	connectedCallback() {
 		super.connectedCallback(), this.observer = new ResizeObserver((e) => {
-			let t = e[0].contentRect.width >= xn;
+			let t = e[0].contentRect.width >= Nn;
 			t !== this.wide && (this.wide = t);
 		}), this.observer.observe(this), this.hass && !this.unsubscribeDevices && this.subscribe();
 	}
@@ -9230,7 +9464,7 @@ var Cn = class extends E {
 		super.disconnectedCallback(), this.observer?.disconnect(), this.unsubscribeDevices?.then((e) => e()), this.unsubscribeDevices = void 0, this.dropLive();
 	}
 	willUpdate(e) {
-		e.has("hass") && this.hass && (ot(this.hass.locale?.language ?? this.hass.language), this.lang = st(), this.setAttribute("theme", this.hass.themes?.darkMode === !1 ? "light" : "dark"), !this.unsubscribeDevices && this.isConnected && this.subscribe()), this.toggleAttribute("wide", this.wide), (e.has("route") || e.has("hass")) && this.followDevice();
+		e.has("hass") && this.hass && (at(this.hass.locale?.language ?? this.hass.language), this.lang = ot(), this.setAttribute("theme", this.hass.themes?.darkMode === !1 ? "light" : "dark"), !this.unsubscribeDevices && this.isConnected && this.subscribe()), this.toggleAttribute("wide", this.wide), (e.has("route") || e.has("hass")) && this.followDevice();
 	}
 	updated(e) {
 		let t = e.get("route");
@@ -9248,7 +9482,7 @@ var Cn = class extends E {
 		}), this.unsubscribeDevices.catch((e) => this.toast(String(e?.message ?? e), "error"));
 	}
 	followDevice() {
-		let { deviceId: e } = Sn(this.route?.path ?? "");
+		let { deviceId: e } = Pn(this.route?.path ?? "");
 		this.liveSubscription?.deviceId !== e && (this.dropLive(), e && this.hass && (this.liveSubscription = {
 			deviceId: e,
 			unsubscribe: this.api.subscribeDevice(e, (t) => {
@@ -9264,13 +9498,13 @@ var Cn = class extends E {
 	}
 	renderToast(e) {
 		let t = this.toastState;
-		return t?.kind === e ? b`<div
+		return t?.kind === e ? x`<div
       class="toast ${e}"
       @mouseenter=${() => window.clearTimeout(this.toastTimer)}
       @mouseleave=${() => this.dismissLater(e)}
     >
-      ${O(e === "error" ? "alert" : "checkCircle")}<span>${t.message}</span>
-    </div>` : C;
+      ${A(e === "error" ? "alert" : "checkCircle")}<span>${t.message}</span>
+    </div>` : w;
 	}
 	dismissLater(e) {
 		window.clearTimeout(this.toastTimer), this.toastTimer = window.setTimeout(() => this.toastState = null, e === "error" ? 1e4 : 5e3);
@@ -9296,10 +9530,10 @@ var Cn = class extends E {
 	}
 	screenTitle(e, t) {
 		return {
-			settings: P("settings.title"),
-			about: P("about.title"),
-			usage: P("usage.title"),
-			diagnostics: P("diagnostics.title")
+			settings: F("settings.title"),
+			about: F("about.title"),
+			usage: F("usage.title"),
+			diagnostics: F("diagnostics.title")
 		}[t] ?? e.name;
 	}
 	back(e, t) {
@@ -9308,58 +9542,58 @@ var Cn = class extends E {
 	renderDeviceBody(e, t) {
 		let n = this.context, r = this.live[e.id];
 		switch (t) {
-			case "settings": return b`<kkp-settings .hass=${this.hass} .device=${e} .live=${r} .ctx=${n}></kkp-settings>`;
-			case "about": return b`<kkp-about .hass=${this.hass} .device=${e} .live=${r} .ctx=${n}></kkp-about>`;
-			case "usage": return b`<kkp-usage .hass=${this.hass} .device=${e} .live=${r} .ctx=${n}></kkp-usage>`;
-			case "diagnostics": return b`<kkp-diagnostics .hass=${this.hass} .device=${e} .live=${r} .ctx=${n}></kkp-diagnostics>`;
+			case "settings": return x`<kkp-settings .hass=${this.hass} .device=${e} .live=${r} .ctx=${n}></kkp-settings>`;
+			case "about": return x`<kkp-about .hass=${this.hass} .device=${e} .live=${r} .ctx=${n}></kkp-about>`;
+			case "usage": return x`<kkp-usage .hass=${this.hass} .device=${e} .live=${r} .ctx=${n}></kkp-usage>`;
+			case "diagnostics": return x`<kkp-diagnostics .hass=${this.hass} .device=${e} .live=${r} .ctx=${n}></kkp-diagnostics>`;
 		}
 		let i = t;
-		return e.kind === "valve" ? b`<kkp-shower .hass=${this.hass} .device=${e} .live=${r} .ctx=${n} .tab=${i} ?wide=${this.wide}></kkp-shower>` : e.kind === "controller" ? b`<kkp-controller .hass=${this.hass} .device=${e} .live=${r} .ctx=${n} .tab=${i} ?wide=${this.wide}></kkp-controller>` : e.kind === "faucet" ? b`<kkp-faucet .hass=${this.hass} .device=${e} .live=${r} .ctx=${n} ?wide=${this.wide}></kkp-faucet>` : e.kind === "smart_fan" ? b`<kkp-smart-fan .hass=${this.hass} .device=${e} .live=${r} .ctx=${n}></kkp-smart-fan>` : b`<kkp-generic .hass=${this.hass} .device=${e} .live=${r} .ctx=${n}></kkp-generic>`;
+		return e.kind === "valve" ? x`<kkp-shower .hass=${this.hass} .device=${e} .live=${r} .ctx=${n} .tab=${i} ?wide=${this.wide}></kkp-shower>` : e.kind === "controller" ? x`<kkp-controller .hass=${this.hass} .device=${e} .live=${r} .ctx=${n} .tab=${i} ?wide=${this.wide}></kkp-controller>` : e.kind === "faucet" ? x`<kkp-faucet .hass=${this.hass} .device=${e} .live=${r} .ctx=${n} ?wide=${this.wide}></kkp-faucet>` : e.kind === "smart_fan" ? x`<kkp-smart-fan .hass=${this.hass} .device=${e} .live=${r} .ctx=${n}></kkp-smart-fan>` : x`<kkp-generic .hass=${this.hass} .device=${e} .live=${r} .ctx=${n}></kkp-generic>`;
 	}
 	renderDevice(e, t) {
 		let n = this.data?.devices.find((t) => t.id === e);
-		if (!n) return b`<div class="page">
-        <kkp-header back .heading=${P("app.not_found")} @kkp-back=${() => this.navigate("/")}></kkp-header>
+		if (!n) return x`<div class="page">
+        <kkp-header back .heading=${F("app.not_found")} @kkp-back=${() => this.navigate("/")}></kkp-header>
       </div>`;
 		let r = t === "controls" || t === "favorites" || t === "experiences", i = r && !this.wide && (n.kind === "valve" || n.kind === "controller"), a = this.context.admin, o = r && (a || !!n.capabilities.usage);
-		return b`<div class="device-screen"><div class="page">
+		return x`<div class="device-screen"><div class="page">
         <div class="device-head">
           <kkp-header
             .heading=${this.screenTitle(n, t)}
             back
             ?more=${o}
-            .moreLabel=${P(a ? "settings.title" : "usage.title")}
+            .moreLabel=${F(a ? "settings.title" : "usage.title")}
             @kkp-back=${() => this.back(n, t)}
             @kkp-more=${() => this.navigate(`/d/${n.id}/${a ? "settings" : "usage"}`)}
           ></kkp-header>
         </div>
         <div class="device-body">${this.renderDeviceBody(n, t)}</div>
       </div>
-      ${i ? b`<kkp-capsule
+      ${i ? x`<kkp-capsule
             .items=${[
 			{
 				key: "controls",
-				label: P("nav.controls"),
+				label: F("nav.controls"),
 				icon: "controls"
 			},
 			{
 				key: "favorites",
-				label: P("nav.favorites"),
+				label: F("nav.favorites"),
 				icon: "favorite"
 			},
 			{
 				key: "experiences",
-				label: P("nav.experiences"),
+				label: F("nav.experiences"),
 				icon: "experiences"
 			}
 		]}
             .active=${t}
             @kkp-select=${(e) => this.navigate(e.detail === "controls" ? `/d/${n.id}` : `/d/${n.id}/${e.detail}`)}
-          ></kkp-capsule>` : C}</div>`;
+          ></kkp-capsule>` : w}</div>`;
 	}
 	render() {
-		if (!this.hass) return C;
-		let e = Sn(this.route?.path ?? ""), t = this.data ? e.deviceId ? this.renderDevice(e.deviceId, e.screen ?? "controls") : b`<div class="page">
+		if (!this.hass) return w;
+		let e = Pn(this.route?.path ?? ""), t = this.data ? e.deviceId ? this.renderDevice(e.deviceId, e.screen ?? "controls") : x`<div class="page">
             <kkp-home
               .hass=${this.hass}
               .data=${this.data}
@@ -9368,9 +9602,9 @@ var Cn = class extends E {
               ?narrow=${this.narrow}
               ?wide=${this.wide}
             ></kkp-home>
-          </div>` : b`<div class="loading"><div class="spinner"></div>${P("app.loading")}</div>`;
-		return b`
-      ${this.staleBundle ? b`<div class="stale">${P("app.stale_bundle")}<button @click=${() => location.reload()}>${P("app.refresh")}</button></div>` : C}
+          </div>` : x`<div class="loading"><div class="spinner"></div>${F("app.loading")}</div>`;
+		return x`
+      ${this.staleBundle ? x`<div class="stale">${F("app.stale_bundle")}<button @click=${() => location.reload()}>${F("app.refresh")}</button></div>` : w}
       <div
         @kkp-menu=${() => this.dispatchEvent(new CustomEvent("hass-toggle-menu", {
 			bubbles: !0,
@@ -9388,12 +9622,12 @@ var Cn = class extends E {
         .open=${!!this.dialog}
         .heading=${this.dialog?.title ?? ""}
         .body=${this.dialog?.body ?? ""}
-        .confirmLabel=${this.dialog?.confirmLabel ?? P("dialog.confirm")}
+        .confirmLabel=${this.dialog?.confirmLabel ?? F("dialog.confirm")}
         ?destructive=${this.dialog?.destructive ?? !1}
         @kkp-answer=${(e) => this.answer(e.detail)}
       ></kkp-dialog>
     `;
 	}
 };
-j("kohler-konnect-panel", Cn);
-export { Cn as KohlerKonnectPanel, Sn as parseRoute };
+N("kohler-konnect-panel", Fn);
+export { Fn as KohlerKonnectPanel, Pn as parseRoute };

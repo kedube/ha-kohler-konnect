@@ -2,11 +2,14 @@
 
 Used by .github/workflows/release.yml. ``--bump`` chooses how:
 
-* ``auto`` (the automatic release path): a manifest version with no git tag yet was set by
-  hand and is released exactly as written. A version that is already tagged — the manifest
-  still says a past release — is bumped to the next minor version after the newest tag.
+* ``auto`` (a manual run's default): a manifest version with no git tag yet was set by hand
+  and is released exactly as written. A version that is already tagged — the manifest still
+  says a past release — is bumped to the next minor version after the newest tag.
 * ``minor`` / ``major``: always bump, from the newest of the manifest and the tags.
 * ``none``: never bump; release the manifest version as it stands.
+
+``--hand-set`` instead prints ``true`` or ``false`` for whether the manifest holds a version
+set by hand, and changes nothing. It decides whether a push is released at all.
 
 Versions are plain dotted numbers, like ``0.28`` or ``1.0``. A leading ``v`` in the
 manifest is removed — and written back — so the manifest, the git tag and the release name
@@ -64,7 +67,8 @@ def _unreleased(version: str, tags: list[str]) -> bool:
     if newest is not None and _key(version) <= _key(newest):
         raise ValueError(
             f"manifest.json says {version}, which is not newer than the latest release "
-            f"{newest}. Set a higher version, or put back {newest} to have it bumped."
+            f"{newest}. Set a higher version, or put back {newest} and run the Release "
+            "workflow to bump it."
         )
     return True
 
@@ -95,7 +99,7 @@ def _bump_major(version: str) -> str:
     """Return the next major version with the minor reset to ``00``.
 
     Used for deliberate breaking-change releases via the release workflow's manual
-    dispatch (``bump: major``); the automatic release-on-green path always bumps minor.
+    dispatch (``bump: major``).
     """
     return f"{_key(version)[0] + 1}.00"
 
@@ -132,12 +136,20 @@ def main() -> int:
         "--bump",
         choices=("auto", "minor", "major", "none"),
         default="auto",
-        help="auto (default, the automatic release path), minor, major, or none",
+        help="auto (default, as a manual run), minor, major, or none",
+    )
+    parser.add_argument(
+        "--hand-set",
+        action="store_true",
+        help="print whether the manifest holds a version set by hand; change nothing",
     )
     args = parser.parse_args()
     manifest_path = args.manifest
     manifest_text = manifest_path.read_text(encoding="utf-8")
     written = json.loads(manifest_text)["version"]
+    if args.hand_set:
+        print("true" if _unreleased(_normalize(written), _tags()) else "false")
+        return 0
     version = settle(_normalize(written), _tags(), args.bump)
     if version != written:
         updated_text, replacements = re.subn(

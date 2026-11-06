@@ -35,18 +35,6 @@ if TYPE_CHECKING:
 
 __all__ = ["describe_devices", "ha_device"]
 
-# The faucet's quick amounts on a US account, as its buttons name them; metric amounts are
-# named by their size. The panel translates these by key where it can.
-_US_QUICK_LABELS = {
-    "quarter_cup": "¼ cup",
-    "half_cup": "½ cup",
-    "one_cup": "1 cup",
-    "two_cups": "2 cups",
-    "one_quart": "1 quart",
-    "half_gallon": "½ gallon",
-    "one_gallon": "1 gallon",
-}
-
 
 def ha_device(
     hass: HomeAssistant, entry: ConfigEntry, kohler_id: str
@@ -186,22 +174,17 @@ def _faucet(
     )
     if descriptor is None:
         return None
-    descriptor["quick_amounts"] = [
-        {
-            "key": quick.key,
-            "amount": round(from_ml(quick.ml, profile.number_unit), profile.precision),
-            "unit": unit,
-            "label": quick.placeholders.get("amount")
-            or _US_QUICK_LABELS.get(quick.key, quick.key),
-        }
-        for quick in profile.quick_amounts
-    ]
     descriptor["capabilities"]["usage"] = True
     descriptor["capabilities"]["presets"] = [
         {
             "name": name,
             "amount": round(from_ml(preset.liters * 1000, profile.number_unit), 2),
             "unit": unit,
+            **(
+                {"asked_amount": preset.asked[0], "asked_unit": preset.asked[1]}
+                if preset.asked
+                else {}
+            ),
         }
         for name, preset in faucet.preset_options.items()
     ]

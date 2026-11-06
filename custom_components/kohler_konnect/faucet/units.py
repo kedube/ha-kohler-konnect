@@ -60,6 +60,7 @@ class QuickAmount:
 
     key: str  # unique-id suffix
     ml: float
+    asked: tuple[float, str]  # as the button names it: amount, ML_PER_UNIT key
     translation_key: str
     placeholders: dict[str, str] = field(default_factory=dict)
 
@@ -84,6 +85,7 @@ def _metric(ml: int) -> QuickAmount:
     return QuickAmount(
         key=f"{ml}ml",
         ml=float(ml),
+        asked=(ml / 1000, "l") if ml >= 1000 else (float(ml), "ml"),
         translation_key="quick_dispense",
         placeholders={"amount": label},
     )
@@ -91,7 +93,10 @@ def _metric(ml: int) -> QuickAmount:
 
 def _imperial(key: str, unit: str, amount: float) -> QuickAmount:
     return QuickAmount(
-        key=key, ml=to_ml(amount, unit), translation_key=f"dispense_{key}"
+        key=key,
+        ml=to_ml(amount, unit),
+        asked=(amount, unit),
+        translation_key=f"dispense_{key}",
     )
 
 

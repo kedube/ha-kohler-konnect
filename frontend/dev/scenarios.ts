@@ -7,7 +7,6 @@ import type {
   DeviceDetails,
   EntryInfo,
   HassEntity,
-  QuickAmount,
 } from "../src/types";
 
 export interface SimValve {
@@ -236,25 +235,14 @@ function buildValve(spec: ValveSpec, states: Record<string, HassEntity>): SimVal
   };
 }
 
-const US_QUICK: QuickAmount[] = [
-  { key: "quarter_cup", amount: 2, unit: "fl oz", label: "¼ cup" },
-  { key: "half_cup", amount: 4, unit: "fl oz", label: "½ cup" },
-  { key: "one_cup", amount: 8, unit: "fl oz", label: "1 cup" },
-  { key: "two_cups", amount: 16, unit: "fl oz", label: "2 cups" },
-  { key: "one_quart", amount: 32, unit: "fl oz", label: "1 quart" },
-  { key: "half_gallon", amount: 64, unit: "fl oz", label: "½ gallon" },
-  { key: "one_gallon", amount: 128, unit: "fl oz", label: "1 gallon" },
-];
-
-const METRIC_QUICK: QuickAmount[] = [50, 250, 500, 750, 1000, 2000, 3000].map((ml) => ({
-  key: `${ml}ml`,
-  amount: ml,
-  unit: "mL",
-  label: ml >= 1000 ? `${ml / 1000} L` : `${ml} mL`,
-}));
-
 function buildFaucet(
-  spec: { id: string; name: string; area: string; metric: boolean; presets: { name: string; amount: number }[] },
+  spec: {
+    id: string;
+    name: string;
+    area: string;
+    metric: boolean;
+    presets: { name: string; amount: number; asked_amount?: number; asked_unit?: string }[];
+  },
   states: Record<string, HassEntity>,
 ): SimFaucet {
   const slug = slugify(spec.name);
@@ -300,7 +288,6 @@ function buildFaucet(
       disabled_roles: {},
       untested: [],
       untested_device: false,
-      quick_amounts: spec.metric ? METRIC_QUICK : US_QUICK,
     },
   };
 }
@@ -606,7 +593,10 @@ export function yourSetup(): Scenario {
   const faucet = buildFaucet(
     {
       id: "dev_island_faucet", name: "Island Faucet", area: "Kitchen", metric: false,
-      presets: [{ name: "A Glass of Water", amount: 8.45 }, { name: "One Cup", amount: 8 }],
+      presets: [
+        { name: "A Glass of Water", amount: 8.45, asked_amount: 250, asked_unit: "ml" },
+        { name: "One Cup", amount: 8, asked_amount: 1, asked_unit: "cup" },
+      ],
     },
     states,
   );
@@ -748,7 +738,7 @@ export function metricAccount(): Scenario {
     states,
   );
   const faucet = buildFaucet(
-    { id: "dev_kuche", name: "Kitchen", area: "Küche", metric: true, presets: [{ name: "Pasta Pot", amount: 3000 }] },
+    { id: "dev_kuche", name: "Kitchen", area: "Küche", metric: true, presets: [{ name: "Pasta Pot", amount: 3000, asked_amount: 3, asked_unit: "l" }] },
     states,
   );
   return {
