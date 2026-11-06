@@ -13,6 +13,8 @@ are the bare version — `1.0`, never `v1.0`.
 
 ## Unreleased
 
+## 2.05 — 2026-11-06
+
 **Changed**
 
 - **The panel's Dispense Amount has the Konnect app's wheels.** Choose Milliliters, Liters,
