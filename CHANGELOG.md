@@ -13,6 +13,8 @@ are the bare version — `1.0`, never `v1.0`.
 
 ## Unreleased
 
+## 2.06 — 2026-11-16
+
 **Fixed**
 
 - **`custom_shower` and `send_valve_hex` keep to the valve's Max Temperature.** A
