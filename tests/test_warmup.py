@@ -575,6 +575,8 @@ class FakeValve:
         # session fields of a status report, `warmup_mode` for the warm-up mode. Read
         # around a REST read-back.
         self._push_serials = Counter()
+        # When each field was last pushed, on the monotonic clock.
+        self._reported_at: dict[str, float] = {}
         self.gcs_device = SimpleNamespace(device_id=device_id)
         self.gcs_state = GcsState(get_valve_model("K-28210"))
         self.gcs_state.warmup_mode = cloud.mode

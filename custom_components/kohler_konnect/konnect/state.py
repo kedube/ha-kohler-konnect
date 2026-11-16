@@ -343,6 +343,11 @@ class GcsState:
     # Stored presets keyed by slot id. Ids are slots, not positions: a delete empties
     # one in place (an empty name) and a create fills the lowest free one.
     presets: dict[int, GcsPreset] = field(default_factory=dict)
+    # When each slot was last pushed (`GCS_PRESET_STS`), on the monotonic clock, so a
+    # `gcs-preset` read that push overtook does not undo it; see `apply_preset_list`.
+    preset_pushed_at: dict[int, float] = field(
+        default_factory=dict, repr=False, compare=False
+    )
     # The preset or experience driving the valve, from `presetOrExperienceId`. Answers
     # "is a preset driving this", never "is water running": cleared by pause and stop,
     # and None for a direct write. ⚠️ Never set during warm-up, so None then means
@@ -509,11 +514,12 @@ class GcsState:
         Every valve message advances `last_update`, decoded or not: it means "last heard
         from" (liveness), not "last changed".
         """
+        # Cleared first, so a message this state doesn't decode carries nothing.
+        self.carried = frozenset()
         if envelope.sku != SKU_GCS:
             return False
         # Before dispatch: an undecodable message is still proof of life.
         self.last_update = envelope.received_at
-        self.carried = frozenset()
         handler = {
             MSG_GCS_SOLO_STATUS: self._apply_solo,
             MSG_GCS_WARMUP_STATUS: self._apply_warmup,
@@ -685,6 +691,7 @@ class GcsState:
                 if "time" in attribute
                 else (held.run_time if held is not None else None),
             )
+            self.preset_pushed_at[preset_id] = envelope.received_monotonic
             if self.presets.get(preset_id) != preset:
                 self.presets[preset_id] = preset
                 changed = True
@@ -816,11 +823,15 @@ class GcsState:
             )
         self.last_update = time.time()
 
-    def apply_preset_list(self, payload: dict[str, Any]) -> bool:
+    def apply_preset_list(
+        self, payload: dict[str, Any], *, keep_pushed_since: float | None = None
+    ) -> bool:
         """Seed every preset slot from a ``gcs-preset`` read. Returns True if changed.
 
         Replaces the whole mapping rather than merging, so a preset deleted while Home
-        Assistant was not listening disappears instead of lingering.
+        Assistant was not listening disappears instead of lingering. A slot pushed at or
+        after ``keep_pushed_since`` (monotonic) keeps what the push said: the read may
+        predate it.
         """
         details = (
             payload.get("gcsPresetExperienceDetails")
@@ -857,6 +868,10 @@ class GcsState:
                 volume=_preset_volume(entry.get("volume")),
                 run_time=_preset_seconds(entry.get("time")),
             )
+        if keep_pushed_since is not None:
+            for preset_id, at in self.preset_pushed_at.items():
+                if at >= keep_pushed_since and preset_id in self.presets:
+                    presets[preset_id] = self.presets[preset_id]
         if presets == self.presets:
             return False
         self.presets = presets
@@ -967,6 +982,9 @@ class HubState:
     # The running favorite's name, from `FAVORITE_STS`; see `_apply_favorite`.
     active_favorite_name: str | None = None
     favorites: list[dict[str, Any]] = field(default_factory=list)
+    # When the last `FAVORITES_SNAPSHOT` arrived, on the monotonic clock: a REST read
+    # sent before it is older than the list it carried.
+    favorites_pushed_at: float | None = field(default=None, repr=False, compare=False)
     last_update: float | None = None
     # Whether the controller is running a warm-up, from `SHOWER_VALVE_STS` `data` (not
     # per zone). Warm-up runs water, so anything presenting this must rank it above
@@ -1249,6 +1267,7 @@ class HubState:
         favorites = list(envelope.attributes)
         changed = favorites != self.favorites
         self.favorites = favorites
+        self.favorites_pushed_at = envelope.received_monotonic
         return changed
 
     def apply_rest_state(self, payload: dict[str, Any]) -> None:

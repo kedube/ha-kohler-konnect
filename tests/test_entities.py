@@ -2240,7 +2240,7 @@ def _seed_valve(client):
         warmup_mode=None,
         is_running=False,
         apply_rest_state=lambda payload: None,
-        apply_preset_list=lambda payload: False,
+        apply_preset_list=lambda payload, keep_pushed_since=None: False,
     )
     valve.warmup = SimpleNamespace(note_seeded_mode=lambda before, after: None)
     return valve

@@ -13,6 +13,52 @@ are the bare version — `1.0`, never `v1.0`.
 
 ## Unreleased
 
+**Fixed**
+
+- **`custom_shower` and `send_valve_hex` keep to the valve's Max Temperature.** A
+  temperature above a zone's scald limit is refused with a message naming the limit, as the
+  `Temperature` control refuses it; before, they checked only the fixed 118 °F top. A blank
+  Zone 2 temperature follows Zone 1 only as far as Zone 2's own limit.
+- **The faucet's Dispense Amount refuses a value that isn't a number,** and Dispense set
+  amount refuses an amount outside 10 mL–11.36 L instead of sending it to Kohler.
+- **Water Used Today no longer counts an evening shower twice** on accounts whose days
+  Kohler files by UTC date. The repeat reached the Energy dashboard's statistics.
+- **Outlet settings aren't written over a record that reads wrong.** A Max Shower Duration
+  of 0 or over 60 minutes, or a minimum above its maximum, is refused rather than written
+  back to the valve along with your change.
+- **Two touch-panel settings changed in a row both stick.** The second change put the
+  first back, because Kohler's copy of the panel settings trails a change by up to half a
+  minute. A change made at the panel itself is kept the same way.
+- **A change made in the Konnect app while Home Assistant was re-reading is kept:** the
+  default shower, which `Shower on` could otherwise run in its old form, and an Anthem
+  Plus's favorites.
+- **Choosing a warm-up mode no longer flicks back** to the old one, with a false warning
+  that the valve didn't apply it, when Kohler's copy lags the valve.
+- **Dispensing no longer turns off partway through a pour** when a status check that began
+  before the dispense answers late.
+- **A leak Kohler reports with a garbled time still turns the Leak sensor on,** instead of
+  leaving it showing dry.
+- **A faucet whose configuration Kohler returns in an unexpected form still gets all its
+  entities.**
+- **A faucet preset whose amount isn't a number is skipped,** and running a preset of an
+  unexpected size from the Konnect app no longer interrupts the faucet's live updates.
+- **An EvoCycle or Ice Bath journal no longer goes unavailable or stops updating** when
+  Kohler sends an unreadable number or a clean date in the wrong unit; that one reading
+  shows as unknown instead.
+- **A Numi's ambient light follows the toilet's updates** even when Kohler's last reading
+  left its ambient-light details empty.
+- **A Smart Fan, toilet or EvoCycle update that can't be understood is read from the
+  device instead,** so its state still catches up.
+- **A shower stopped while the stream was down no longer shows as running** when an
+  unrelated message arrives during the catch-up read.
+- **Diagnostics and the Interface Firmware sensor no longer fail** when the valve reports
+  its interface firmware in an unexpected form.
+- **Reloading the integration while a dispense is being sent** no longer leaves a stray
+  timer running.
+- **One unreadable message at startup can no longer stop the integration from loading,**
+  and odd replies from Kohler (a rate-limit wait that isn't a number of seconds, a sign-in
+  token without an account id) no longer raise errors.
+
 ## 2.05 — 2026-11-06
 
 **Changed**

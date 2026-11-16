@@ -134,7 +134,11 @@ def decode_tenant_id(access_token: str | None) -> str | None:
         claims = json.loads(base64.urlsafe_b64decode(payload))
     except (IndexError, ValueError, binascii.Error, json.JSONDecodeError):
         return None
-    return claims.get("oid") or claims.get("sub")
+    if not isinstance(claims, dict):
+        return None
+    tenant_id = claims.get("oid") or claims.get("sub")
+    # Used in paths and compared as text, so only a string will do.
+    return tenant_id if isinstance(tenant_id, str) and tenant_id else None
 
 
 def _token_lifetime(expires_in: Any) -> float:

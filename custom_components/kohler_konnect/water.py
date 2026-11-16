@@ -567,7 +567,9 @@ class DailyWaterUsage(WaterUsage, RestoreEntity):
             if (
                 day == local_today
                 and utc_today > local_today
-                and not value
+                # Today's own bucket, before any pay-back: borrowing again once a
+                # pay-back has emptied it would drop the record of what was paid.
+                and not figures.get(day)
                 and figures.get(utc_today, 0.0) > 0
             ):
                 bucket = utc_today

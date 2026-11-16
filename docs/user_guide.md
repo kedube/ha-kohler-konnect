@@ -936,7 +936,11 @@ What it does:
   Leaving every outlet off stops the shower. Nothing is taken from what the valve last
   reported, which is exactly what makes it safe to fire from a button.
 * **Temperature is per zone**, like the valve's own setpoints and the temperature entities.
-  Zone 2's is optional: left unset, it follows zone 1's.
+  Zone 2's is optional: left unset, it follows zone 1's, as far as zone 2's own
+  `Max Temperature` allows.
+* **It keeps to the scald limit.** A temperature above the zone's `Max Temperature` is
+  refused, with a message naming the limit, just as the `Temperature` control stops at it.
+  Until the valve has reported its limit, the form's 118 °F (47 °C) top applies.
 * **It fires once.** A second command during the valve's warm-up hijacks the warm-up onto the
   outlets you wrote, so this action never sends a second command on its own.
 * **Flow** is under *Advanced* and defaults to full flow: this action states the whole
@@ -992,8 +996,11 @@ Both fields accept 8 or 16 hex characters. On a single-zone valve the Zone 2 fie
 from the UI form automatically. See [`gcs/valve_hex.md`](gcs/valve_hex.md) for the full byte
 layout.
 
-> ⚠️ **This can start water.** It writes directly to the valve with none of the guards the
-> switches apply.
+A word that sets its zone above that zone's `Max Temperature` is refused, as is any word
+above 48.8 °C; nothing is sent. A zone 2 left out is re-sent as the valve has it, unchecked.
+
+> ⚠️ **This can start water.** It writes directly to the valve with none of the other
+> guards the switches apply.
 
 ### `kohler_konnect.dispense`
 

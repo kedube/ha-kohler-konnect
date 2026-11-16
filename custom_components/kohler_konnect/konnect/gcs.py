@@ -24,6 +24,7 @@ from .const import (
     GCS_WRITE_OUTLET_CONFIG,
     GCS_WRITE_PRESET,
     GCS_WRITE_UI_CONFIG,
+    OUTLET_RUN_TIME_MAX_SECONDS,
     SKU_GCS,
 )
 from .models import DEFAULT_VALVE_MODEL, ValveModel, get_valve_model
@@ -113,11 +114,22 @@ def validate_outlet_record(
         ("minimumFlowrate", FLOW_BYTE_MIN, FLOW_BYTE_MAX, "flow bytes"),
         ("defaultFlowrate", FLOW_BYTE_MIN, FLOW_BYTE_MAX, "flow bytes"),
         ("maximumFlowrate", FLOW_BYTE_MIN, FLOW_BYTE_MAX, "flow bytes"),
+        # The valve's own shut-off: 0 or a huge value could leave water running.
+        ("maximumRuntime", 1, OUTLET_RUN_TIME_MAX_SECONDS, "seconds"),
     ):
         if not low <= record[key] <= high:
             raise KohlerError(
                 f"Refusing to write outlet {limits.outlet_id}: {key} {record[key]} is "
                 f"outside {low}-{high} {unit}, the range this write accepts."
+            )
+    for low_key, high_key in (
+        ("minimumOutletTemperature", "maximumOutletTemperature"),
+        ("minimumFlowrate", "maximumFlowrate"),
+    ):
+        if record[low_key] > record[high_key]:
+            raise KohlerError(
+                f"Refusing to write outlet {limits.outlet_id}: {low_key} "
+                f"{record[low_key]} is above {high_key} {record[high_key]}."
             )
     if default > maximum:
         raise KohlerError(

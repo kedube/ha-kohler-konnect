@@ -25,6 +25,7 @@ from .const import (
     CONF_LAST_WARMUP_MODE,
     CONF_WARMUP_AUTO_RESTORE,
     CONF_WARMUP_RESTORE_PENDING,
+    GCS_STATE_TRAILS_SECONDS,
     VALVE_OFFLINE,
     WARMUP_AUTO_RESTORE_DELAY_SECONDS,
     WARMUP_AUTO_RESTORE_GIVING_UP,
@@ -295,10 +296,18 @@ class WarmupManager:
         if not isinstance(warm, dict):
             # No warm-up fields, so nothing to apply and no opinion on the write.
             return None
-        if pushes["warmup_mode"] != mode_pushes:
-            # The valve pushed its mode while this read was in flight, so the reply is the
-            # older of the two and applying it would undo the push. Same rule as the seed
-            # in `coordinator.py`.
+        reported = self._valve._reported_at.get("warmup_mode")
+        written = self._warmup_self_write_at
+        if pushes["warmup_mode"] != mode_pushes or (
+            reported is not None
+            and (written is None or reported >= written)
+            and requested_at - reported < GCS_STATE_TRAILS_SECONDS
+        ):
+            # The valve pushed its mode while this read was in flight, or shortly enough
+            # before it that the cloud document may not have caught up, so the reply is
+            # the older of the two and applying it would undo the push. A push from
+            # before our own write is the old mode, and does not count. Same rule as
+            # the seed in `coordinator.py`.
             return None
         gcs_state = self._valve.gcs_state
         mode = warm.get("warmUp")

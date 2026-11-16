@@ -432,6 +432,12 @@ WARMUP_CONTEXT_MAX_MESSAGES = 400
 # 3 s, so a single immediate read would always disagree.
 WARMUP_READBACK_DELAYS = (0.0, 2.0, 4.0)
 
+# How far `gcs-state` can trail the valve's own reports, in seconds, with margin: right
+# after a write it still shows the old value and catches up in about 3 s. A report that
+# arrived this shortly before a read was sent may be newer than the reply, so what it
+# carried is kept over the reply's.
+GCS_STATE_TRAILS_SECONDS = 5.0
+
 # ---------------------------------------------------------------------------
 # CLOUD CONNECTION WATCH — is the valve still reachable by Kohler's cloud?
 # ---------------------------------------------------------------------------

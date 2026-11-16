@@ -294,6 +294,10 @@ STATUS_MESSAGES = {
     ),
 }
 
+# The longest Max Shower Duration the app offers, in seconds (`docs/protocol/gcs_valve.md`
+# §4). An outlet write refuses anything above it.
+OUTLET_RUN_TIME_MAX_SECONDS = 3600
+
 # ---------------------------------------------------------------------------
 # GCS warmup modes
 # ---------------------------------------------------------------------------

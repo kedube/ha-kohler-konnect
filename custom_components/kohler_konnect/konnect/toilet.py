@@ -174,6 +174,13 @@ def apply_message(
             block = updated[key] = {}
         return block
 
+    def ambient_light() -> dict[str, Any]:
+        # A copy, so `state` is left as it was; a null or odd block starts empty.
+        light = nested("light")
+        block = light.get("ambientLight")
+        light["ambientLight"] = dict(block) if isinstance(block, Mapping) else {}
+        return light["ambientLight"]
+
     status = _text(attributes.get("status"))
     if code == "NUMI_SPRAY_STS" and status is not None:
         running = _SPRAYING.get(status)
@@ -238,11 +245,11 @@ def apply_message(
         return updated
     if code == "NUMI_MULTIMEDIA_STS":
         asleep = attributes.get("multimediastatus") == "MultimediaIsSleeping"
-        ambient = nested("light").setdefault("ambientLight", {})
+        ambient = ambient_light()
         ambient["state"] = OFF if asleep else ON
         return updated
     if code == "NUMI_SET_LIGHTING_PARAMETERS_STS":
-        ambient = nested("light").setdefault("ambientLight", {})
+        ambient = ambient_light()
         if (color := _text(attributes.get("color"))) is not None:
             ambient["colorTheme"] = color
         if (luminance := _text(attributes.get("luminance"))) is not None:

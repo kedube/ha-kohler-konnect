@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import time
 import urllib.parse
@@ -108,9 +109,12 @@ def _retry_after(status: int, header: str | None) -> float | None:
     if status not in (429, 503) or not header:
         return None
     try:
-        return max(0.0, float(header))
+        seconds = float(header)
     except ValueError:
         pass
+    else:
+        # `float` also reads "inf" and "nan", which no wait can be.
+        return max(0.0, seconds) if math.isfinite(seconds) else None
     try:
         return max(0.0, parsedate_to_datetime(header).timestamp() - time.time())
     except (TypeError, ValueError, OverflowError):

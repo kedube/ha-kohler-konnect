@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from homeassistant.components.number import (
     NumberDeviceClass,
     NumberEntity,
@@ -9,10 +11,12 @@ from homeassistant.components.number import (
     RestoreNumber,
 )
 from homeassistant.const import EntityCategory
+from homeassistant.exceptions import ServiceValidationError
 
+from ..const import DOMAIN
 from .coordinator import FaucetCoordinator
 from .entity import KohlerFaucetEntity
-from .units import HA_UNIT_KEYS, from_ml, to_ml
+from .units import HA_UNIT_KEYS, UNIT_LABELS, from_ml, to_ml
 
 
 def faucet_numbers(coordinator: FaucetCoordinator) -> list[NumberEntity]:
@@ -50,6 +54,8 @@ class FaucetDispenseAmount(KohlerFaucetEntity, RestoreNumber):
         # The value may be in the other unit system's unit, so clamp it to this one's range.
         unit = HA_UNIT_KEYS.get(str(data.native_unit_of_measurement), "ml")
         ml = to_ml(float(data.native_value), unit)
+        if not math.isfinite(ml):
+            return  # clamping keeps NaN as it is; the default stands instead
         profile = self.coordinator.profile
         self.coordinator.dispense_amount_ml = min(
             max(ml, to_ml(profile.number_min, self._unit)),
@@ -61,5 +67,17 @@ class FaucetDispenseAmount(KohlerFaucetEntity, RestoreNumber):
         return round(from_ml(self.coordinator.dispense_amount_ml, self._unit), 2)
 
     async def async_set_native_value(self, value: float) -> None:
+        # Home Assistant's range check lets NaN through: it fails both comparisons.
+        if not math.isfinite(value):
+            profile = self.coordinator.profile
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="amount_out_of_range",
+                translation_placeholders={
+                    "min": f"{profile.number_min:g}",
+                    "max": f"{profile.number_max:g}",
+                    "unit": UNIT_LABELS[self._unit],
+                },
+            )
         self.coordinator.dispense_amount_ml = to_ml(value, self._unit)
         self.async_write_ha_state()

@@ -8,6 +8,7 @@ settings, the wash, dryer and seat defaults, and the Numi's ambient light.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import Any
@@ -134,7 +135,11 @@ class ToiletCount(_ToiletEntity, SensorEntity):
             # No bucket for today: nothing counted yet, if the series was read at all.
             return 0 if self.coordinator.usage_daily else None
         value = bucket.get(field)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or (isinstance(value, float) and not math.isfinite(value))
+        ):
             return None
         return int(value) if float(value).is_integer() else value
 

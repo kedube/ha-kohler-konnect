@@ -10,6 +10,7 @@ account-wide stream. ``docs/protocol/sensate_faucet.md`` is the reference.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -158,11 +159,26 @@ def parse_display_quantity(text: Any) -> float | None:
     return amount * _LITERS_PER_UNIT[unit]
 
 
+def _positive_finite(value: Any) -> float | None:
+    """``value`` as a float if it is a positive, finite number, else None.
+
+    Python's JSON parser reads a bare ``NaN`` or ``Infinity`` as a float, and an integer
+    too large for a float raises on conversion.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    # NaN fails the comparison.
+    return number if 0 < number < math.inf else None
+
+
 def _parse_preset_items(items: list[Any], device_id: str | None) -> list[FaucetPreset]:
     """Presets from Konnect experience entries; anything malformed is skipped.
 
-    ``dispenseAmount`` is in litres; ``displayQuantity`` stands in if it is missing. With
-    ``device_id``, entries for other devices are skipped.
+    ``dispenseAmount`` is in litres; ``displayQuantity`` stands in if it is missing. An
+    amount that is not a positive, finite number is malformed. With ``device_id``,
+    entries for other devices are skipped.
     """
     presets: list[FaucetPreset] = []
     for item in items:
@@ -178,14 +194,15 @@ def _parse_preset_items(items: list[Any], device_id: str | None) -> list[FaucetP
         amount = item.get("dispenseAmount")
         if isinstance(amount, bool) or not isinstance(amount, (int, float)):
             amount = parse_display_quantity(item.get("displayQuantity"))
-        if preset_id in (None, "") or not title or amount is None or amount <= 0:
+        liters = _positive_finite(amount)
+        if preset_id in (None, "") or not title or liters is None:
             continue
         # ``dispenseAmount`` is what pours, so wording that says otherwise is not shown.
         asked = parse_display_amount(item.get("displayQuantity"))
         stated = parse_display_quantity(item.get("displayQuantity"))
-        if stated is not None and abs(stated - amount) > SAME_DISPENSE_LITERS:
+        if stated is not None and abs(stated - liters) > SAME_DISPENSE_LITERS:
             asked = None
-        presets.append(FaucetPreset(str(preset_id), str(title), float(amount), asked))
+        presets.append(FaucetPreset(str(preset_id), str(title), liters, asked))
     return presets
 
 

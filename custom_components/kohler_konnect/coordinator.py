@@ -70,6 +70,7 @@ from .const import (
     ENABLE_RAW_MQTT_LOG,
     ENABLE_WARMUP_DEBUG_LOG,
     FIRMWARE_CHECK_INTERVAL,
+    GCS_STATE_TRAILS_SECONDS,
     OUTLET_WRITE_VERIFY_DELAY_SECONDS,
     RAW_MQTT_LOG_DIR,
     RAW_MQTT_LOG_KEEP_FILES,
@@ -125,6 +126,7 @@ from .konnect import (
 )
 from .konnect.const import (
     MSG_GCS_OUTLET_CONFIG,
+    MSG_GCS_UI_CONFIG,
     MSG_HUB_LIGHT,
     MSG_HUB_MUSIC,
     MSG_HUB_SHOWER_VALVE,
@@ -163,6 +165,7 @@ from .konnect.warmup_resume import (
     Decision,
     WarmupResume,
 )
+from .product_base import PendingWrites
 from .products import FAUCETS, PRODUCTS, Product, ProductDevice
 from .registry import device_by_identifier
 from .warmup_manager import WarmupManager
@@ -175,7 +178,8 @@ _LOGGER = logging.getLogger(__name__)
 #: (`GcsState.carried`): a word only if it decoded, a session field only if present. A
 #: field carried while a read is in flight, or just before it went out, is newer than the
 #: read for that field only; see `Valve.apply_rest_reply`. Presets, outlet records and the
-#: dispensed volume come from other reads, so messages about them conflict with nothing.
+#: dispensed volume come from other reads, each with its own rule (presets:
+#: `GcsState.apply_preset_list`).
 _GCS_WORD_FIELDS = ("valve1", "valve2")
 _GCS_SESSION_FIELDS = (
     "warmup_in_progress",
@@ -184,12 +188,6 @@ _GCS_SESSION_FIELDS = (
     "total_volume",
     "total_flow",
 )
-
-#: How far `gcs-state` can trail the valve's own reports, in seconds, with margin: right
-#: after a write it still shows the old value and catches up in about 3 s. A report that
-#: arrived this shortly before a read was sent may be newer than the reply, so what it
-#: carried is kept over the reply's.
-_GCS_STATE_TRAILS_SECONDS = 5.0
 
 #: How long after setup's reads went out the stream's first connect may come and still be
 #: caught up with the live state alone; one later — a first start that failed, connecting
@@ -388,6 +386,13 @@ def entry_reload_signature(entry: ConfigEntry) -> tuple[Any, ...]:
         ignore_data=RELOAD_IGNORED_DATA_KEYS,
         ignore_options=RELOAD_IGNORED_OPTION_KEYS,
     )
+
+
+class _PanelPending(PendingWrites):
+    """A touch panel's values written or reported since, held over `gcsadvancestate`
+    reads until one shows them or the read has had time to catch up."""
+
+    HOLD = timedelta(seconds=OUTLET_WRITE_VERIFY_DELAY_SECONDS)
 
 
 def _command_half(value: str, field: str) -> str:
@@ -754,6 +759,9 @@ class Valve:
         self._outlet_write_serial = 0
         # Touch-panel settings writes run one at a time, each from its own fresh read.
         self._ui_config_lock = asyncio.Lock()
+        # Per panel (`ui`): what was written or pushed since, laid over that read, which
+        # trails both. See `async_write_ui_config`.
+        self._ui_pending: dict[str, _PanelPending] = {}
         # Outlet settings written from here (`OutletLimits` field -> value) until a read
         # shows them on every outlet; see `_adopt_outlet_read`.
         self._outlet_unconfirmed: dict[str, int] = {}
@@ -788,7 +796,7 @@ class Valve:
         # manager's own read of the mode compares "warmup_mode".
         self._push_serials: Counter[str] = Counter()
         # When each of those fields was last reported (monotonic, as the message arrived):
-        # a read sent within `_GCS_STATE_TRAILS_SECONDS` of it can answer from before it.
+        # a read sent within `GCS_STATE_TRAILS_SECONDS` of it can answer from before it.
         self._reported_at: dict[str, float] = {}
         #: The `KohlerKonnectCoordinator.stream_connects` count the last successful
         #: `gcs-state` read was sent under (0 before the first connect, None until a read
@@ -856,7 +864,8 @@ class Valve:
         None when nothing matches: a blank beats a number that means something else.
         """
         about = self.about
-        value = _firmware_string((about.get("uI2") or {}).get("firmware"))
+        ui = about.get("uI2")
+        value = _firmware_string(ui.get("firmware")) if isinstance(ui, dict) else None
         if value is not None:
             return value
 
@@ -1033,6 +1042,11 @@ class Valve:
         arrived = envelope.received_monotonic
         if envelope.code == MSG_GCS_OUTLET_CONFIG:
             self._note_outlet_announcement(outlets, at=arrived)
+        elif envelope.code == MSG_GCS_UI_CONFIG and len(envelope.attributes) == 1:
+            pushed = envelope.attributes[0]
+            self._note_ui_values(
+                pushed.get("UI"), {k: v for k, v in pushed.items() if k != "UI"}
+            )
         for field in state.carried:
             self._push_serials[field] += 1
             self._reported_at[field] = max(
@@ -1879,9 +1893,13 @@ class Valve:
 
     async def _async_seed_presets(self) -> None:
         """Seed the preset slots. Independent of topology — see `_seed_independent_reads`."""
+        requested_at = time.monotonic()
         try:
             presets = await self.client.async_get_gcs_presets(self.gcs_device.device_id)
-            self.gcs_state.apply_preset_list(presets)
+            # A slot pushed during the read, or just before it went out, is newer.
+            self.gcs_state.apply_preset_list(
+                presets, keep_pushed_since=requested_at - GCS_STATE_TRAILS_SECONDS
+            )
             self._presets_read = True
         except KohlerError as err:
             _LOGGER.debug("Could not read GCS presets: %s", err)
@@ -2036,7 +2054,7 @@ class Valve:
           only those fields;
         * the zone words and session fields, when a word write from here was sent during
           the read or its overlay still stands (`_sent_words_pending`);
-        * any field reported within `_GCS_STATE_TRAILS_SECONDS` before the read was sent.
+        * any field reported within `GCS_STATE_TRAILS_SECONDS` before the read was sent.
 
         Everything else in the reply applies.
         """
@@ -2051,7 +2069,7 @@ class Valve:
             kept |= {
                 field
                 for field, at in self._reported_at.items()
-                if requested_at - at < _GCS_STATE_TRAILS_SECONDS
+                if requested_at - at < GCS_STATE_TRAILS_SECONDS
             }
         if kept:
             _LOGGER.debug(
@@ -2586,6 +2604,38 @@ class Valve:
         result, _ = await self._async_send_valve_hex(zone1_hex, zone2_hex)
         return result
 
+    def scald_limit_tenths(self, zone: int) -> int | None:
+        """A zone's Max Temperature in tenths of °C, from its first outlet.
+
+        None until the valve reports it, or for a zone the model lacks; the fixed
+        `TEMPERATURE_MAX_TENTHS` ceiling still applies then.
+        """
+        try:
+            outlet_id = self.model.outlet_id(zone, 1)
+        except ValueError:
+            return None
+        limits = self.gcs_state.outlet_limits.get(outlet_id)
+        return (limits.maximum_temperature_tenths or None) if limits else None
+
+    def _refuse_above_scald_limit(self, zone: int, word: str, field: str) -> None:
+        """Raise `HomeAssistantError` if ``word`` sets ``zone`` above its Max Temperature.
+
+        The Max Temperature is a setting the valve holds, not a hardware limit, so a
+        direct write is checked here as the Temperature control checks its own range.
+        """
+        limit = self.scald_limit_tenths(zone)
+        if limit is None:
+            return
+        commanded = round(
+            decode_word(word).temperature_celsius * TEMPERATURE_TENTHS_PER_DEGREE
+        )
+        if commanded > limit:
+            raise HomeAssistantError(
+                f"{field}: that word commands {commanded / 10:.1f} °C, above this "
+                f"valve's Max Temperature of {limit / 10:.1f} °C. Refused — lower the "
+                "temperature, or raise Max Temperature first."
+            )
+
     async def _async_send_valve_hex(
         self, zone1_hex: str, zone2_hex: str | None, *, requested: int | None = None
     ) -> tuple[dict[str, Any], int]:
@@ -2621,6 +2671,12 @@ class Valve:
         elif not self.model.uses_valve2:
             # The all-zero word's one legitimate use: there is no second valve.
             word2 = UNUSED_VALVE_WORD
+
+        # The words given, checked against each zone's own Max Temperature; a zone 2
+        # re-sent as it stands is the valve's word, not ours.
+        for zone, word, field in ((1, word1, "zone1_hex"), (2, word2, "zone2_hex")):
+            if word is not None and word != UNUSED_VALVE_WORD:
+                self._refuse_above_scald_limit(zone, word, field)
 
         if word1 == UNUSED_VALVE_WORD:
             # Allowed (the worst outcome is that nothing happens), but never silently.
@@ -2953,7 +3009,7 @@ class Valve:
                 settings = await self.client.async_get_gcs_settings(
                     self.gcs_device.device_id
                 )
-            records = ui_records(settings)
+            records = [self._ui_pending_over(record) for record in ui_records(settings)]
             try:
                 writes = control_panel_writes(
                     records,
@@ -2973,9 +3029,29 @@ class Valve:
                     with self.coordinator.command_errors(offline):
                         await self.gcs.async_write_ui_config(record)
                     held[index] = read_back(records[index], record)
+                    # Only what this write changed; echoed fields stay the read's.
+                    self._note_ui_values(
+                        held[index]["ui"],
+                        {
+                            key: value
+                            for key, value in held[index].items()
+                            if key != "ui" and records[index].get(key) != value
+                        },
+                    )
             finally:
                 self.gcs_state.ui_config = held
                 self.coordinator.async_update_listeners()
+
+    def _ui_pending_over(self, record: dict[str, Any]) -> dict[str, Any]:
+        """A panel's read with what was written or pushed since laid over it."""
+        ui = record.get("ui")
+        pending = self._ui_pending.get(ui) if isinstance(ui, str) else None
+        return record if pending is None else pending.over(record)
+
+    def _note_ui_values(self, ui: Any, values: Mapping[str, Any]) -> None:
+        """Hold a panel's newest values until `gcsadvancestate` shows them."""
+        if isinstance(ui, str) and ui and values:
+            self._ui_pending.setdefault(ui, _PanelPending()).add(values)
 
     async def async_restart(self) -> None:
         """Reboot the valve — the app's Restart Product. **Stops any running water.**
@@ -3396,7 +3472,14 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # product device's stored state is back (which would otherwise overwrite it).
         early, self._early_envelopes = self._early_envelopes, None
         for envelope in early or ():
-            self._handle_envelope(envelope)
+            # Contained as the stream contains a live message, so one bad message costs
+            # itself, not the setup.
+            try:
+                self._handle_envelope(envelope)
+            except Exception:
+                _LOGGER.exception(
+                    "Kohler message %s could not be handled", envelope.code
+                )
         if self._product_devices:
             # Started now and collected at the end of this method, so each device's first
             # read (several round trips) overlaps the showers' seed. It cannot fail the
@@ -4038,17 +4121,28 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
 
         async def saved_favorites() -> None:
+            requested_at = time.monotonic()
+
+            def overtaken() -> bool:
+                # A snapshot during the read, or just before it, is the newer list.
+                pushed = controller.state.favorites_pushed_at
+                return (
+                    pushed is not None
+                    and pushed >= requested_at - GCS_STATE_TRAILS_SECONDS
+                )
+
             try:
                 payload = await self.client.async_get_hub_favorites(device_id)
                 favorites = payload.get("favorites")
-                if isinstance(favorites, list):
+                if isinstance(favorites, list) and not overtaken():
                     # Favorite ids are reassigned on delete: resolve by name from this list.
                     controller.favorites = favorites
             except KohlerError as err:
                 if getattr(err, "status", None) == 404:
                     # Not a failure: the endpoint answers 404 when no favorites are
                     # saved, not an empty list (`docs/protocol/hub_controller.md` §2).
-                    controller.favorites = []
+                    if not overtaken():
+                        controller.favorites = []
                     _LOGGER.debug("No HUB favorites are saved on %s", device_id)
                 else:
                     _LOGGER.debug(

@@ -7,6 +7,7 @@ Temperatures are tenths of °C and flow a percent throughout.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from datetime import date
 from typing import Any
@@ -67,12 +68,14 @@ def _block(mapping: Mapping[str, Any], *keys: str) -> dict[str, Any]:
 
 
 def _int(value: Any) -> int | None:
+    """A whole number, or None for anything else: a bool, text, NaN or infinity."""
     if isinstance(value, bool):
         return None
     try:
-        return int(float(value))
-    except (TypeError, ValueError):
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
+    return int(number) if math.isfinite(number) else None
 
 
 def shower(state: Mapping[str, Any], mode: str) -> dict[str, Any]:
@@ -150,13 +153,13 @@ def apply_data(
     if isinstance(news := data.get("shower"), Mapping):
         on, mode = _int(news.get("showerOn")), _int(news.get("showerMode"))
         for name, key in _SHOWERS.items():
-            block = dict(showers.get(key) or {})
+            block = _block(showers, key)
             block["showerOn"] = 1 if on == 1 and mode == MODES[name] else 0
             showers[key] = block
     if isinstance(news := data.get("clean"), Mapping):
         on, mode = _int(news.get("cleanOn")), _int(news.get("cleanMode"))
         for name, key in _CLEAN_BLOCKS.items():
-            block = dict(cleans.get(key) or {})
+            block = _block(cleans, key)
             was_on = _int(block.get("cleanOn")) in (1, 2)
             if on in (1, 2) and mode == CLEANS[name]:
                 block["cleanOn"] = on
@@ -210,13 +213,15 @@ def clean_reminders(configuration: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _litres(value: Any) -> float | None:
-    """A volume the dashboard reads give as a number or a numeric string."""
+    """A volume the dashboard reads give as a number or a numeric string; None for
+    anything else, NaN and infinity included."""
     if isinstance(value, bool):
         return None
     try:
-        return max(0.0, float(value))
-    except (TypeError, ValueError):
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
+    return max(0.0, number) if math.isfinite(number) else None
 
 
 def week_split(payload: Mapping[str, Any]) -> tuple[float | None, float | None]:

@@ -100,6 +100,19 @@ def limit_text(value: float, *, up: bool) -> str:
     )
 
 
+def amount_out_of_range(unit: str) -> ServiceValidationError:
+    """The error for an amount a faucet does not dispense, its range stated in ``unit``."""
+    return ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key="amount_out_of_range",
+        translation_placeholders={
+            "min": limit_text(from_ml(DISPENSE_MIN_ML, unit), up=True),
+            "max": limit_text(from_ml(DISPENSE_MAX_ML, unit), up=False),
+            "unit": UNIT_LABELS[unit],
+        },
+    )
+
+
 def _requested(
     call: ServiceCall, coordinator: FaucetCoordinator
 ) -> tuple[float, str | None, tuple[float, str] | None]:

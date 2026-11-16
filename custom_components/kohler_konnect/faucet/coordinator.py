@@ -81,7 +81,8 @@ from ..konnect.faucet import (
     parse_firmware,
     water_running,
 )
-from .units import UnitProfile, profile_for, to_ml
+from .services import amount_out_of_range
+from .units import UnitProfile, in_dispense_range, profile_for, to_ml
 
 if TYPE_CHECKING:
     from ..coordinator import KohlerKonnectCoordinator
@@ -136,13 +137,25 @@ def leak_fingerprint(event: Any) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+# 2100-01-01 in epoch seconds: a detection time past it is garbled, not a date.
+_LEAK_TIME_MAX = 4_102_444_800.0
+
+
 def leak_time(event: Any) -> float | None:
-    """When a leak event was detected, in epoch seconds."""
+    """When a leak event was detected, in epoch seconds; None if that is not usable."""
     value = event.get(_LEAK_TIME) if isinstance(event, dict) else None
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        seconds = float(value)
+    except OverflowError:  # an integer too large for a float
         return None
     # Seconds, as the app reads it; tolerate milliseconds.
-    return value / 1000 if value > 1e11 else float(value)
+    if seconds > 1e11:
+        seconds /= 1000
+    # NaN fails the comparison; infinity and the far future are no detection time and
+    # cannot be shown as a date.
+    return seconds if 0 < seconds <= _LEAK_TIME_MAX else None
 
 
 def leak_key(event: Any) -> str:
@@ -155,10 +168,13 @@ def leak_key(event: Any) -> str:
 def dispense_limit(liters: float | None) -> float:
     """Seconds after which a dispense whose end is never reported counts as over.
 
-    ``None`` (an amount that is not known) allows for the largest dispense.
+    ``None`` (an amount that is not known) allows for the largest dispense, as does an
+    amount above it or not a number, which no faucet pours.
     """
-    if liters is None:
-        liters = DISPENSE_MAX_ML / 1000
+    largest = DISPENSE_MAX_ML / 1000
+    # NaN fails the comparison.
+    if liters is None or not liters <= largest:
+        liters = largest
     return max(
         DISPENSE_MAX.total_seconds(),
         float(math.ceil(60 + liters / DISPENSE_SLOWEST_FLOW * 60)),
@@ -800,8 +816,11 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if running is None:
             return
         now = time.monotonic()
+        # A reading taken before the dispense command says nothing about it.
+        started = self._dispense_started
+        about_dispense = started is not None and at >= started
         if running:
-            if self._dispense_started is not None:
+            if about_dispense:
                 self._dispense_seen_on = True
                 self._dispense_feed_on |= from_feed
         else:
@@ -812,13 +831,14 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if from_feed:
                 self._preset_since = None
                 self._app_preset = None
-            # Ended, once the water was seen running or had time to start; after the
-            # stream saw it running, only the stream can say it stopped.
+            # Ended, once the water was seen running or had time to start by the
+            # reading; after the stream saw it running, only the stream can say it
+            # stopped.
             if (
-                self._dispense_started is not None
+                about_dispense
                 and (
                     self._dispense_seen_on
-                    or now - self._dispense_started >= DISPENSE_SETTLE.total_seconds()
+                    or at - started >= DISPENSE_SETTLE.total_seconds()
                 )
                 and (from_feed or not self._dispense_feed_on)
             ):
@@ -938,10 +958,15 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Dispense ``liters`` (for ``preset``, if any) and refresh the state.
 
         ``asked`` is the amount as requested, (amount, ML_PER_UNIT key), for showing it so.
+        An amount out of range, NaN included, is refused here too, so it is never sent.
         """
+        if not in_dispense_range(liters * 1000):
+            raise amount_out_of_range(self.profile.service_unit)
         await self._async_command(
             lambda: self.device.async_dispense(liters), starts_water=True
         )
+        if self._shut_down:
+            return  # unloaded while it was sent: nothing here is followed any more
         self.last_dispense_liters = liters
         self.last_dispense_asked = asked
         self._dispense_started = time.monotonic()
@@ -1509,7 +1534,8 @@ class FaucetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @property
     def about(self) -> dict[str, Any]:
-        about = (self.config.get("configuration") or {}).get("about")
+        configuration = self.config.get("configuration")
+        about = configuration.get("about") if isinstance(configuration, dict) else None
         return about if isinstance(about, dict) else {}
 
     @property

@@ -13,6 +13,7 @@ or flow of 0. Settings changes go one at a time, each from a fresh read (`write_
 from __future__ import annotations
 
 import logging
+import math
 import time
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
@@ -448,12 +449,14 @@ class EvoCycleCoordinator(ProductCoordinator):
 
 
 def _whole(value: Any) -> int | None:
+    """``value`` rounded to a whole number; None for a bool, text, NaN or infinity."""
     if isinstance(value, bool):
         return None
     try:
-        return round(float(value))
-    except (TypeError, ValueError):
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
+    return round(number) if math.isfinite(number) else None
 
 
 def _flag(value: Any) -> int:

@@ -13,7 +13,8 @@ from homeassistant.helpers import entity_registry as er
 from ..const import DISPENSE_MAX_ML, DISPENSE_MIN_ML, DOMAIN
 from .coordinator import FaucetCoordinator
 from .entity import KohlerFaucetEntity, add_with_presets
-from .units import ALL_QUICK_KEYS, QuickAmount
+from .services import amount_out_of_range
+from .units import ALL_QUICK_KEYS, QuickAmount, in_dispense_range
 
 
 def faucet_buttons(
@@ -66,9 +67,10 @@ class FaucetDispenseSetAmountButton(KohlerFaucetEntity, ButtonEntity):
         super().__init__(coordinator, "dispense_set_amount")
 
     async def async_press(self) -> None:
-        await self.coordinator.async_dispense(
-            self.coordinator.dispense_amount_ml / 1000
-        )
+        ml = self.coordinator.dispense_amount_ml
+        if not in_dispense_range(ml):
+            raise amount_out_of_range(self.coordinator.profile.number_unit)
+        await self.coordinator.async_dispense(ml / 1000)
 
 
 class FaucetClearLeakButton(KohlerFaucetEntity, ButtonEntity):

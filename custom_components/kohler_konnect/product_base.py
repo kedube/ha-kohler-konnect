@@ -215,13 +215,23 @@ class ProductCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """A message about this device: apply it, else read the device again.
 
         Either way it is the device's word on a change just sent (`async_after_change`),
-        and proof the stream carries this device, so the clock can slow.
+        and proof the stream carries this device, so the clock can slow. A message that
+        fails to apply is logged and the device read instead, so its change still shows.
         """
         self._cancel_reread()
         if self.streams and not self._heard:
             self._heard = True
             self.update_interval = self.heard_poll_interval
-        if self.apply_envelope(envelope):
+        try:
+            handled = self.apply_envelope(envelope)
+        except Exception:
+            _LOGGER.exception(
+                "Could not apply %s for %s; reading it instead",
+                envelope.code or "a message",
+                self.device_name,
+            )
+            handled = False
+        if handled:
             for applied in self._reads_out:
                 applied.append(envelope)
             self.last_report = time.time()

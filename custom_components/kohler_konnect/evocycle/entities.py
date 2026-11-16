@@ -126,7 +126,13 @@ class EvoLastClean(_EvoEntity, SensorEntity):
     @property
     def native_value(self) -> datetime | None:
         seconds = self.coordinator.last_clean.get(self._kind)
-        return None if not seconds else datetime.fromtimestamp(seconds, tz=UTC)
+        if not seconds:
+            return None
+        try:
+            return datetime.fromtimestamp(seconds, tz=UTC)
+        except (OverflowError, OSError, ValueError):
+            # Not a time in seconds, such as a millisecond count.
+            return None
 
 
 class EvoWaterSaved(_EvoEntity, SensorEntity):
@@ -145,7 +151,11 @@ class EvoWaterSaved(_EvoEntity, SensorEntity):
     @property
     def native_value(self) -> float | None:
         litres = (self.coordinator.data or {}).get("saved_litres")
-        if isinstance(litres, bool) or not isinstance(litres, (int, float)):
+        if (
+            isinstance(litres, bool)
+            or not isinstance(litres, (int, float))
+            or (isinstance(litres, float) and not math.isfinite(litres))
+        ):
             return None
         return round(litres if self._metric else usage_volume_gallons(litres), 1)
 
@@ -520,12 +530,14 @@ class EvoGoalTarget(_Control, NumberEntity):
 
 
 def _whole(value: Any) -> int | None:
+    """``value`` rounded to a whole number; None for a bool, text, NaN or infinity."""
     if isinstance(value, bool):
         return None
     try:
-        return round(float(value))
-    except (TypeError, ValueError):
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
+    return round(number) if math.isfinite(number) else None
 
 
 def _numbers(evo: EvoCycleCoordinator) -> list[Entity]:

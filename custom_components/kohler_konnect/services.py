@@ -53,7 +53,7 @@ from .konnect.valve_hex import (
     encode_shower,
     unit_to_celsius,
 )
-from .number import _celsius_ceiling
+from .number import _celsius_ceiling, zone_temperature_range
 from .products import PRODUCTS
 from .smart_fan.services import SERVICE_SET_FAN_SCHEDULE
 
@@ -283,8 +283,9 @@ def _temperature_bounds(unit: str) -> tuple[float, float, str]:
     """The form's range in the account's unit: 59-118 °F, 15-47 °C.
 
     The zone slider's range without its Cold stop, fixed because one form serves every
-    valve (each valve clamps to its own scald limit). ⚠️ Cold is deliberately unreachable:
-    typing 0 must be an error, not a cold shower.
+    valve; the handler also refuses anything above the chosen valve's own Max
+    Temperature. ⚠️ Cold is deliberately unreachable: typing 0 must be an error, not a
+    cold shower.
     """
     if unit.lower().startswith("f"):
         return float(ZONE_TEMPERATURE_MIN_F), float(UI_TEMPERATURE_MAX_F), "°F"
@@ -468,14 +469,28 @@ async def _async_custom_shower(call: ServiceCall) -> ServiceResponse:
     valve = _resolve_valve(call.hass, call.data.get(ATTR_DEVICE_ID))
     unit = valve.temperature_unit
     low, high, symbol = _temperature_bounds(unit)
+    # Each zone's top is the lower of the form's and the valve's own Max Temperature.
+    tops = {
+        zone: min(high, zone_temperature_range(valve, zone, unit)[1])
+        if zone in valve.model.zones
+        else high
+        for zone in (1, 2)
+    }
     zone1 = float(call.data[ATTR_ZONE1_TEMPERATURE])
     zone2_raw = call.data.get(ATTR_ZONE2_TEMPERATURE)
-    zone2 = zone1 if zone2_raw is None else float(zone2_raw)
+    # Zone 2 left blank follows zone 1, as far as its own limit allows.
+    zone2 = min(zone1, tops[2]) if zone2_raw is None else float(zone2_raw)
     for zone, temperature in ((1, zone1), (2, zone2)):
         if not low <= temperature <= high:
             raise ServiceValidationError(
                 f"Zone {zone} temperature must be between {low:g} and {high:g} {symbol}; "
                 f"got {temperature:g}"
+            )
+        if temperature > tops[zone]:
+            raise ServiceValidationError(
+                f"Zone {zone} temperature {temperature:g} {symbol} is above this valve's "
+                f"Max Temperature of {tops[zone]:g} {symbol}. Lower it, or raise Max "
+                "Temperature first."
             )
     zone_flags = {
         zone: [bool(call.data.get(key, False)) for key in keys]

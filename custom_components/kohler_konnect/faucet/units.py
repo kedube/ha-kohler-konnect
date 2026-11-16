@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 from homeassistant.const import UnitOfVolume
 
-from ..const import DISPENSE_MAX_ML
+from ..const import DISPENSE_MAX_ML, DISPENSE_MIN_ML
 from ..konnect.usage import is_metric
 
 # Units accepted by the ``dispense`` action, in millilitres per unit. The US customary
@@ -52,6 +52,15 @@ def to_ml(amount: float, unit: str) -> float:
 def from_ml(ml: float, unit: str) -> float:
     """Convert millilitres to ``unit``."""
     return ml / ML_PER_UNIT[unit]
+
+
+def in_dispense_range(ml: float) -> bool:
+    """Whether a faucet dispenses ``ml``: from DISPENSE_MIN_ML to DISPENSE_MAX_ML.
+
+    False for NaN and infinity. Rounded to a thousandth of a mL first, so float noise
+    from a unit conversion cannot push an amount at a limit past it.
+    """
+    return DISPENSE_MIN_ML <= round(ml, 3) <= DISPENSE_MAX_ML
 
 
 @dataclass(frozen=True, kw_only=True)

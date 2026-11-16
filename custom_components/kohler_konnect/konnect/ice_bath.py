@@ -11,6 +11,7 @@ nothing here passes them on.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator, Mapping
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any
@@ -53,12 +54,14 @@ class Session:
 
 
 def _int(value: Any) -> int | None:
+    """A whole number, or None for anything else: a bool, text, NaN or infinity."""
     if isinstance(value, bool):
         return None
     try:
-        return int(float(value))
-    except (TypeError, ValueError):
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
+    return int(number) if math.isfinite(number) else None
 
 
 def _records(payload: Any) -> Iterator[tuple[Mapping[str, Any], Mapping[str, Any]]]:
