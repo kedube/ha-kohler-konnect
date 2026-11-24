@@ -10,9 +10,9 @@
 <p align="center"><img src="docs/images/panel_phone.png" width="800" alt="The Kohler Konnect panel on a phone: the devices, a shower warming up, and a month of water use"></p>
 
 A custom Home Assistant integration for Kohler's connected kitchen and bath: **Anthem** and
-**Anthem+** digital showers and **Sensate** kitchen faucets, with early support for the
-**Smart Fan**, **Numi 2.0**, **Purewash E930**, **EvoCycle** and **Ice Bath**, and a sidebar
-panel laid out like the Konnect app.
+**Anthem+** digital showers and **Sensate** and **Setra** kitchen faucets, with early support
+for the **Smart Fan**, **Numi 2.0**, **Purewash E930**, **EvoCycle** and **Ice Bath**, and a
+sidebar panel laid out like the Konnect app.
 
 This integration is unofficial, and isn't affiliated with or endorsed by Kohler. The
 underlying API may change at any time.
@@ -35,8 +35,8 @@ any outlet, any temperature, any time.
 (with Kohler's K-30319 amplifier), lighting, steam, and support for a second valve body.
 Controlled by activating named favorites — whole scenes, not individual outlets.
 
-**Sensate** — the touchless kitchen faucet. Water on and off, measured dispenses ("pour a
-litre"), the presets saved in the Konnect app, and leak alerts.
+**Sensate** and **Setra** — the Konnect kitchen faucets. Water on and off, measured
+dispenses ("pour a litre"), the presets saved in the Konnect app, and leak alerts.
 
 **Smart Fan, Numi 2.0, Purewash E930, EvoCycle and Ice Bath** — new, built from the Konnect
 app's own requests and not yet run on real hardware. Everything the app shows is on from the
@@ -241,7 +241,7 @@ What else changes:
 | **Anthem Digital Valve** — `K-28209`, `K-28210`, `K-28211`, `K-28212` | ✅ | ✅ | ✅ `K-28210`, `K-28212` |
 | **Anthem Interface** (`K-28214`) and **Anthem+ Interface** (`K-28214-ASC`), with the **Anthem+ System Controller** (`K-27756`) | ✅ | ✅ | ✅ |
 | **Sensate** touchless kitchen faucet | ✅ | ✅ | ✅ |
-| The second Konnect kitchen faucet (SKU `SET`, almost certainly the **Setra**) | ✅ | ✅ | — |
+| **Setra** kitchen faucet | ✅ | ✅ | ✅ water on and off, usage; dispensing and leak alerts not yet tried |
 | **Smart Fan** | ✅ | ⚠️ untested | — |
 | **Numi 2.0** toilet | ✅ | ⚠️ untested | — |
 | **Purewash E930** bidet seat | ✅ | ⚠️ untested | — |
@@ -314,8 +314,10 @@ offered as an update. Turn it off to go back to stable releases as they come.
   yours behaves that way.
 * **The API is undocumented** and Kohler can change it without notice.
 * **Tested hardware** — a K-28212 (six outlets, three and three) with a controller on firmware
-  2.88, two K-28210 valves, and a Sensate faucet on firmware 16.0. Other models are
-  supported on what the protocol says, not on anyone having run them.
+  2.88, two K-28210 valves, and a Sensate faucet on firmware 16.0. A Setra owner has
+  confirmed water on and off and water use
+  ([#2](https://github.com/kedube/ha-kohler-konnect/issues/2)). Other models are supported
+  on what the protocol says, not on anyone having run them.
 * **The Smart Fan, Numi 2.0, Purewash E930, EvoCycle and Ice Bath have never been run** against
   this integration. Their readings may be missing or wrong until an owner's Report Log shows
   what the hardware really sends.
@@ -348,6 +350,6 @@ replaces.
 MIT — see [LICENSE](LICENSE), which keeps the copyright notice of kohler-anthem-plus, whose
 code this project carries, alongside this one's.
 
-Kohler, Anthem, Anthem+, Sensate, Numi, Purewash, EvoCycle, PerfectFill and Konnect are
+Kohler, Anthem, Anthem+, Sensate, Setra, Numi, Purewash, EvoCycle, PerfectFill and Konnect are
 trademarks of Kohler Co. This project is not affiliated with, authorised by, or endorsed by
 Kohler Co., and is not a supported product.

@@ -34,7 +34,7 @@ method name you can grep for. `la0/b.java` is the repository wrapper over
 | SKU | What it is | Evidence |
 |---|---|---|
 | `SEN` | Sensate kitchen faucet ("Kitchen Faucet") | product tile `rt0/m.java:30` (`productModel.x("SEN")`, `text_device_kitchen_faucet`) |
-| `SET` | A second Konnect kitchen faucet that the app handles exactly like `SEN`. Probably the **Setra**: the reserved-name list `devices_name` in `res/values/arrays.xml:197` contains both "Sensate" and "Setra". | product tile `rt0/n.java:30` (`productModel.x("SET")`); Wi-Fi step text `text_provision_step_two_faucet` (strings.xml:2572): "network name starting with 'SEN…' or 'SET…'" |
+| `SET` | A second Konnect kitchen faucet that the app handles exactly like `SEN`. Probably the **Setra**: the reserved-name list `devices_name` in `res/values/arrays.xml:197` contains both "Sensate" and "Setra". An owner's Setra works with `kohler_konnect` ([issue #2](https://github.com/kedube/ha-kohler-konnect/issues/2), 2026-11-24), but the report didn't include the SKU, so `SET` = Setra still rests on the app. | product tile `rt0/n.java:30` (`productModel.x("SET")`); Wi-Fi step text `text_provision_step_two_faucet` (strings.xml:2572): "network name starting with 'SEN…' or 'SET…'" |
 
 No other faucet SKU appears in the decompile. In particular, `FAUCET` is not a
 SKU anywhere in the app.
@@ -557,7 +557,7 @@ Assistant).
 | 11 | A missing `connectionState` | Still read as online, on purpose: it has always been present |
 | 12 | Freeze mitigation | Not built |
 | 13 | Identify | Covered by the one-cup quick-dispense button on a US account |
-| — | Sign-in | **Changed**: the account's `B2C_1A_signin` token, shared with the showers, replaces ROPC with a stored password. App-confirmed for faucet commands; **live check** |
+| — | Sign-in | **Changed**: the account's `B2C_1A_signin` token, shared with the showers, replaces ROPC with a stored password. App-confirmed for faucet commands; on/off live on a Setra ([issue #2](https://github.com/kedube/ha-kohler-konnect/issues/2)); dispense **live check** |
 
 1. **`faucet-state.progress` is firmware-download state, not dispense progress.**
    - *App:* `"Downloading"` (with `Connected`) means an OTA is in progress, and the
@@ -612,7 +612,10 @@ Assistant).
      (`api.py:529`, `api.py:543`; `const.py:84`).
    - *Suggested change:* discover `SET`, store each device's SKU, and send it.
    - **Status:** NEW / CONTRADICTS. **Confidence:** high (app); "SET = Setra" is
-     an inference from `devices_name`. **Live check:** needs a SET owner.
+     an inference from `devices_name`. **Live check:** a Setra owner confirmed
+     discovery, on/off both ways, usage history and entity creation
+     ([issue #2](https://github.com/kedube/ha-kohler-konnect/issues/2)). Still open: the
+     SKU that Setra reports (its diagnostics would show it), dispense, and leaks.
 
 5. **Dispense and preset amount limits.**
    - *App:* never sends below ≈0.2366 L (1 cup / ¼ qt), allows up to ≈11.36 L

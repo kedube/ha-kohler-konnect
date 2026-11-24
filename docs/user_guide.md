@@ -1,7 +1,7 @@
 <h1 align="center">Kohler Konnect</h1>
 
 <p align="center">
-  Home Assistant integration for <b>Kohler Digital Anthem</b> and <b>Anthem+</b> shower systems and <b>Sensate</b> kitchen faucets, with early support for the <b>Smart Fan</b>, <b>Numi 2.0</b>, <b>Purewash E930</b>, <b>EvoCycle</b> and <b>Ice Bath</b>.
+  Home Assistant integration for <b>Kohler Digital Anthem</b> and <b>Anthem+</b> shower systems and <b>Sensate</b> and <b>Setra</b> kitchen faucets, with early support for the <b>Smart Fan</b>, <b>Numi 2.0</b>, <b>Purewash E930</b>, <b>EvoCycle</b> and <b>Ice Bath</b>.
 </p>
 
 <p align="center">
@@ -136,6 +136,10 @@ The **Sensate** is Kohler's touchless kitchen faucet. Through Konnect it can run
 it, and pour a measured amount — a dispense — at the temperature the handle is set to; it has
 no temperature or flow command. It also keeps a leak history and its own list of dispense
 presets, made in the Konnect app.
+
+The **Setra** is handled the same way, as the Konnect app handles it, so everything said here
+about the Sensate applies to it too. An owner has confirmed its water on and off and its
+water use; see [Tested against](#tested-against).
 
 | | **Sensate** |
 |---|---|
@@ -1648,10 +1652,14 @@ itself for that faucet before the last restart, and no message has come since.
 * **Faucet commands use a different sign-in than before.** The separate faucet integration
   signed in with Kohler's password (ROPC) policy, which Kohler accepts for faucet commands.
   This one signs in once for the whole account with the `B2C_1A_signin` policy the showers
-  need — the same one the Konnect app uses for its faucet commands, but not yet run against a
-  faucet by this integration.
-* **The faucet's `SET` sibling is untested.** It is handled as the app handles it, exactly
-  like the Sensate.
+  need — the same one the Konnect app uses for its faucet commands. A Setra's water on and
+  off works with it ([#2](https://github.com/kedube/ha-kohler-konnect/issues/2)).
+* **The Setra is confirmed only in part.** An owner reports sign-in, discovery, water on and
+  off from Home Assistant, the faucet's own on and off showing up, water use and run time,
+  and every entity being created
+  ([#2](https://github.com/kedube/ha-kohler-konnect/issues/2)). Dispensing and leak alerts
+  haven't been tried on one yet. It is handled as the app handles it, exactly like the
+  Sensate.
 * **The Smart Fan, Numi 2.0, Purewash E930, EvoCycle and Ice Bath are entirely untested.**
   Their support comes from the Konnect app's own requests. Readings may be missing or wrong,
   and every control is marked untested until an owner confirms it.
@@ -1663,6 +1671,10 @@ itself for that faucet before the last restart, and no message has come since.
 with an Anthem Plus controller on firmware 2.88, which most of the shower findings in this
 guide come from; two K-28210 valves; and a Sensate faucet on firmware 16.0, which the faucet
 findings come from.
+
+**A Setra, by its owner.** Water on and off, state, water use and the entities are confirmed
+([#2](https://github.com/kedube/ha-kohler-konnect/issues/2)); dispensing and leak alerts are
+not yet.
 
 Other models and configurations are supported on the basis of what the protocol says, not on
 the basis of anyone having run them. If you have different hardware, reports are genuinely
@@ -1696,6 +1708,6 @@ Ice Bath, the diagnostics alone help.
 
 MIT — see [LICENSE](../LICENSE).
 
-Kohler, Anthem, Anthem+, Sensate, Numi, Purewash, EvoCycle, PerfectFill and Konnect are
+Kohler, Anthem, Anthem+, Sensate, Setra, Numi, Purewash, EvoCycle, PerfectFill and Konnect are
 trademarks of Kohler Co. This project is not affiliated with, authorised by, or endorsed by
 Kohler Co., and is not a supported product.

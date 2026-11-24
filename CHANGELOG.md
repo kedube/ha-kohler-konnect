@@ -13,6 +13,15 @@ are the bare version — `1.0`, never `v1.0`.
 
 ## Unreleased
 
+**Documentation**
+
+- **The Setra is confirmed working.** An owner reports sign-in, discovery, water on and off
+  from Home Assistant, the faucet's own on and off showing up, water use and run time, and
+  every entity being created
+  ([#2](https://github.com/kedube/ha-kohler-konnect/issues/2)). Dispensing and leak alerts
+  haven't been tried on one yet. The README and guide now name the Setra alongside the
+  Sensate.
+
 ## 2.06 — 2026-11-16
 
 **Fixed**
