@@ -14,8 +14,8 @@ from ..const import DOMAIN
 from ..konnect.const import SKU_SENSATE
 from .coordinator import FaucetCoordinator
 
-#: The model shown on the device page. `SET` is almost certainly the Setra, but nothing in
-#: Kohler's API or app says so outright, so it is not named as one.
+#: The model shown on the device page. A Setra reports `SEN` too, so it shows as a Sensate.
+#: Which product reports `SET` is unknown, so it gets the generic name.
 _MODELS = {SKU_SENSATE: "Sensate"}
 
 

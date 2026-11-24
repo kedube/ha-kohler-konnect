@@ -1,6 +1,6 @@
 # Kohler Konnect cloud: the shared platform
 
-Everything here is common to every Konnect product: Anthem valve (`GCS`), Anthem Plus controller (`HUB`), Sensate/Setra faucets (`SEN`/`SET`) and the rest. Product chapters cover what differs: [gcs_valve.md](gcs_valve.md), [hub_controller.md](hub_controller.md) and [sensate_faucet.md](sensate_faucet.md).
+Everything here is common to every Konnect product: Anthem valve (`GCS`), Anthem Plus controller (`HUB`), Sensate and Setra faucets (`SEN`, and its sibling `SET`) and the rest. Product chapters cover what differs: [gcs_valve.md](gcs_valve.md), [hub_controller.md](hub_controller.md) and [sensate_faucet.md](sensate_faucet.md).
 
 Confidence markers are explained in the [README](README.md#confidence): **live** (verified against hardware), **app** (read from Konnect 3.0.6) and **inferred**.
 
@@ -18,7 +18,7 @@ Confidence markers are explained in the [README](README.md#confidence): **live**
 | Redirect URI | `msauth.com.kohler.hermoth://auth` — strictly validated; the older `msauth://com.kohler.hermoth/<hash>` is **no longer registered** | live |
 | Authority | `https://konnectkohler.b2clogin.com/tfp/konnectkohler.onmicrosoft.com/B2C_1A_signin` | live |
 
-**Anthem writes need a token from the `B2C_1A_signin` policy.** Tokens from the ROPC policy are accepted for reads but get HTTP 403 on the Anthem's `/commands/*` (live). **The Sensate faucet accepts ROPC tokens for its commands** (`commands/faucet/onoff` and `dispense`, live in `ha-kohler-sensate`), so the restriction is per product, not account-wide. A `B2C_1A_signin` token is what the Konnect app holds for every product, so one sign-in through that policy covers them all; that is what `kohler_konnect` does (its faucet commands with that token are app-confirmed, and on/off is live on a Setra, [issue #2](https://github.com/kedube/ha-kohler-konnect/issues/2)). The redirect URI is a custom scheme, so the usual browser round trip is impossible. The integration instead drives the policy server-side, the way the sign-in page's own JavaScript does:
+**Anthem writes need a token from the `B2C_1A_signin` policy.** Tokens from the ROPC policy are accepted for reads but get HTTP 403 on the Anthem's `/commands/*` (live). **The Sensate faucet accepts ROPC tokens for its commands** (`commands/faucet/onoff` and `dispense`, live in `ha-kohler-sensate`), so the restriction is per product, not account-wide. A `B2C_1A_signin` token is what the Konnect app holds for every product, so one sign-in through that policy covers them all; that is what `kohler_konnect` does (its faucet commands with that token are app-confirmed, and on/off and dispense are live on a Setra, [issue #2](https://github.com/kedube/ha-kohler-konnect/issues/2)). The redirect URI is a custom scheme, so the usual browser round trip is impossible. The integration instead drives the policy server-side, the way the sign-in page's own JavaScript does:
 
 1. `GET /authorize` with PKCE. Keep the cookies, and take `csrf` and `transId` from the page's `var SETTINGS = {...}` blob.
 2. `POST {policy}/SelfAsserted` with the email and password. It answers HTTP 200 even when it refuses: the result is the JSON `status` (`"200"` or not), with `errorCode` and `message`. `AADB2C90053` means bad credentials. ⚠️ The `x-ms-cpim-*` cookies must go back exactly as received: aiohttp's default cookie jar re-quotes them, and B2C then answers a bare 400 with no error code (live; the integration uses `CookieJar(quote_cookie=False)`).
@@ -98,7 +98,7 @@ Known SKUs (app):
 |---|---|
 | `GCS` | Anthem digital valve |
 | `HUB` | Anthem Plus controller |
-| `SEN`, `SET` | Sensate and (probably) Setra faucets |
+| `SEN`, `SET` | Kitchen faucets. The Sensate and the Setra both report `SEN`; which product reports `SET` is unknown |
 | others | DTV+, Numi, EvoCycle, Moxie, Blade, ice bath, SFC (fan) — not covered here |
 
 Other account routes (app): `customer-device/{tenantId}/home` (address); `PATCH customer-device/{tenant}/{home}/device` (rename, or remove with `operation: "Delete"`); `customer-device/{tenantId}/freezeMitigation` (faucet, see the faucet chapter); `customer-experience/{tenantId}` (the cross-device presets list on the app's home screen).

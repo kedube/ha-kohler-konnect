@@ -10,8 +10,8 @@ product on the account. Product modules hold what differs:
   directly. Every start specifies the full valve state as a hex command word.
 * **Anthem Plus** (SKU ``HUB``, `hub`) — the Linux system controller that drives the
   valves and integrates music, lighting, and steam. Control is organised around favorites.
-* **Sensate and Setra faucets** (SKUs ``SEN`` and ``SET``, `faucet`) — water on and off,
-  and measured dispenses in litres.
+* **Sensate and Setra faucets** (SKU ``SEN``, and its sibling ``SET``, `faucet`) — water on
+  and off, and measured dispenses in litres.
 
 Water usage history has the same shape for every product (`usage`).
 

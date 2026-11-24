@@ -170,9 +170,9 @@ async def test_commands(device: FaucetDevice, kohler: FakeKohler) -> None:
 async def test_commands_send_the_device_sku(
     client: KohlerClient, kohler: FakeKohler
 ) -> None:
-    setra = FaucetDevice(client, "set-1", "SET")
-    await setra.async_dispense(0.25)
-    await setra.async_set_water(False)
+    faucet = FaucetDevice(client, "set-1", "SET")
+    await faucet.async_dispense(0.25)
+    await faucet.async_set_water(False)
     assert [body["sku"] for _, body in kohler.commands] == ["SET", "SET"]
 
 

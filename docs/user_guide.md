@@ -137,16 +137,16 @@ it, and pour a measured amount — a dispense — at the temperature the handle 
 no temperature or flow command. It also keeps a leak history and its own list of dispense
 presets, made in the Konnect app.
 
-The **Setra** is handled the same way, as the Konnect app handles it, so everything said here
-about the Sensate applies to it too. An owner has confirmed its water on and off and its
-water use; see [Tested against](#tested-against).
+The **Setra** reports itself to Kohler as a Sensate, so everything said here about the
+Sensate applies to it too, and its device page says **Sensate**. An owner has confirmed it
+works; see [Tested against](#tested-against).
 
 | | **Sensate** |
 |---|---|
 | Controlled by | Plain commands: water on, water off, dispense *n* litres |
 | Presets | Saved in the Konnect app; this integration pours them, it does not create them |
 | Blocks remote water | A closed handle, or a firmware download — as the Konnect app does |
-| In the code and docs | `SEN` (and `SET`, a second faucet the app treats identically — probably the Setra) |
+| In the code and docs | `SEN`, for the Sensate and the Setra (and `SET`, a second faucet code the app treats identically, from a product not yet identified) |
 
 ## Other products
 
@@ -1653,13 +1653,13 @@ itself for that faucet before the last restart, and no message has come since.
   signed in with Kohler's password (ROPC) policy, which Kohler accepts for faucet commands.
   This one signs in once for the whole account with the `B2C_1A_signin` policy the showers
   need — the same one the Konnect app uses for its faucet commands. A Setra's water on and
-  off works with it ([#2](https://github.com/kedube/ha-kohler-konnect/issues/2)).
-* **The Setra is confirmed only in part.** An owner reports sign-in, discovery, water on and
-  off from Home Assistant, the faucet's own on and off showing up, water use and run time,
-  and every entity being created
-  ([#2](https://github.com/kedube/ha-kohler-konnect/issues/2)). Dispensing and leak alerts
-  haven't been tried on one yet. It is handled as the app handles it, exactly like the
-  Sensate.
+  off and dispensing work with it
+  ([#2](https://github.com/kedube/ha-kohler-konnect/issues/2)).
+* **A Setra's leak alerts are untested.** Everything else an owner has tried works
+  ([#2](https://github.com/kedube/ha-kohler-konnect/issues/2)).
+* **The faucet code `SET` is untested.** The Konnect app handles it exactly like the
+  Sensate's, and so does this integration, but no faucet reporting it has been seen, and
+  which product it belongs to is unknown. Its device page says **Konnect faucet**.
 * **The Smart Fan, Numi 2.0, Purewash E930, EvoCycle and Ice Bath are entirely untested.**
   Their support comes from the Konnect app's own requests. Readings may be missing or wrong,
   and every control is marked untested until an owner confirms it.
@@ -1672,9 +1672,10 @@ with an Anthem Plus controller on firmware 2.88, which most of the shower findin
 guide come from; two K-28210 valves; and a Sensate faucet on firmware 16.0, which the faucet
 findings come from.
 
-**A Setra, by its owner.** Water on and off, state, water use and the entities are confirmed
-([#2](https://github.com/kedube/ha-kohler-konnect/issues/2)); dispensing and leak alerts are
-not yet.
+**A Setra, by its owner,** on a replacement control board from Kohler. It reports itself as a
+Sensate (`SEN`). Water on and off, state, water use, the entities and a one-cup dispense are
+confirmed ([#2](https://github.com/kedube/ha-kohler-konnect/issues/2)); leak alerts are not
+yet.
 
 Other models and configurations are supported on the basis of what the protocol says, not on
 the basis of anyone having run them. If you have different hardware, reports are genuinely

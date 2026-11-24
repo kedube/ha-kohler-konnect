@@ -64,11 +64,12 @@ TOKEN_EXPIRY_MARGIN_SECONDS = 300
 # with "gcs". Always branch on the sku field.
 SKU_GCS = "GCS"
 SKU_HUB = "HUB"
-# The Sensate kitchen faucet, and a second Konnect faucet (almost certainly the Setra) that
-# the app handles identically everywhere. Commands carry the device's own SKU.
+# The kitchen faucets. The Sensate and the Setra both report `SEN`; `SET` is a second faucet
+# code the app handles identically everywhere, from a product not yet identified. Commands
+# carry the device's own SKU.
 SKU_SENSATE = "SEN"
-SKU_SETRA = "SET"
-FAUCET_SKUS = frozenset({SKU_SENSATE, SKU_SETRA})
+SKU_SET = "SET"
+FAUCET_SKUS = frozenset({SKU_SENSATE, SKU_SET})
 SKU_SMART_FAN = "SFC"
 SKU_NUMI = "NUM"
 SKU_PUREWASH = "BLD"

@@ -241,7 +241,8 @@ What else changes:
 | **Anthem Digital Valve** — `K-28209`, `K-28210`, `K-28211`, `K-28212` | ✅ | ✅ | ✅ `K-28210`, `K-28212` |
 | **Anthem Interface** (`K-28214`) and **Anthem+ Interface** (`K-28214-ASC`), with the **Anthem+ System Controller** (`K-27756`) | ✅ | ✅ | ✅ |
 | **Sensate** touchless kitchen faucet | ✅ | ✅ | ✅ |
-| **Setra** kitchen faucet | ✅ | ✅ | ✅ water on and off, usage; dispensing and leak alerts not yet tried |
+| **Setra** kitchen faucet, which reports itself to Kohler as a Sensate | ✅ | ✅ | ✅ all but leak alerts |
+| Any faucet reporting Kohler's second faucet code, `SET`, which the Konnect app treats as a Sensate | ✅ | ✅ | — |
 | **Smart Fan** | ✅ | ⚠️ untested | — |
 | **Numi 2.0** toilet | ✅ | ⚠️ untested | — |
 | **Purewash E930** bidet seat | ✅ | ⚠️ untested | — |
@@ -315,7 +316,7 @@ offered as an update. Turn it off to go back to stable releases as they come.
 * **The API is undocumented** and Kohler can change it without notice.
 * **Tested hardware** — a K-28212 (six outlets, three and three) with a controller on firmware
   2.88, two K-28210 valves, and a Sensate faucet on firmware 16.0. A Setra owner has
-  confirmed water on and off and water use
+  confirmed water on and off, dispensing and water use
   ([#2](https://github.com/kedube/ha-kohler-konnect/issues/2)). Other models are supported
   on what the protocol says, not on anyone having run them.
 * **The Smart Fan, Numi 2.0, Purewash E930, EvoCycle and Ice Bath have never been run** against

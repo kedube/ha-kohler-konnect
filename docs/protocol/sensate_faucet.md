@@ -33,8 +33,8 @@ method name you can grep for. `la0/b.java` is the repository wrapper over
 
 | SKU | What it is | Evidence |
 |---|---|---|
-| `SEN` | Sensate kitchen faucet ("Kitchen Faucet") | product tile `rt0/m.java:30` (`productModel.x("SEN")`, `text_device_kitchen_faucet`) |
-| `SET` | A second Konnect kitchen faucet that the app handles exactly like `SEN`. Probably the **Setra**: the reserved-name list `devices_name` in `res/values/arrays.xml:197` contains both "Sensate" and "Setra". An owner's Setra works with `kohler_konnect` ([issue #2](https://github.com/kedube/ha-kohler-konnect/issues/2), 2026-11-24), but the report didn't include the SKU, so `SET` = Setra still rests on the app. | product tile `rt0/n.java:30` (`productModel.x("SET")`); Wi-Fi step text `text_provision_step_two_faucet` (strings.xml:2572): "network name starting with 'SEN…' or 'SET…'" |
+| `SEN` | Sensate kitchen faucet ("Kitchen Faucet"). **The Setra reports it too**: an owner's Setra, on a replacement control board from Kohler (Google Assistant rather than HomeKit), shows `SEN` ([issue #2](https://github.com/kedube/ha-kohler-konnect/issues/2), 2026-11-24, live). | product tile `rt0/m.java:30` (`productModel.x("SEN")`, `text_device_kitchen_faucet`) |
+| `SET` | A second Konnect kitchen faucet that the app handles exactly like `SEN`. Which product reports it is unknown. It was taken to be the **Setra**, because the reserved-name list `devices_name` in `res/values/arrays.xml:197` contains both "Sensate" and "Setra", but the one Setra seen reports `SEN` (above). A Setra on its original HomeKit control board might still report `SET`; no one has checked. | product tile `rt0/n.java:30` (`productModel.x("SET")`); Wi-Fi step text `text_provision_step_two_faucet` (strings.xml:2572): "network name starting with 'SEN…' or 'SET…'" |
 
 No other faucet SKU appears in the decompile. In particular, `FAUCET` is not a
 SKU anywhere in the app.
@@ -557,7 +557,7 @@ Assistant).
 | 11 | A missing `connectionState` | Still read as online, on purpose: it has always been present |
 | 12 | Freeze mitigation | Not built |
 | 13 | Identify | Covered by the one-cup quick-dispense button on a US account |
-| — | Sign-in | **Changed**: the account's `B2C_1A_signin` token, shared with the showers, replaces ROPC with a stored password. App-confirmed for faucet commands; on/off live on a Setra ([issue #2](https://github.com/kedube/ha-kohler-konnect/issues/2)); dispense **live check** |
+| — | Sign-in | **Changed**: the account's `B2C_1A_signin` token, shared with the showers, replaces ROPC with a stored password. App-confirmed for faucet commands; on/off and dispense live on a Setra reporting `SEN` ([issue #2](https://github.com/kedube/ha-kohler-konnect/issues/2)) |
 
 1. **`faucet-state.progress` is firmware-download state, not dispense progress.**
    - *App:* `"Downloading"` (with `Connected`) means an OTA is in progress, and the
@@ -612,10 +612,9 @@ Assistant).
      (`api.py:529`, `api.py:543`; `const.py:84`).
    - *Suggested change:* discover `SET`, store each device's SKU, and send it.
    - **Status:** NEW / CONTRADICTS. **Confidence:** high (app); "SET = Setra" is
-     an inference from `devices_name`. **Live check:** a Setra owner confirmed
-     discovery, on/off both ways, usage history and entity creation
-     ([issue #2](https://github.com/kedube/ha-kohler-konnect/issues/2)). Still open: the
-     SKU that Setra reports (its diagnostics would show it), dispense, and leaks.
+     an inference from `devices_name`, **contradicted live**: an owner's Setra reports
+     `SEN` ([issue #2](https://github.com/kedube/ha-kohler-konnect/issues/2)). Which
+     product reports `SET` is unknown. **Live check:** needs a `SET` faucet.
 
 5. **Dispense and preset amount limits.**
    - *App:* never sends below ≈0.2366 L (1 cup / ¼ qt), allows up to ≈11.36 L
@@ -627,7 +626,10 @@ Assistant).
      allow presets the app created), and decide on a minimum after a live test.
    - **Status:** CONTRADICTS (narrower maximum, lower minimum). **Confidence:**
      high for the app's UI range; server limits unknown. **Live check:** a 5 L
-     dispense; a dispense below 236 mL (e.g. 50 mL) and how accurately it stops.
+     dispense; a dispense below 236 mL (e.g. 50 mL) and how accurately it stops. At
+     the app's minimum, a one-cup dispense (0.2366 L) on a Setra poured slightly
+     over a cup, about 250 mL by the owner's photo
+     ([issue #2](https://github.com/kedube/ha-kohler-konnect/issues/2)).
 
 6. **Leak details: entry shape and the real-time leak event.**
    - *App:* `leakDetectionHistory[] = {leakDetectionTime: epoch s}`. MQTT

@@ -6,8 +6,8 @@ All Kohler Konnect devices on one account, under one sign-in, each its own devic
   flow control.
 * **Anthem Plus** (SKU ``HUB``) — system controller adding music, lighting and steam;
   controlled through favorites.
-* **Sensate** and **Setra** (SKUs ``SEN``, ``SET``) — kitchen faucets: water on and off,
-  measured dispenses, presets, leak alerts.
+* **Sensate** and **Setra** (SKU ``SEN``, and its sibling ``SET``) — kitchen faucets: water
+  on and off, measured dispenses, presets, leak alerts.
 
 One MQTT connection over Azure IoT Hub carries every device's messages. Shower state is
 push-only; REST is read at setup and on every MQTT reconnect, because the broker replays

@@ -1,4 +1,4 @@
-"""The Sensate and Setra kitchen faucets (SKUs ``SEN`` and ``SET``).
+"""The Sensate and Setra kitchen faucets (SKU ``SEN``, and its sibling ``SET``).
 
 Unlike an Anthem valve, a faucet has plain commands (water on, water off, and a measured
 dispense in litres), and its live state is a small text record rather than a hex word. The
