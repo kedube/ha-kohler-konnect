@@ -13,6 +13,8 @@ are the bare version — `1.0`, never `v1.0`.
 
 ## Unreleased
 
+## 2.07 — 2026-11-24
+
 **Documentation**
 
 - **The Setra is confirmed working.** An owner reports sign-in, discovery, water on and off
